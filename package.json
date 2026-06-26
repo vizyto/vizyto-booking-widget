@@ -1,0 +1,19 @@
+{
+  "name": "vizyto-booking-widget",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4500"
+  },
+  "dependencies": {
+    "preact": "^10.24.3"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.9.4",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.0"
+  }
+}
