@@ -1,13 +1,57 @@
-import { useEffect, useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
+import type { ComponentChildren } from 'preact'
 import type { Business, Cfg } from './api'
 import { fetchBusiness } from './api'
-import { BookingFlow } from './BookingFlow'
+import { BookingFlow, type Auth } from './BookingFlow'
+import { Spinner } from './ui/Spinner'
+import { Calendar, Close } from './ui/icons'
 
-export function Widget({ cfg, mode, label }: { cfg: Cfg; mode: 'launcher' | 'inline'; label: string }) {
+const BLOG_URL = 'https://vizyto.com/blog/widget-rezerwacji-na-strone-internetowa'
+
+function Powered() {
+  return (
+    <div class="vz-powered">
+      Rezerwacje przez <a href={BLOG_URL} target="_blank" rel="noopener noreferrer">Vizyto</a>
+    </div>
+  )
+}
+
+// Minimal panel used only for the load / error states before the flow mounts.
+function MiniPanel({ onClose, children }: { onClose?: () => void; children: ComponentChildren }) {
+  return (
+    <div class="vz-panel" role="dialog" aria-modal={onClose ? 'true' : undefined} aria-label="Zarezerwuj wizytę">
+      {onClose && <span class="vz-grab" aria-hidden="true" />}
+      <header class="vz-head">
+        <span class="vz-head-spacer" />
+        <div class="vz-title">Zarezerwuj wizytę</div>
+        {onClose ? (
+          <button class="vz-iconbtn" onClick={onClose} aria-label="Zamknij" type="button"><Close size={20} /></button>
+        ) : (
+          <span class="vz-head-spacer" />
+        )}
+      </header>
+      <div class="vz-body">{children}</div>
+      <Powered />
+    </div>
+  )
+}
+
+export function Widget({
+  cfg,
+  mode,
+  label,
+  preAuth,
+}: {
+  cfg: Cfg
+  mode: 'launcher' | 'inline'
+  label: string
+  preAuth?: Auth
+}) {
   const [open, setOpen] = useState(mode === 'inline')
   const [business, setBusiness] = useState<Business | null>(null)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
+  const overlayRef = useRef<HTMLDivElement>(null)
 
   async function load() {
     if (business || loading) return
@@ -23,10 +67,29 @@ export function Widget({ cfg, mode, label }: { cfg: Cfg; mode: 'launcher' | 'inl
     if (open) load()
   }, [open])
 
+  // Esc + body-scroll-lock + focus trap, while the modal is open (launcher only).
   useEffect(() => {
     if (mode !== 'launcher' || !open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') {
+        setOpen(false)
+        return
+      }
+      if (e.key !== 'Tab' || !overlayRef.current) return
+      const f = overlayRef.current.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select, textarea, a[href], [tabindex]:not([tabindex="-1"])',
+      )
+      if (!f.length) return
+      const first = f[0]
+      const last = f[f.length - 1]
+      const root = overlayRef.current.getRootNode() as ShadowRoot
+      if (e.shiftKey && root.activeElement === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && root.activeElement === last) {
+        e.preventDefault()
+        first.focus()
+      }
     }
     document.addEventListener('keydown', onKey)
     const prev = document.body.style.overflow
@@ -37,56 +100,38 @@ export function Widget({ cfg, mode, label }: { cfg: Cfg; mode: 'launcher' | 'inl
     }
   }, [open, mode])
 
-  const panel = (
-    <div class="vz-panel">
-      <div class="vz-head">
-        <div>
-          <div class="vz-title">{business?.name || 'Rezerwacja wizyty'}</div>
-          <div class="vz-sub">Umów się online</div>
-        </div>
-        {mode === 'launcher' && (
-          <button class="vz-close" onClick={() => setOpen(false)} aria-label="Zamknij">
-            ×
-          </button>
-        )}
-      </div>
-      <div class="vz-body">
-        {loading && (
-          <div class="vz-center">
-            <span class="vz-spin" /> Wczytuję...
-          </div>
-        )}
-        {failed && !loading && (
-          <div class="vz-center" style="flex-direction:column;">
-            <div>Nie udało się wczytać rezerwacji.</div>
-            <button class="vz-btn" style="width:auto;margin-top:14px;" onClick={load}>
-              Spróbuj ponownie
-            </button>
-          </div>
-        )}
-        {business && <BookingFlow cfg={cfg} business={business} />}
-      </div>
-      <div class="vz-powered">
-        Rezerwacje przez <b>Vizyto</b>
-      </div>
-    </div>
-  )
+  const close = mode === 'launcher' ? () => setOpen(false) : undefined
 
-  if (mode === 'inline') return <div class="vz-inline">{panel}</div>
+  const content = loading ? (
+    <MiniPanel onClose={close}><div class="vz-center"><Spinner /> Wczytuję…</div></MiniPanel>
+  ) : failed ? (
+    <MiniPanel onClose={close}>
+      <div class="vz-center" style="flex-direction:column;gap:14px;">
+        <div>Nie udało się wczytać rezerwacji.</div>
+        <button class="vz-btn" style="width:auto;" onClick={load} type="button">Spróbuj ponownie</button>
+      </div>
+    </MiniPanel>
+  ) : business ? (
+    <BookingFlow cfg={cfg} business={business} preAuth={preAuth} onClose={close} />
+  ) : null
+
+  if (mode === 'inline') return <div class="vz-inline">{content}</div>
 
   return (
     <>
-      <button class="vz-launcher" onClick={() => setOpen(true)}>
+      <button class="vz-launcher" onClick={() => setOpen(true)} type="button">
+        <Calendar size={18} />
         {label}
       </button>
       {open && (
         <div
           class="vz-overlay"
+          ref={overlayRef}
           onClick={(e) => {
             if (e.target === e.currentTarget) setOpen(false)
           }}
         >
-          {panel}
+          {content}
         </div>
       )}
     </>

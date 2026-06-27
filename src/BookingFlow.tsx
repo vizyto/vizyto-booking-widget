@@ -1,46 +1,60 @@
-import { useEffect, useMemo, useState } from 'preact/hooks'
-import type { Business, Cfg, DayCounts, Service, Slots } from './api'
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
+import type { Business, Cfg, DayCounts, Resource, Service, Slots } from './api'
 import {
+  checkEmail,
   createAppointment,
   formatDuration,
-  formatPrice,
+  formatPrice2,
   getAvailability,
   getCounts,
-  guestSignup,
+  loginEmail,
+  maskPhone,
+  sendGuestOtp,
   slotLabel,
   slotStartDate,
+  verifyGuestOtp,
 } from './api'
+import { dayMonth, nextDays } from './dates'
+import { ProgressBar } from './ui/ProgressBar'
+import { Spinner } from './ui/Spinner'
+import { ArrowLeft, ArrowRight, Close } from './ui/icons'
+import type { SummaryRow } from './ui/SummaryCard'
+import { StepService } from './steps/StepService'
+import { StepResource } from './steps/StepResource'
+import { StepDateTime } from './steps/StepDateTime'
+import { StepIdentify, type Contact } from './steps/StepIdentify'
+import { StepLogin } from './steps/StepLogin'
+import { StepOtp } from './steps/StepOtp'
+import { StepDone } from './steps/StepDone'
 
-const ymd = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-function nextDays(n: number): string[] {
-  const out: string[] = []
-  const b = new Date()
-  for (let i = 0; i < n; i++) {
-    const d = new Date(b)
-    d.setDate(b.getDate() + i)
-    out.push(ymd(d))
-  }
-  return out
-}
-const weekday = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('pl-PL', { weekday: 'short' })
-const dayMonth = (d: string) => new Date(d + 'T00:00:00').toLocaleDateString('pl-PL', { day: 'numeric', month: 'short' })
+const STEP_NAMES = ['WYBÓR USŁUGI', 'WYBÓR SPECJALISTY', 'WYBÓR TERMINU', 'TWOJE DANE']
+const HORIZON = 42
+const OTP_RESEND_MS = 60_000
+const BLOG_URL = 'https://vizyto.com/blog/widget-rezerwacji-na-strone-internetowa'
 
 type ResChoice = number | 'any'
-const STEPS = ['Usługa', 'Barber', 'Termin', 'Dane']
+type Phase = 'select' | 'identify' | 'login' | 'otp' | 'confirming' | 'done' | 'slotLost'
+export type Auth = { userId: number; token: string | null }
+
+const emptyContact: Contact = { firstName: '', lastName: '', phone: '', email: '' }
 
 export function BookingFlow({
   cfg,
   business,
   initialServiceId,
+  preAuth,
+  onClose,
 }: {
   cfg: Cfg
   business: Business
   initialServiceId?: number
+  preAuth?: Auth
+  onClose?: () => void
 }) {
   const services = useMemo(() => business.services.filter((s) => s.bookingType !== 'group'), [business])
   const workers = useMemo(() => business.resources.filter((r) => r.type === 'worker'), [business])
 
+  // selection
   const [service, setService] = useState<Service | null>(() => services.find((s) => s.id === initialServiceId) ?? null)
   const [resource, setResource] = useState<ResChoice | null>(null)
   const [date, setDate] = useState('')
@@ -48,14 +62,37 @@ export function BookingFlow({
   const [counts, setCounts] = useState<DayCounts>({})
   const [slots, setSlots] = useState<Slots>({})
   const [loadingSlots, setLoadingSlots] = useState(false)
-  const [contact, setContact] = useState({ firstName: '', lastName: '', phone: '', email: '' })
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState('')
-  const [done, setDone] = useState(false)
+  const [refetch, setRefetch] = useState(0)
+  const [selStep, setSelStep] = useState(0) // 0 service, 1 specialist, 2 termin
+
+  // flow
+  const [phase, setPhase] = useState<Phase>('select')
+  const [contact, setContact] = useState<Contact>(emptyContact)
+  const [emailExists, setEmailExists] = useState(false)
+  const [auth, setAuth] = useState<Auth | null>(preAuth ?? null)
+
+  // otp
+  const [code, setCode] = useState('')
+  const [otpInfo, setOtpInfo] = useState({ maskedPhone: '', expiresAt: 0, resendAt: 0 })
+  const [attemptsLeft, setAttemptsLeft] = useState(3)
+  const [now, setNow] = useState(() => Date.now())
+
+  // busy + errors
+  const [sending, setSending] = useState(false)
+  const [verifying, setVerifying] = useState(false)
+  const [loggingIn, setLoggingIn] = useState(false)
+  const [identifyErr, setIdentifyErr] = useState('')
+  const [otpErr, setOtpErr] = useState('')
+  const [loginErr, setLoginErr] = useState('')
+  const [loginReason, setLoginReason] = useState('')
+  const [bookingErr, setBookingErr] = useState('')
+  const booking = useRef(false)
+  const bodyRef = useRef<HTMLDivElement>(null)
 
   const resourceId = resource === 'any' || resource == null ? undefined : resource
-  const days = useMemo(() => nextDays(14), [])
-  const step = done ? 4 : !service ? 0 : resource == null ? 1 : !slotKey ? 2 : 3
+  const days = useMemo(() => nextDays(HORIZON), [])
+  const worker: Resource | undefined = typeof resource === 'number' ? workers.find((w) => w.id === resource) : undefined
+  const workerName = resource === 'any' || resource == null ? 'Dowolny specjalista' : worker?.name ?? ''
 
   useEffect(() => {
     if (!service) return
@@ -66,7 +103,7 @@ export function BookingFlow({
     return () => {
       cancelled = true
     }
-  }, [service?.id, resourceId])
+  }, [service?.id, resourceId, refetch])
 
   useEffect(() => {
     if (!service || !date) {
@@ -81,190 +118,379 @@ export function BookingFlow({
     return () => {
       cancelled = true
     }
-  }, [service?.id, resourceId, date])
+  }, [service?.id, resourceId, date, refetch])
 
-  const slotKeys = useMemo(() => Object.keys(slots).filter((k) => (slots[k] ?? []).length > 0).sort(), [slots])
-  const workerName =
-    resource === 'any' || resource == null ? 'Dowolny barber' : workers.find((w) => w.id === resource)?.name ?? ''
-  const canSubmit =
-    !!contact.firstName.trim() &&
-    !!contact.lastName.trim() &&
-    contact.phone.trim().length >= 6 &&
-    /.+@.+\..+/.test(contact.email)
+  useEffect(() => {
+    if (phase !== 'otp') return
+    setNow(Date.now())
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [phase])
 
-  async function book() {
-    if (!service || !date || !slotKey || submitting) return
-    setSubmitting(true)
-    setError('')
-    const g = await guestSignup(cfg, {
-      firstName: contact.firstName.trim(),
-      lastName: contact.lastName.trim(),
-      phone: contact.phone.trim(),
-      email: contact.email.trim().toLowerCase(),
-    })
-    if (!g.ok) {
-      setSubmitting(false)
-      setError(
-        g.code === 'EMAIL_IN_USE'
-          ? 'Ten e-mail ma już konto Vizyto. Użyj innego adresu lub zaloguj się w aplikacji.'
-          : 'Nie udało się rozpocząć rezerwacji. Spróbuj ponownie.',
+  // Scroll each step back to the top so long lists don't start mid-way.
+  useEffect(() => {
+    bodyRef.current?.scrollTo(0, 0)
+  }, [phase, selStep])
+
+  const summaryRows: SummaryRow[] = service
+    ? [
+        { label: 'Usługa', value: service.name },
+        { label: 'Specjalista', value: workerName },
+        { label: 'Termin', value: `${dayMonth(date)}, ${slotLabel(date, slotKey, business.timezone)}` },
+        { label: 'Cena', value: formatPrice2(service.price), total: true },
+      ]
+    : []
+
+  async function book(a: Auth, key = slotKey) {
+    if (!service || !date || !key || booking.current) return
+    booking.current = true
+    setBookingErr('')
+    setPhase('confirming')
+    const r = await createAppointment(
+      cfg,
+      { businessServiceId: service.id, startDate: slotStartDate(date, key), bookedById: a.userId, resourceId },
+      a.token,
+    )
+    booking.current = false
+    if (r.ok) {
+      setPhase('done')
+      return
+    }
+    if (r.code === 'BOOKED_BY_MISMATCH' || r.code === 'VERIFICATION_REQUIRED') {
+      setAuth(null)
+      setIdentifyErr('Potwierdź numer telefonu, aby dokończyć rezerwację.')
+      setPhase('identify')
+      return
+    }
+    if (r.code === 'NETWORK') {
+      setBookingErr('Brak połączenia. Spróbuj ponownie.')
+      return
+    }
+    setSlotKey('')
+    setPhase('slotLost')
+  }
+
+  // ---- selection (select-then-Dalej) ----
+  function pickService(s: Service) {
+    if (s.id !== service?.id) {
+      setService(s)
+      setResource(null)
+      setDate('')
+      setSlotKey('')
+    }
+  }
+  function pickResource(r: ResChoice) {
+    if (r !== resource) {
+      setResource(r)
+      setDate('')
+      setSlotKey('')
+    }
+  }
+  function dalej() {
+    if (selStep === 0) {
+      if (!service) return
+      if (workers.length <= 1) {
+        setResource(workers.length === 1 ? workers[0].id : 'any')
+        setSelStep(2)
+      } else setSelStep(1)
+    } else if (selStep === 1) {
+      if (resource == null) return
+      setSelStep(2)
+    } else {
+      if (!slotKey) return
+      if (auth) void book(auth, slotKey)
+      else setPhase('identify')
+    }
+  }
+
+  // ---- back (rendered in the panel header) ----
+  const backFn: (() => void) | null = (() => {
+    if (phase === 'identify') return () => setPhase('select')
+    if (phase === 'login') return () => { setLoginErr(''); setPhase('identify') }
+    if (phase === 'otp') return () => { setOtpErr(''); setPhase('identify') }
+    if (phase === 'slotLost') return () => recoverSlot()
+    if (phase === 'select') {
+      if (selStep === 2) return () => setSelStep(workers.length > 1 ? 1 : 0)
+      if (selStep === 1) return () => setSelStep(0)
+      return onClose ?? null // first step: back closes (launcher)
+    }
+    return null // confirming / done
+  })()
+
+  // ---- identify / otp / login ----
+  function onContactChange(c: Contact) {
+    if (c.email !== contact.email) setEmailExists(false)
+    setContact(c)
+  }
+  async function onCheckEmail() {
+    if (!/.+@.+\..+/.test(contact.email)) return
+    const r = await checkEmail(cfg, contact.email.trim().toLowerCase())
+    if (!('error' in r)) setEmailExists(r.exists)
+  }
+  async function onSendCode(phone: string) {
+    setContact((c) => ({ ...c, phone }))
+    setSending(true)
+    setIdentifyErr('')
+    const r = await sendGuestOtp(cfg, { phone })
+    setSending(false)
+    if (!r.ok) {
+      setIdentifyErr(
+        r.code === 'RATE_LIMITED'
+          ? `Poczekaj ${r.retryAfter ?? 60}s i spróbuj ponownie.`
+          : r.code === 'SITE_KEY_REQUIRED'
+            ? 'Rezerwacja jest chwilowo niedostępna.'
+            : 'Nie udało się wysłać kodu. Spróbuj ponownie.',
       )
       return
     }
-    const r = await createAppointment(
-      cfg,
-      { businessServiceId: service.id, startDate: slotStartDate(date, slotKey), bookedById: g.data.userId, resourceId },
-      g.data.token,
-    )
-    setSubmitting(false)
+    setCode('')
+    setAttemptsLeft(3)
+    setOtpErr('')
+    setOtpInfo({
+      maskedPhone: r.maskedPhone || maskPhone(phone),
+      expiresAt: Date.now() + r.expiresIn * 1000,
+      resendAt: Date.now() + OTP_RESEND_MS,
+    })
+    setPhase('otp')
+  }
+  async function onResend() {
+    setSending(true)
+    setOtpErr('')
+    const r = await sendGuestOtp(cfg, { phone: contact.phone })
+    setSending(false)
     if (!r.ok) {
-      setError(r.code === 'BOOKED_BY_MISMATCH' ? 'Sesja wygasła, odśwież stronę.' : 'Ten termin właśnie zniknął. Wybierz inny.')
-      setSlotKey('')
+      setOtpErr(r.code === 'RATE_LIMITED' ? `Poczekaj ${r.retryAfter ?? 60}s.` : 'Nie udało się wysłać kodu.')
       return
     }
-    setDone(true)
+    setCode('')
+    setAttemptsLeft(3)
+    setOtpInfo({
+      maskedPhone: r.maskedPhone || maskPhone(contact.phone),
+      expiresAt: Date.now() + r.expiresIn * 1000,
+      resendAt: Date.now() + OTP_RESEND_MS,
+    })
+  }
+  async function onVerify(c: string) {
+    if (verifying) return
+    setVerifying(true)
+    setOtpErr('')
+    const r = await verifyGuestOtp(cfg, {
+      firstName: contact.firstName.trim(),
+      lastName: contact.lastName.trim(),
+      email: contact.email.trim().toLowerCase(),
+      phone: contact.phone,
+      otp: c,
+    })
+    setVerifying(false)
+    if (r.ok) {
+      const a = { userId: r.data.userId, token: r.data.token }
+      setAuth(a)
+      void book(a)
+      return
+    }
+    if (r.code === 'EMAIL_IN_USE') {
+      setLoginReason('Ten e-mail ma już konto Vizyto. Zaloguj się, aby dokończyć rezerwację.')
+      setPhase('login')
+      return
+    }
+    if (r.code === 'EXPIRED') {
+      setOtpErr('Kod wygasł. Wyślij nowy.')
+      return
+    }
+    const left = r.remainingAttempts ?? attemptsLeft - 1
+    setAttemptsLeft(left)
+    setCode('')
+    if (left <= 0) {
+      setIdentifyErr('Zbyt wiele prób. Wyślij nowy kod.')
+      setPhase('identify')
+      return
+    }
+    setOtpErr(`Nieprawidłowy kod. Pozostało prób: ${left}`)
+  }
+  async function onLogin(email: string, password: string) {
+    if (loggingIn) return
+    setLoggingIn(true)
+    setLoginErr('')
+    const r = await loginEmail(cfg, { email: email.trim().toLowerCase(), password })
+    setLoggingIn(false)
+    if (!r.ok) {
+      setLoginErr(r.code === 'SITE_KEY_REQUIRED' ? 'Rezerwacja jest chwilowo niedostępna.' : 'Nieprawidłowy e-mail lub hasło.')
+      return
+    }
+    const a = { userId: r.data.userId, token: r.data.token }
+    setAuth(a)
+    void book(a)
+  }
+  function goLogin() {
+    setLoginReason('')
+    setLoginErr('')
+    setPhase('login')
+  }
+  function recoverSlot() {
+    setSlotKey('')
+    setSlots({})
+    setBookingErr('')
+    setRefetch((x) => x + 1)
+    setSelStep(2)
+    setPhase('select')
+  }
+  function restart() {
+    setService(null)
+    setResource(null)
+    setDate('')
+    setSlotKey('')
+    setSelStep(0)
+    setContact(emptyContact)
+    setEmailExists(false)
+    setAuth(preAuth ?? null)
+    setCode('')
+    setAttemptsLeft(3)
+    setOtpInfo({ maskedPhone: '', expiresAt: 0, resendAt: 0 })
+    setSending(false)
+    setVerifying(false)
+    setLoggingIn(false)
+    booking.current = false
+    setIdentifyErr('')
+    setOtpErr('')
+    setLoginErr('')
+    setBookingErr('')
+    setPhase('select')
   }
 
-  const setC = (k: keyof typeof contact, v: string) => setContact((p) => ({ ...p, [k]: v }))
-
-  if (done && service) {
-    return (
-      <div class="vz-done">
-        <div class="vz-check">✓</div>
-        <div style="font-size:20px;font-weight:600;">Zarezerwowane!</div>
-        <div class="vz-muted" style="margin-top:6px;">Potwierdzenie wyślemy na {contact.email}.</div>
-        <div class="vz-summary" style="text-align:left;margin:18px auto 0;max-width:300px;">
-          <div class="vz-row"><span>Usługa</span><span>{service.name}</span></div>
-          <div class="vz-row"><span>Barber</span><span>{workerName}</span></div>
-          <div class="vz-row"><span>Termin</span><span>{dayMonth(date)}, {slotLabel(date, slotKey, business.timezone)}</span></div>
-          <div class="vz-row"><span>Cena</span><span>{formatPrice(service.price)}</span></div>
-        </div>
-      </div>
-    )
-  }
+  const progStep = phase === 'select' ? selStep : phase === 'slotLost' ? 2 : 3
+  const showCta = phase === 'select'
+  const canAdvance = selStep === 0 ? !!service : selStep === 1 ? resource != null : !!slotKey
+  const ctaPrice = service ? `${selStep === 0 ? 'od ' : ''}${formatPrice2(service.price)}` : ''
 
   return (
-    <div>
-      <div class="vz-steps">
-        {STEPS.map((label, i) => (
-          <div class={`vz-step ${i < step ? 'done' : i === step ? 'active' : ''}`}>
-            <span class="vz-dot">{i < step ? '✓' : i + 1}</span>
-            {label}
-            {i < STEPS.length - 1 && <span class="vz-sep" />}
+    <div class="vz-panel" role="dialog" aria-modal={onClose ? 'true' : undefined} aria-label="Zarezerwuj wizytę">
+      {onClose && <span class="vz-grab" aria-hidden="true" />}
+      <header class="vz-head">
+        {backFn ? (
+          <button class="vz-iconbtn" onClick={backFn} aria-label="Wstecz" type="button"><ArrowLeft size={20} /></button>
+        ) : (
+          <span class="vz-head-spacer" />
+        )}
+        <div class="vz-title">Zarezerwuj wizytę</div>
+        {onClose ? (
+          <button class="vz-iconbtn" onClick={onClose} aria-label="Zamknij" type="button"><Close size={20} /></button>
+        ) : (
+          <span class="vz-head-spacer" />
+        )}
+      </header>
+
+      <div class="vz-body" ref={bodyRef} tabIndex={-1}>
+        {phase !== 'done' && <ProgressBar step={progStep} total={4} label={STEP_NAMES[progStep]} />}
+
+        {phase === 'select' && selStep === 0 && (
+          <StepService services={services} selectedId={service?.id} onPick={pickService} />
+        )}
+        {phase === 'select' && selStep === 1 && service && (
+          <StepResource workers={workers} service={service} selected={resource} onPick={pickResource} />
+        )}
+        {phase === 'select' && selStep === 2 && service && (
+          <StepDateTime
+            days={days}
+            counts={counts}
+            date={date}
+            slots={slots}
+            loading={loadingSlots}
+            timezone={business.timezone}
+            selectedSlot={slotKey}
+            onPickDate={(d) => { setDate(d); setSlotKey('') }}
+            onPickSlot={setSlotKey}
+          />
+        )}
+
+        {phase === 'identify' && service && (
+          <StepIdentify
+            summary={summaryRows}
+            contact={contact}
+            onChange={onContactChange}
+            emailExists={emailExists}
+            onCheckEmail={onCheckEmail}
+            onSendCode={onSendCode}
+            onGoLogin={goLogin}
+            sending={sending}
+            error={identifyErr}
+          />
+        )}
+        {phase === 'login' && (
+          <StepLogin
+            email={contact.email}
+            prefillReason={loginReason}
+            onChangeEmail={(v) => onContactChange({ ...contact, email: v })}
+            onSubmit={onLogin}
+            onBackToGuest={() => { setLoginErr(''); setPhase('identify') }}
+            loggingIn={loggingIn}
+            error={loginErr}
+          />
+        )}
+        {phase === 'otp' && (
+          <StepOtp
+            maskedPhone={otpInfo.maskedPhone}
+            code={code}
+            onCode={setCode}
+            onComplete={onVerify}
+            onResend={onResend}
+            verifying={verifying}
+            resending={sending}
+            error={otpErr}
+            now={now}
+            expiresAt={otpInfo.expiresAt}
+            resendAt={otpInfo.resendAt}
+          />
+        )}
+        {phase === 'confirming' &&
+          (bookingErr ? (
+            <div class="vz-fade-in">
+              <div class="vz-err" role="alert">{bookingErr}</div>
+              <button class="vz-btn mt" onClick={() => auth && book(auth)} type="button">Spróbuj ponownie</button>
+            </div>
+          ) : (
+            <div class="vz-center" style="flex-direction:column;gap:14px;"><Spinner /> Rezerwuję Twoją wizytę…</div>
+          ))}
+        {phase === 'slotLost' && (
+          <div class="vz-fade-in" style="text-align:center;padding:8px 0;">
+            <div class="vz-done-title" style="font-size:18px;">Ten termin właśnie zniknął</div>
+            <p class="vz-lead" style="margin-top:8px;">Ktoś był szybszy. Wybierz inny wolny termin — Twoje dane zostają zapisane.</p>
+            <button class="vz-btn mt" onClick={recoverSlot} type="button">Wybierz inny termin</button>
           </div>
-        ))}
+        )}
+        {phase === 'done' && (
+          <StepDone rows={summaryRows} phone={contact.phone} email={contact.email} onClose={onClose} onRestart={restart} />
+        )}
       </div>
 
-      {step === 0 && (
-        <div>
-          <div class="vz-h">Wybierz usługę</div>
-          <div class="vz-list">
-            {services.map((s) => (
-              <button class="vz-opt" onClick={() => setService(s)}>
-                <span>
-                  <span class="vz-opt-name">{s.name}</span>
-                  <span class="vz-opt-meta">{formatDuration(s.duration)}</span>
-                </span>
-                <span class="vz-opt-price">{formatPrice(s.price)}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {step === 1 && service && (
-        <div>
-          <div class="vz-h">
-            <button class="vz-back" onClick={() => setService(null)}>‹</button>
-            Wybierz barbera
-          </div>
-          <div class="vz-grid3">
-            {workers.length > 1 && (
-              <button class="vz-worker" onClick={() => setResource('any')}>
-                <span class="vz-av">✂</span>
-                <span class="vz-wn">Dowolny</span>
-              </button>
-            )}
-            {workers.map((w) => (
-              <button class="vz-worker" onClick={() => setResource(w.id)}>
-                <span class="vz-av">{w.image ? <img src={w.image} alt={w.name} /> : w.name.charAt(0)}</span>
-                <span class="vz-wn">{w.name}</span>
-                {w.position && <span class="vz-wp">{w.position}</span>}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {step === 2 && service && (
-        <div>
-          <div class="vz-h">
-            <button class="vz-back" onClick={() => setResource(null)}>‹</button>
-            Wybierz termin
-          </div>
-          <div class="vz-days">
-            {days.map((d) => {
-              const free = (counts[d] ?? 0) > 0
-              return (
-                <button
-                  class={`vz-day ${d === date ? 'active' : ''}`}
-                  disabled={!free}
-                  onClick={() => {
-                    setDate(d)
-                    setSlotKey('')
-                  }}
-                >
-                  <small>{weekday(d)}</small>
-                  {dayMonth(d)}
-                  {free && <span class="vz-free" />}
-                </button>
-              )
-            })}
-          </div>
-          {!date ? (
-            <div class="vz-muted" style="margin-top:16px;">Wybierz dzień, aby zobaczyć godziny.</div>
-          ) : loadingSlots ? (
-            <div class="vz-center"><span class="vz-spin" /> Szukam wolnych godzin...</div>
-          ) : slotKeys.length === 0 ? (
-            <div class="vz-muted" style="margin-top:16px;">Brak wolnych godzin tego dnia. Wybierz inny.</div>
-          ) : (
-            <div class="vz-slots">
-              {slotKeys.map((k) => (
-                <button class="vz-slot" onClick={() => setSlotKey(k)}>
-                  {slotLabel(date, k, business.timezone)}
-                </button>
-              ))}
+      {showCta && (
+        <div class="vz-cta">
+          <div class="vz-cta-summary">
+            <div class="vz-cta-left">
+              {service ? (
+                <>
+                  <div class="vz-cta-svc">{service.name}</div>
+                  <div class="vz-cta-meta"><b>{ctaPrice}</b> · {formatDuration(service.duration)}</div>
+                </>
+              ) : (
+                <div class="vz-cta-meta">Wybierz usługę, aby kontynuować</div>
+              )}
             </div>
-          )}
+            {selStep >= 1 && resource != null && (
+              <div class="vz-cta-who">
+                <span class="vz-card-av">{worker?.image ? <img src={worker.image} alt="" /> : worker ? worker.name.charAt(0) : '✦'}</span>
+                <span>{resource === 'any' ? 'Dowolny' : worker?.name}</span>
+              </div>
+            )}
+          </div>
+          <button class="vz-btn" onClick={dalej} disabled={!canAdvance} type="button">
+            Dalej <ArrowRight size={18} />
+          </button>
         </div>
       )}
 
-      {step === 3 && service && (
-        <div>
-          <div class="vz-h">
-            <button class="vz-back" onClick={() => setSlotKey('')}>‹</button>
-            Twoje dane
-          </div>
-          <div class="vz-summary">
-            <div class="vz-row"><span>Usługa</span><span>{service.name}</span></div>
-            <div class="vz-row"><span>Barber</span><span>{workerName}</span></div>
-            <div class="vz-row"><span>Termin</span><span>{dayMonth(date)}, {slotLabel(date, slotKey, business.timezone)}</span></div>
-            <div class="vz-row"><span>Cena</span><span>{formatPrice(service.price)}</span></div>
-          </div>
-          <div class="vz-fields">
-            <input class="vz-input" placeholder="Imię" value={contact.firstName} onInput={(e) => setC('firstName', (e.target as HTMLInputElement).value)} />
-            <input class="vz-input" placeholder="Nazwisko" value={contact.lastName} onInput={(e) => setC('lastName', (e.target as HTMLInputElement).value)} />
-            <input class="vz-input full" type="tel" placeholder="Telefon" value={contact.phone} onInput={(e) => setC('phone', (e.target as HTMLInputElement).value)} />
-            <input class="vz-input full" type="email" placeholder="E-mail" value={contact.email} onInput={(e) => setC('email', (e.target as HTMLInputElement).value)} />
-          </div>
-          {error && <div class="vz-err">{error}</div>}
-          <button class="vz-btn" disabled={!canSubmit || submitting} onClick={book}>
-            {submitting && <span class="vz-spin" />}
-            {submitting ? 'Rezerwuję...' : `Rezerwuję - ${formatPrice(service.price)}`}
-          </button>
-          <div class="vz-note">Rezerwując akceptujesz kontakt w sprawie wizyty. Konto Vizyto nie jest wymagane.</div>
-        </div>
-      )}
+      <div class="vz-powered">
+        Rezerwacje przez <a href={BLOG_URL} target="_blank" rel="noopener noreferrer">Vizyto</a>
+      </div>
     </div>
   )
 }
