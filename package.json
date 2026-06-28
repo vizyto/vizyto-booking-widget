@@ -13,6 +13,9 @@
   "dependencies": {
     "preact": "^10.24.3"
   },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
   "devDependencies": {
     "@preact/preset-vite": "^2.9.4",
     "typescript": "^5.9.3",

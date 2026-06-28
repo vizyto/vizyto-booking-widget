@@ -1,7 +1,7 @@
 name: Deploy widget (Cloudflare)
 
 # Tag a release to ship widget.vizyto.com/v1/widget.js:
-#   git tag v1.0.0 && git push origin v1.0.0
+#   make release V=1.0.0   (tags v1.0.0 + pushes)
 # Or run manually from the Actions tab (workflow_dispatch).
 # Only needs the org's CLOUDFLARE_API_TOKEN secret (account is inferred).
 on:
@@ -19,9 +19,8 @@ jobs:
           version: 9
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          node-version: 22
+      - run: pnpm install --no-frozen-lockfile
       - run: pnpm build:cdn
       - name: Deploy to Cloudflare
         run: pnpm dlx wrangler@4 deploy
