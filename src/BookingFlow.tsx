@@ -18,6 +18,7 @@ import {
 import { dayMonth, nextDays } from './dates'
 import { ProgressBar } from './ui/ProgressBar'
 import { Spinner } from './ui/Spinner'
+import { Powered } from './ui/Powered'
 import { ArrowLeft, ArrowRight, Close } from './ui/icons'
 import type { SummaryRow } from './ui/SummaryCard'
 import { StepService } from './steps/StepService'
@@ -31,7 +32,6 @@ import { StepDone } from './steps/StepDone'
 const STEP_NAMES = ['WYBÓR USŁUGI', 'WYBÓR SPECJALISTY', 'WYBÓR TERMINU', 'TWOJE DANE']
 const HORIZON = 42
 const OTP_RESEND_MS = 60_000
-const BLOG_URL = 'https://vizyto.com/blog/widget-rezerwacji-na-strone-internetowa'
 
 type ResChoice = number | 'any'
 type Phase = 'select' | 'identify' | 'login' | 'otp' | 'confirming' | 'done' | 'slotLost'
@@ -512,9 +512,7 @@ export function BookingFlow({
         </div>
       )}
 
-      <div class="vz-powered">
-        Rezerwacje przez <a href={BLOG_URL} target="_blank" rel="noopener noreferrer">Vizyto</a>
-      </div>
+      <Powered />
     </div>
   )
 }

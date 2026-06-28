@@ -117,12 +117,15 @@ export const css = `
 .vz-body { padding: 18px 18px 22px; overflow-y: auto; flex: 1 1 auto; }
 
 .vz-powered {
-  text-align: center; font-size: 11px; color: var(--vz-text-muted);
+  display: flex; align-items: center; justify-content: center;
   padding: 11px 0; border-top: 1px solid var(--vz-border); flex: 0 0 auto;
   background: var(--vz-surface);
 }
-.vz-powered a { color: var(--vz-text); font-weight: 600; text-decoration: none; }
-.vz-powered a:hover { color: var(--vz-accent); }
+.vz-powered-link { display: inline-flex; align-items: center; gap: 6px; color: var(--vz-text); text-decoration: none; }
+.vz-powered-cap { font-size: 11px; color: var(--vz-text-muted); }
+.vz-powered svg { height: 13px; width: auto; opacity: .9; transition: opacity var(--vz-dur-out); }
+.vz-powered-link:hover svg { opacity: 1; }
+.vz-powered-link:hover .vz-powered-cap { color: var(--vz-text); }
 
 /* ---- PROGRESS (KROK X Z N) --------------------------------------------- */
 .vz-prog { margin-bottom: 20px; }

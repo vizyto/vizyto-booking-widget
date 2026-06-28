@@ -4,17 +4,8 @@ import type { Business, Cfg } from './api'
 import { fetchBusiness } from './api'
 import { BookingFlow, type Auth } from './BookingFlow'
 import { Spinner } from './ui/Spinner'
+import { Powered } from './ui/Powered'
 import { Calendar, Close } from './ui/icons'
-
-const BLOG_URL = 'https://vizyto.com/blog/widget-rezerwacji-na-strone-internetowa'
-
-function Powered() {
-  return (
-    <div class="vz-powered">
-      Rezerwacje przez <a href={BLOG_URL} target="_blank" rel="noopener noreferrer">Vizyto</a>
-    </div>
-  )
-}
 
 // Minimal panel used only for the load / error states before the flow mounts.
 function MiniPanel({ onClose, children }: { onClose?: () => void; children: ComponentChildren }) {
