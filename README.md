@@ -169,13 +169,13 @@ Albo lokalnie: `pnpm deploy`.
 
 ### Jednorazowa konfiguracja
 
-1. **Sekret** `CLOUDFLARE_API_TOKEN` w repo widgetu. To ten sam token, którego
-   używają pozostałe appki — jest sekretem **organizacji** `vizyto`, więc
-   najprościej go współdzielić: GitHub → org `vizyto` → Settings → Secrets and
-   variables → Actions → `CLOUDFLARE_API_TOKEN` → Repository access → dodaj
-   `vizyto-booking-widget`. (Wartości nie trzeba znać — i tak nie da się jej
-   odczytać.) Alternatywnie nowy token: Cloudflare → My Profile → API Tokens →
-   „Edit Cloudflare Workers".
+1. **Sekret** `CLOUDFLARE_API_TOKEN` w repo widgetu (`vizyto/vizyto-booking-widget`
+   → Settings → Secrets and variables → Actions → New repository secret). Uwaga:
+   monorepo jest pod `trupu/vizyto` (konto osobiste), więc token żyje jako sekret
+   *tamtego* repo i nie da się go współdzielić ani odczytać. Użyj zapisanej
+   wartości tokena albo wygeneruj nowy: Cloudflare → My Profile → API Tokens →
+   „Edit Cloudflare Workers". Lokalnie:
+   `gh secret set CLOUDFLARE_API_TOKEN -R vizyto/vizyto-booking-widget`.
 2. `CLOUDFLARE_ACCOUNT_ID` **nie jest potrzebny** — token jest account-scoped.
 3. Domena `widget.vizyto.com` provisionuje się **automatycznie** przy pierwszym
    deployu (`routes.custom_domain` w `wrangler.jsonc`). Gdyby token nie miał
