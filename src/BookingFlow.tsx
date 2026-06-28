@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import type { Business, Cfg, DayCounts, Resource, Service, Slots } from './api'
+import type { Business, Cfg, DayCounts, OAuthProvider, Resource, Service, Slots } from './api'
 import {
   checkEmail,
   createAppointment,
@@ -9,6 +9,7 @@ import {
   getCounts,
   loginEmail,
   maskPhone,
+  oauthLogin,
   sendGuestOtp,
   slotLabel,
   slotStartDate,
@@ -81,6 +82,7 @@ export function BookingFlow({
   const [sending, setSending] = useState(false)
   const [verifying, setVerifying] = useState(false)
   const [loggingIn, setLoggingIn] = useState(false)
+  const [oauthBusy, setOauthBusy] = useState<OAuthProvider | null>(null)
   const [identifyErr, setIdentifyErr] = useState('')
   const [otpErr, setOtpErr] = useState('')
   const [loginErr, setLoginErr] = useState('')
@@ -321,6 +323,25 @@ export function BookingFlow({
     setAuth(a)
     void book(a)
   }
+  async function onOAuth(provider: OAuthProvider) {
+    if (oauthBusy || loggingIn) return
+    setOauthBusy(provider)
+    setLoginErr('')
+    const r = await oauthLogin(cfg, provider)
+    setOauthBusy(null)
+    if (!r.ok) {
+      if (r.code === 'POPUP_CLOSED') return // user closed the popup — no error
+      setLoginErr(
+        r.code === 'POPUP_BLOCKED'
+          ? 'Zezwól na wyskakujące okienka, aby zalogować się tą metodą.'
+          : 'Logowanie nie powiodło się. Spróbuj ponownie.',
+      )
+      return
+    }
+    const a = { userId: r.data.userId, token: r.data.token }
+    setAuth(a)
+    void book(a)
+  }
   function goLogin() {
     setLoginReason('')
     setLoginErr('')
@@ -349,6 +370,7 @@ export function BookingFlow({
     setSending(false)
     setVerifying(false)
     setLoggingIn(false)
+    setOauthBusy(null)
     booking.current = false
     setIdentifyErr('')
     setOtpErr('')
@@ -421,6 +443,8 @@ export function BookingFlow({
             prefillReason={loginReason}
             onChangeEmail={(v) => onContactChange({ ...contact, email: v })}
             onSubmit={onLogin}
+            onOAuth={onOAuth}
+            oauthBusy={oauthBusy}
             onBackToGuest={() => { setLoginErr(''); setPhase('identify') }}
             loggingIn={loggingIn}
             error={loginErr}

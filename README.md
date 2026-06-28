@@ -32,7 +32,13 @@ kreator ma się pojawić na stałe (przycisk się wtedy nie pokazuje).
 
 Każda rezerwacja gościa jest potwierdzana **kodem SMS** na podany numer — bez
 tego nie powstaje wizyta, więc nikt losowy nie zablokuje terminów. Klient z
-kontem Vizyto może się zalogować (e-mail + hasło) i **pomija weryfikację SMS**.
+kontem Vizyto może się zalogować (**e-mail + hasło** lub **Google / Apple /
+Facebook**) i **pomija weryfikację SMS**.
+
+Logowanie OAuth na obcej domenie działa przez **popup + `postMessage`**: widget
+otwiera okno na `…/api/public/auth/embed/start`, a po zalogowaniu strona-mostek
+Vizyto (`…/embed/callback`) odsyła bearer token tylko do originu dozwolonego na
+site key.
 
 - Gość: imię, nazwisko, telefon, e-mail → kod SMS (4 cyfry, ważny 5 min,
   3 próby, ponowne wysłanie co 60 s) → rezerwacja.
@@ -80,6 +86,8 @@ zapisy dodatkowo `Authorization: Bearer <token>`):
 - `POST /guest/otp/verify` `{businessId,firstName,lastName,email,phone,otp}` → `{userId,token}` (gość z `phoneVerified`), `409 EMAIL_IN_USE`, `400` przy złym/wygasłym kodzie.
 - `POST /guest/login` `{businessId,email,password}` → `{userId,token}` (token w body — cookies są blokowane cross-origin).
 - `POST /auth/check-email` `{email}` → `{exists}` — proaktywne wykrycie istniejącego konta.
+- `GET  /auth/embed/start?provider&businessId&origin&key` — start OAuth w popupie (302 do dostawcy).
+- `GET  /auth/embed/callback` — po OAuth odsyła `{token,userId}` przez `postMessage` do dozwolonego originu.
 - `POST /businesses/:id/appointments` — tworzy wizytę (i wysyła SMS-potwierdzenie).
 
 Backend tych endpointów żyje w monorepo Vizyto:

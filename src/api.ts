@@ -49,6 +49,7 @@ export type CheckEmailResult = { exists: boolean; providers: string[] } | { erro
 export type LoginResult =
   | { ok: true; data: GuestData }
   | { ok: false; code: 'INVALID_CREDENTIALS' | 'SITE_KEY_REQUIRED' | 'NETWORK' | string }
+export type OAuthProvider = 'google' | 'apple' | 'facebook'
 
 function headers(cfg: Cfg, extra?: Record<string, string>): Record<string, string> {
   const h: Record<string, string> = { 'content-type': 'application/json' }
@@ -172,6 +173,55 @@ export async function loginEmail(cfg: Cfg, p: { email: string; password: string 
   } catch {
     return { ok: false, code: 'NETWORK' }
   }
+}
+
+// "Log in with Vizyto" via OAuth. Opens a popup to the Vizyto-hosted embed
+// bridge; the bridge runs the provider sign-in and postMessages back a bearer
+// token (only to this origin, gated by the site key). window.open MUST run in
+// the click gesture, so it's the first thing the executor does.
+export function oauthLogin(cfg: Cfg, provider: OAuthProvider): Promise<LoginResult> {
+  if (cfg.mock) return mock.oauthLogin(provider)
+  return new Promise((resolve) => {
+    let apiOrigin: string
+    try {
+      apiOrigin = new URL(cfg.apiBase).origin
+    } catch {
+      resolve({ ok: false, code: 'CONFIG' })
+      return
+    }
+    const w = 480
+    const h = 660
+    const left = Math.max(0, Math.round((window.screen.width - w) / 2))
+    const top = Math.max(0, Math.round((window.screen.height - h) / 2))
+    const q = new URLSearchParams({ provider, businessId: String(cfg.businessId), origin: location.origin, key: cfg.siteKey })
+    const popup = window.open(`${cfg.apiBase}/api/public/auth/embed/start?${q}`, 'vizyto-oauth', `width=${w},height=${h},left=${left},top=${top}`)
+    if (!popup) {
+      resolve({ ok: false, code: 'POPUP_BLOCKED' })
+      return
+    }
+    let settled = false
+    const finish = (r: LoginResult) => {
+      if (settled) return
+      settled = true
+      clearInterval(timer)
+      window.removeEventListener('message', onMsg)
+      try {
+        popup.close()
+      } catch {}
+      resolve(r)
+    }
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== apiOrigin || e.source !== popup) return
+      const d = e.data as any
+      if (!d || d.type !== 'vizyto-auth') return
+      if (d.ok && d.token) finish({ ok: true, data: { userId: d.userId, token: d.token } })
+      else finish({ ok: false, code: d.code || 'OAUTH_FAILED' })
+    }
+    const timer = setInterval(() => {
+      if (popup.closed) finish({ ok: false, code: 'POPUP_CLOSED' })
+    }, 500)
+    window.addEventListener('message', onMsg)
+  })
 }
 
 export async function createAppointment(

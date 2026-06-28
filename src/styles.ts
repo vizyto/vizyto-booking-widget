@@ -306,6 +306,19 @@ export const css = `
 .vz-or { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: var(--vz-text-muted); font-size: 12px; }
 .vz-or::before, .vz-or::after { content: ""; flex: 1; height: 1px; background: var(--vz-border); }
 
+.vz-oauth-list { display: grid; gap: 10px; }
+.vz-oauth {
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%;
+  padding: 12px 14px; border: 1.5px solid var(--vz-border); border-radius: var(--vz-r-md);
+  background: var(--vz-surface); color: var(--vz-text); font-family: var(--vz-font);
+  font-size: 14.5px; font-weight: 500; cursor: pointer;
+  transition: background var(--vz-dur-out), border-color var(--vz-dur-out), transform var(--vz-dur-out);
+}
+.vz-oauth:hover { background: var(--vz-surface-2); }
+.vz-oauth:active { transform: scale(.99); }
+.vz-oauth[disabled] { opacity: .55; cursor: default; }
+.vz-oauth .vz-spin { width: 16px; height: 16px; border-top-color: var(--vz-text); }
+
 /* ---- HELPERS ----------------------------------------------------------- */
 .vz-note { font-size: 11.5px; color: var(--vz-text-muted); margin-top: 12px; line-height: 1.5; text-align: center; }
 .vz-err { color: var(--vz-error); font-size: 13px; margin-top: 14px; padding: 11px 13px; border-radius: var(--vz-r-md); background: color-mix(in srgb, var(--vz-error) 10%, var(--vz-surface)); }

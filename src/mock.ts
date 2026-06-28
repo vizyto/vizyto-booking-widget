@@ -122,6 +122,13 @@ export async function loginEmail(p: { email: string; password: string }): Promis
   return { ok: false, code: 'INVALID_CREDENTIALS' }
 }
 
+export async function oauthLogin(provider: string): Promise<LoginResult> {
+  await wait(800)
+  // eslint-disable-next-line no-console
+  console.info(`%c[vizyto mock] OAuth ${provider} → zalogowano`, 'color:#fd9320;font-weight:bold')
+  return { ok: true, data: { userId: 888, token: 'mock-token' } }
+}
+
 export async function createAppointment(
   p: { startDate: string },
   token: string | null,
