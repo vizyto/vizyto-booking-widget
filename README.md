@@ -151,8 +151,31 @@ Wygeneruj site key (scope `book`) dla originu `http://localhost:4500`, wstaw go 
 Vizyto, a następnie przejdź pełny przepływ (kod przyjdzie SMS-em lub trafi do
 logów API w trybie `ENABLE_SMS=false`).
 
-## Deploy
+## Deploy (Cloudflare Pages → widget.vizyto.com)
 
-`pnpm build` → wrzuć `dist/widget.js` na CDN pod wersjonowany URL
-(`https://widget.vizyto.com/v1/widget.js`). Wszystkie osadzone strony ładują ten
-sam, centralnie utrzymywany plik.
+Hosting widgetu to projekt **Cloudflare Pages** serwujący
+`https://widget.vizyto.com/v1/widget.js`. Build składa katalog `deploy/`
+(`v1/widget.js` + `_headers` z CORS i krótkim cache, bo `/v1/` to ruchomy
+wskaźnik najnowszej wersji v1).
+
+**Wydanie nowej wersji** — wystarczy tag (CI robi resztę, patrz
+`.github/workflows/deploy.yml`):
+
+```bash
+git tag v1.0.1 && git push origin v1.0.1   # lub: Actions → Deploy widget → Run
+```
+
+Albo lokalnie: `pnpm deploy` (`pnpm dlx wrangler pages deploy`).
+
+### Jednorazowa konfiguracja (wymaga dostępu do Cloudflare)
+
+1. Sekrety w repo widgetu (Settings → Secrets → Actions): `CLOUDFLARE_API_TOKEN`
+   i `CLOUDFLARE_ACCOUNT_ID` (te same, których używają inne appki Vizyto).
+2. Pierwszy deploy utworzy projekt Pages `vizyto-booking-widget` (lub utwórz go
+   wcześniej: `wrangler pages project create vizyto-booking-widget`).
+3. W projekcie Pages dodaj **custom domain** `widget.vizyto.com` (Cloudflare
+   doda rekord DNS automatycznie, bo domena jest w CF).
+
+> ⚠️ Widget wymaga, by API (endpointy `guest/otp/*`, `guest/login`,
+> `auth/embed/*` oraz wymuszenie `phoneVerified`) było już na produkcji. Najpierw
+> `make release-api` w monorepo Vizyto, potem publikacja widgetu.

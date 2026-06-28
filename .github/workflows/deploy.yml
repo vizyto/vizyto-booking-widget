@@ -1,0 +1,30 @@
+name: Deploy widget (Cloudflare Pages)
+
+# Tag a release to ship widget.vizyto.com/v1/widget.js:
+#   git tag v1.0.0 && git push origin v1.0.0
+# Or run manually from the Actions tab (workflow_dispatch).
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:cdn
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy deploy --project-name=vizyto-booking-widget --branch=main
