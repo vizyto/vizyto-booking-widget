@@ -1,8 +1,9 @@
-name: Deploy widget (Cloudflare Pages)
+name: Deploy widget (Cloudflare)
 
 # Tag a release to ship widget.vizyto.com/v1/widget.js:
 #   git tag v1.0.0 && git push origin v1.0.0
 # Or run manually from the Actions tab (workflow_dispatch).
+# Only needs the org's CLOUDFLARE_API_TOKEN secret (account is inferred).
 on:
   push:
     tags: ['v*']
@@ -22,9 +23,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:cdn
-      - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy deploy --project-name=vizyto-booking-widget --branch=main
+      - name: Deploy to Cloudflare
+        run: pnpm dlx wrangler@4 deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

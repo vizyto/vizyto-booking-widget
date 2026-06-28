@@ -151,30 +151,36 @@ Wygeneruj site key (scope `book`) dla originu `http://localhost:4500`, wstaw go 
 Vizyto, a następnie przejdź pełny przepływ (kod przyjdzie SMS-em lub trafi do
 logów API w trybie `ENABLE_SMS=false`).
 
-## Deploy (Cloudflare Pages → widget.vizyto.com)
+## Deploy (Cloudflare → widget.vizyto.com)
 
-Hosting widgetu to projekt **Cloudflare Pages** serwujący
-`https://widget.vizyto.com/v1/widget.js`. Build składa katalog `deploy/`
-(`v1/widget.js` + `_headers` z CORS i krótkim cache, bo `/v1/` to ruchomy
-wskaźnik najnowszej wersji v1).
+Widget to **static-assets Cloudflare Worker** (taki sam mechanizm jak inne appki
+Vizyto: `wrangler deploy`), serwujący `https://widget.vizyto.com/v1/widget.js`.
+`pnpm build:cdn` składa katalog `deploy/` (`v1/widget.js` + `_headers` z CORS i
+krótkim cache — `/v1/` to ruchomy wskaźnik najnowszej wersji v1). Konfiguracja:
+`wrangler.jsonc`.
 
-**Wydanie nowej wersji** — wystarczy tag (CI robi resztę, patrz
-`.github/workflows/deploy.yml`):
+**Wydanie** — tag uruchamia CI (`.github/workflows/deploy.yml`):
 
 ```bash
-git tag v1.0.1 && git push origin v1.0.1   # lub: Actions → Deploy widget → Run
+git tag v1.0.0 && git push origin v1.0.0   # lub: Actions → Deploy widget → Run
 ```
 
-Albo lokalnie: `pnpm deploy` (`pnpm dlx wrangler pages deploy`).
+Albo lokalnie: `pnpm deploy`.
 
-### Jednorazowa konfiguracja (wymaga dostępu do Cloudflare)
+### Jednorazowa konfiguracja
 
-1. Sekrety w repo widgetu (Settings → Secrets → Actions): `CLOUDFLARE_API_TOKEN`
-   i `CLOUDFLARE_ACCOUNT_ID` (te same, których używają inne appki Vizyto).
-2. Pierwszy deploy utworzy projekt Pages `vizyto-booking-widget` (lub utwórz go
-   wcześniej: `wrangler pages project create vizyto-booking-widget`).
-3. W projekcie Pages dodaj **custom domain** `widget.vizyto.com` (Cloudflare
-   doda rekord DNS automatycznie, bo domena jest w CF).
+1. **Sekret** `CLOUDFLARE_API_TOKEN` w repo widgetu. To ten sam token, którego
+   używają pozostałe appki — jest sekretem **organizacji** `vizyto`, więc
+   najprościej go współdzielić: GitHub → org `vizyto` → Settings → Secrets and
+   variables → Actions → `CLOUDFLARE_API_TOKEN` → Repository access → dodaj
+   `vizyto-booking-widget`. (Wartości nie trzeba znać — i tak nie da się jej
+   odczytać.) Alternatywnie nowy token: Cloudflare → My Profile → API Tokens →
+   „Edit Cloudflare Workers".
+2. `CLOUDFLARE_ACCOUNT_ID` **nie jest potrzebny** — token jest account-scoped.
+3. Domena `widget.vizyto.com` provisionuje się **automatycznie** przy pierwszym
+   deployu (`routes.custom_domain` w `wrangler.jsonc`). Gdyby token nie miał
+   uprawnień do strefy DNS — usuń `routes` i dodaj domenę ręcznie w ustawieniach
+   Workera.
 
 > ⚠️ Widget wymaga, by API (endpointy `guest/otp/*`, `guest/login`,
 > `auth/embed/*` oraz wymuszenie `phoneVerified`) było już na produkcji. Najpierw

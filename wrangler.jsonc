@@ -1,0 +1,13 @@
+{
+  // Static-assets-only Cloudflare Worker (no server code) serving the widget
+  // bundle. Same deploy mechanism + token as the other Vizyto apps.
+  // `deploy/` is assembled by `pnpm build:cdn` (v1/widget.js + _headers).
+  "name": "vizyto-booking-widget",
+  "compatibility_date": "2026-01-12",
+  "assets": { "directory": "./deploy" },
+  // Auto-provisions the custom domain + DNS on first deploy (the vizyto.com zone
+  // is in the same Cloudflare account). If the token lacks zone perms, remove
+  // this and add the domain manually in the Worker's dashboard settings.
+  "routes": [{ "pattern": "widget.vizyto.com", "custom_domain": true }],
+  "workers_dev": false
+}
