@@ -4,6 +4,7 @@ import { StepHeader } from '../ui/StepHeader'
 import { SummaryCard, type SummaryRow } from '../ui/SummaryCard'
 import { Field } from '../ui/Field'
 import { Button } from '../ui/Button'
+import { Turnstile } from '../ui/Turnstile'
 import { Shield } from '../ui/icons'
 
 export type Contact = { firstName: string; lastName: string; phone: string; email: string }
@@ -20,6 +21,9 @@ export function StepIdentify({
   onGoLogin,
   sending,
   error,
+  turnstileKey,
+  turnstileToken,
+  onTurnstile,
 }: {
   summary: SummaryRow[]
   contact: Contact
@@ -30,6 +34,9 @@ export function StepIdentify({
   onGoLogin: () => void
   sending: boolean
   error?: string
+  turnstileKey?: string
+  turnstileToken: string | null
+  onTurnstile: (token: string | null) => void
 }) {
   const [errs, setErrs] = useState<Partial<Record<keyof Contact, string>>>({})
   const set = (k: keyof Contact, v: string) => {
@@ -89,9 +96,16 @@ export function StepIdentify({
           <Button onClick={onGoLogin}>Zaloguj się przez Vizyto</Button>
         </>
       ) : (
-        <Button onClick={submit} loading={sending}>
-          {sending ? 'Wysyłam kod…' : 'Wyślij kod SMS'}
-        </Button>
+        <>
+          {turnstileKey && (
+            <div class="vz-turnstile-wrap" style="display:flex;justify-content:center;margin-top:14px;">
+              <Turnstile siteKey={turnstileKey} onToken={onTurnstile} />
+            </div>
+          )}
+          <Button onClick={submit} loading={sending} disabled={!!turnstileKey && !turnstileToken}>
+            {sending ? 'Wysyłam kod…' : 'Wyślij kod SMS'}
+          </Button>
+        </>
       )}
 
       <div class="vz-hint" style="display:flex;align-items:center;justify-content:center;gap:6px;">

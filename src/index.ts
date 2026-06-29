@@ -9,6 +9,7 @@ type ThemePref = 'light' | 'dark' | 'auto'
 export type MountConfig = {
   businessId: number
   siteKey?: string
+  turnstileKey?: string // Cloudflare Turnstile PUBLIC site key (gates the SMS-OTP path)
   apiBase?: string // origin, or "mock" for the offline dev backend
   accent?: string
   label?: string
@@ -53,6 +54,7 @@ export function mount(config: MountConfig): HTMLElement | null {
   const cfg: Cfg = {
     businessId: config.businessId,
     siteKey: config.siteKey || '',
+    turnstileKey: config.turnstileKey || undefined,
     apiBase: mock ? 'mock' : apiRaw.replace(/\/+$/, ''),
     token: config.token || undefined,
     mock,
@@ -153,6 +155,7 @@ function mountFromScript() {
   mount({
     businessId,
     siteKey: ds.vizytoKey,
+    turnstileKey: ds.vizytoTurnstile,
     apiBase: ds.vizytoApi,
     accent: ds.vizytoAccent,
     label: ds.vizytoLabel,

@@ -6,7 +6,7 @@
 
 import * as mock from './mock'
 
-export type Cfg = { apiBase: string; siteKey: string; businessId: number; token?: string; mock?: boolean }
+export type Cfg = { apiBase: string; siteKey: string; businessId: number; token?: string; turnstileKey?: string; mock?: boolean }
 
 export type Service = {
   id: number
@@ -101,13 +101,13 @@ export async function getAvailability(
   }
 }
 
-export async function sendGuestOtp(cfg: Cfg, p: { phone: string }): Promise<OtpSendResult> {
+export async function sendGuestOtp(cfg: Cfg, p: { phone: string; turnstileToken?: string | null }): Promise<OtpSendResult> {
   if (cfg.mock) return mock.sendGuestOtp(p)
   try {
     const r = await fetch(`${cfg.apiBase}/api/public/guest/otp/send`, {
       method: 'POST',
       headers: headers(cfg),
-      body: JSON.stringify({ businessId: cfg.businessId, phone: p.phone }),
+      body: JSON.stringify({ businessId: cfg.businessId, phone: p.phone, turnstileToken: p.turnstileToken || undefined }),
     })
     const data = await r.json().catch(() => ({}))
     if (r.ok) return { ok: true, expiresIn: data.expiresIn ?? 300, maskedPhone: data.maskedPhone ?? '' }

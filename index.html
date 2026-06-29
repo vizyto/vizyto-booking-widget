@@ -157,7 +157,7 @@
         document.documentElement.style.setProperty('--accent', state.accent)
       }
       function snippet() {
-        const a = ['src="https://widget.vizyto.com/v1/widget.js"', `data-vizyto-business="${BUSINESS}"`, 'data-vizyto-key="pk_live_..."']
+        const a = ['src="https://widget.vizyto.com/v1/widget.js"', `data-vizyto-business="${BUSINESS}"`, 'data-vizyto-key="pk_live_..."', 'data-vizyto-turnstile="0x4AAA..."']
         if (state.accent.toLowerCase() !== '#fd9320') a.push(`data-vizyto-accent="${state.accent}"`)
         if (state.theme !== 'light') a.push(`data-vizyto-theme="${state.theme}"`)
         if (state.label !== 'Zarezerwuj wizytę') a.push(`data-vizyto-label="${state.label}"`)

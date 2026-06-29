@@ -86,6 +86,10 @@ export function BookingFlow({
 
   // otp
   const [code, setCode] = useState('')
+  // Cloudflare Turnstile token (anti-toll-fraud on the SMS path). Single-use:
+  // captured from the visible widget, consumed by a send, then cleared so the
+  // next send re-gates. Only enforced when cfg.turnstileKey is configured.
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
   const [otpInfo, setOtpInfo] = useState({ maskedPhone: '', expiresAt: 0, resendAt: 0 })
   const [attemptsLeft, setAttemptsLeft] = useState(3)
   const [now, setNow] = useState(() => Date.now())
@@ -246,15 +250,18 @@ export function BookingFlow({
     setContact((c) => ({ ...c, phone }))
     setSending(true)
     setIdentifyErr('')
-    const r = await sendGuestOtp(cfg, { phone })
+    const r = await sendGuestOtp(cfg, { phone, turnstileToken })
     setSending(false)
+    setTurnstileToken(null) // token is single-use - force a fresh solve next time
     if (!r.ok) {
       setIdentifyErr(
         r.code === 'RATE_LIMITED'
           ? `Poczekaj ${r.retryAfter ?? 60}s i spróbuj ponownie.`
-          : r.code === 'SITE_KEY_REQUIRED'
-            ? 'Rezerwacja jest chwilowo niedostępna.'
-            : 'Nie udało się wysłać kodu. Spróbuj ponownie.',
+          : r.code === 'CAPTCHA_REQUIRED'
+            ? 'Potwierdź, że nie jesteś robotem, i spróbuj ponownie.'
+            : r.code === 'SITE_KEY_REQUIRED'
+              ? 'Rezerwacja jest chwilowo niedostępna.'
+              : 'Nie udało się wysłać kodu. Spróbuj ponownie.',
       )
       return
     }
@@ -271,10 +278,17 @@ export function BookingFlow({
   async function onResend() {
     setSending(true)
     setOtpErr('')
-    const r = await sendGuestOtp(cfg, { phone: contact.phone })
+    const r = await sendGuestOtp(cfg, { phone: contact.phone, turnstileToken })
     setSending(false)
+    setTurnstileToken(null)
     if (!r.ok) {
-      setOtpErr(r.code === 'RATE_LIMITED' ? `Poczekaj ${r.retryAfter ?? 60}s.` : 'Nie udało się wysłać kodu.')
+      setOtpErr(
+        r.code === 'RATE_LIMITED'
+          ? `Poczekaj ${r.retryAfter ?? 60}s.`
+          : r.code === 'CAPTCHA_REQUIRED'
+            ? 'Potwierdź, że nie jesteś robotem.'
+            : 'Nie udało się wysłać kodu.',
+      )
       return
     }
     setCode('')
@@ -448,6 +462,9 @@ export function BookingFlow({
             onGoLogin={goLogin}
             sending={sending}
             error={identifyErr}
+            turnstileKey={cfg.turnstileKey}
+            turnstileToken={turnstileToken}
+            onTurnstile={setTurnstileToken}
           />
         )}
         {phase === 'login' && (
@@ -476,6 +493,9 @@ export function BookingFlow({
             now={now}
             expiresAt={otpInfo.expiresAt}
             resendAt={otpInfo.resendAt}
+            turnstileKey={cfg.turnstileKey}
+            turnstileToken={turnstileToken}
+            onTurnstile={setTurnstileToken}
           />
         )}
         {phase === 'confirming' &&

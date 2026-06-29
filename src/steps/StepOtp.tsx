@@ -1,5 +1,6 @@
 import { StepHeader } from '../ui/StepHeader'
 import { OtpInput } from '../ui/OtpInput'
+import { Turnstile } from '../ui/Turnstile'
 
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 
@@ -15,6 +16,9 @@ export function StepOtp({
   now,
   expiresAt,
   resendAt,
+  turnstileKey,
+  turnstileToken,
+  onTurnstile,
 }: {
   maskedPhone: string
   code: string
@@ -27,6 +31,9 @@ export function StepOtp({
   now: number
   expiresAt: number
   resendAt: number
+  turnstileKey?: string
+  turnstileToken: string | null
+  onTurnstile: (token: string | null) => void
 }) {
   const secondsLeft = Math.max(0, Math.ceil((expiresAt - now) / 1000))
   const resendIn = Math.max(0, Math.ceil((resendAt - now) / 1000))
@@ -54,7 +61,19 @@ export function StepOtp({
         ) : null}
       </div>
 
-      <button class="vz-link" onClick={onResend} disabled={resendIn > 0 || resending} type="button" style="display:block;margin:16px auto 0;">
+      {turnstileKey && (
+        <div class="vz-turnstile-wrap" style="display:flex;justify-content:center;margin-top:16px;">
+          <Turnstile siteKey={turnstileKey} onToken={onTurnstile} />
+        </div>
+      )}
+
+      <button
+        class="vz-link"
+        onClick={onResend}
+        disabled={resendIn > 0 || resending || (!!turnstileKey && !turnstileToken)}
+        type="button"
+        style="display:block;margin:16px auto 0;"
+      >
         {resending ? 'Wysyłam…' : resendIn > 0 ? `Wyślij ponownie (${resendIn}s)` : 'Wyślij kod ponownie'}
       </button>
     </div>
