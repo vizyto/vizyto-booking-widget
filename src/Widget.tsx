@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 import type { ComponentChildren } from 'preact'
 import type { Business, Cfg } from './api'
 import { fetchBusiness } from './api'
-import { BookingFlow, type Auth } from './BookingFlow'
+import { BookingFlow, type Auth, type Prefill } from './BookingFlow'
 import { Spinner } from './ui/Spinner'
 import { Powered } from './ui/Powered'
 import { Calendar, Close } from './ui/icons'
+
+// Lets a host page open/close the modal programmatically (VizytoBooking.open()).
+export type WidgetController = { open?: (p?: Prefill) => void; close?: () => void }
 
 // Minimal panel used only for the load / error states before the flow mounts.
 function MiniPanel({ onClose, children }: { onClose?: () => void; children: ComponentChildren }) {
@@ -32,13 +35,19 @@ export function Widget({
   mode,
   label,
   preAuth,
+  showLauncher = true,
+  controller,
 }: {
   cfg: Cfg
   mode: 'launcher' | 'inline'
   label: string
   preAuth?: Auth
+  showLauncher?: boolean
+  controller?: WidgetController
 }) {
   const [open, setOpen] = useState(mode === 'inline')
+  const [prefill, setPrefill] = useState<Prefill | undefined>(undefined)
+  const [sessionId, setSessionId] = useState(0) // bump to remount the flow fresh per open
   const [business, setBusiness] = useState<Business | null>(null)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -57,6 +66,17 @@ export function Widget({
   useEffect(() => {
     if (open) load()
   }, [open])
+
+  // Expose open/close to the host (VizytoBooking.open / .close).
+  useEffect(() => {
+    if (!controller || mode !== 'launcher') return
+    controller.open = (p) => {
+      setPrefill(p)
+      setSessionId((s) => s + 1)
+      setOpen(true)
+    }
+    controller.close = () => setOpen(false)
+  }, [controller, mode])
 
   // Esc + body-scroll-lock + focus trap, while the modal is open (launcher only).
   useEffect(() => {
@@ -103,17 +123,19 @@ export function Widget({
       </div>
     </MiniPanel>
   ) : business ? (
-    <BookingFlow cfg={cfg} business={business} preAuth={preAuth} onClose={close} />
+    <BookingFlow key={sessionId} cfg={cfg} business={business} prefill={prefill} preAuth={preAuth} onClose={close} />
   ) : null
 
   if (mode === 'inline') return <div class="vz-inline">{content}</div>
 
   return (
     <>
-      <button class="vz-launcher" onClick={() => setOpen(true)} type="button">
-        <Calendar size={18} />
-        {label}
-      </button>
+      {showLauncher && (
+        <button class="vz-launcher" onClick={() => setOpen(true)} type="button">
+          <Calendar size={18} />
+          {label}
+        </button>
+      )}
       {open && (
         <div
           class="vz-overlay"

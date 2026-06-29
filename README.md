@@ -128,11 +128,20 @@ const host = VizytoBooking.mount({
   label: 'Zarezerwuj wizytę',
   font: 'on',               // 'off' = czcionka systemowa
   inline: '#booking',       // selektor/element/true; pominięcie => pływający przycisk
+  showLauncher: false,      // ukryj pływający przycisk — otwierasz własnym CTA
 })
+
+// Otwórz modal z własnego przycisku (gdy showLauncher: false). Prefill skacze
+// od razu do specjalisty/terminu:
+VizytoBooking.open({ serviceId: 1, resourceId: 12 })  // oba -> krok „Termin"
+VizytoBooking.open({ resourceId: 12 })                // sam barber -> preselekcja
+VizytoBooking.open()                                  // od początku
+VizytoBooking.close()
 VizytoBooking.unmount()     // usuwa wszystkie instancje
 ```
 
 Tag `<script>` z atrybutami `data-*` woła `mount()` automatycznie po załadowaniu.
+`data-vizyto-launcher="hidden"` ukrywa przycisk (otwierasz przez `open()`).
 
 ### Tryb testowy (bez backendu)
 

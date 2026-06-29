@@ -39,32 +39,44 @@ export type Auth = { userId: number; token: string | null }
 
 const emptyContact: Contact = { firstName: '', lastName: '', phone: '', email: '' }
 
+export type Prefill = { serviceId?: number; resourceId?: number }
+
 export function BookingFlow({
   cfg,
   business,
-  initialServiceId,
+  prefill,
   preAuth,
   onClose,
 }: {
   cfg: Cfg
   business: Business
-  initialServiceId?: number
+  prefill?: Prefill
   preAuth?: Auth
   onClose?: () => void
 }) {
   const services = useMemo(() => business.services.filter((s) => s.bookingType !== 'group'), [business])
   const workers = useMemo(() => business.resources.filter((r) => r.type === 'worker'), [business])
 
+  // Seed selection from prefill (e.g. a tapped service or barber CTA).
+  const initialService = useMemo(() => services.find((s) => s.id === prefill?.serviceId) ?? null, [services, prefill?.serviceId])
+  const initialResource = useMemo<ResChoice | null>(() => {
+    if (prefill?.resourceId && workers.some((w) => w.id === prefill.resourceId)) return prefill.resourceId
+    if (initialService && workers.length === 0) return 'any'
+    if (initialService && workers.length === 1) return workers[0].id
+    return null
+  }, [workers, prefill?.resourceId, initialService])
+
   // selection
-  const [service, setService] = useState<Service | null>(() => services.find((s) => s.id === initialServiceId) ?? null)
-  const [resource, setResource] = useState<ResChoice | null>(null)
+  const [service, setService] = useState<Service | null>(initialService)
+  const [resource, setResource] = useState<ResChoice | null>(initialResource)
   const [date, setDate] = useState('')
   const [slotKey, setSlotKey] = useState('')
   const [counts, setCounts] = useState<DayCounts>({})
   const [slots, setSlots] = useState<Slots>({})
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [refetch, setRefetch] = useState(0)
-  const [selStep, setSelStep] = useState(0) // 0 service, 1 specialist, 2 termin
+  // 0 service, 1 specialist, 2 termin — skip ahead when prefilled.
+  const [selStep, setSelStep] = useState(initialService && initialResource != null ? 2 : initialService ? 1 : 0)
 
   // flow
   const [phase, setPhase] = useState<Phase>('select')
@@ -176,7 +188,8 @@ export function BookingFlow({
   function pickService(s: Service) {
     if (s.id !== service?.id) {
       setService(s)
-      setResource(null)
+      // keep any preselected specialist (worker list is business-wide); just
+      // clear the chosen day/slot since availability is per service.
       setDate('')
       setSlotKey('')
     }

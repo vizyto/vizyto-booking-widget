@@ -1,7 +1,8 @@
 import { h, render } from 'preact'
-import { Widget } from './Widget'
+import { Widget, type WidgetController } from './Widget'
 import { css } from './styles'
 import type { Cfg } from './api'
+import type { Prefill } from './BookingFlow'
 
 type ThemePref = 'light' | 'dark' | 'auto'
 
@@ -16,6 +17,7 @@ export type MountConfig = {
   token?: string
   userId?: number
   inline?: boolean | string | HTMLElement // selector/element to mount into, or true (no <div> needed)
+  showLauncher?: boolean // false = no floating button; open only via VizytoBooking.open()
 }
 
 const darkMql = () => window.matchMedia('(prefers-color-scheme: dark)')
@@ -37,7 +39,8 @@ function injectFont() {
   document.head.append(pre1, pre2, sheet)
 }
 
-const instances: { host: HTMLElement; root: HTMLElement; cleanup?: () => void }[] = []
+const instances: { host: HTMLElement; root: HTMLElement; cleanup?: () => void; controller?: WidgetController }[] = []
+let activeController: WidgetController | null = null // most-recent launcher instance
 
 export function mount(config: MountConfig): HTMLElement | null {
   if (!config?.businessId) {
@@ -96,8 +99,11 @@ export function mount(config: MountConfig): HTMLElement | null {
     cleanup = () => mql.removeEventListener?.('change', onChange)
   }
 
-  render(h(Widget, { cfg, mode, label, preAuth }), root)
-  instances.push({ host, root, cleanup })
+  const showLauncher = config.showLauncher !== false
+  const controller: WidgetController = {}
+  render(h(Widget, { cfg, mode, label, preAuth, showLauncher, controller }), root)
+  instances.push({ host, root, cleanup, controller })
+  if (mode === 'launcher') activeController = controller
   return host
 }
 
@@ -110,7 +116,22 @@ export function unmount() {
     i.host.remove()
   }
   instances.length = 0
+  activeController = null
   document.querySelectorAll('[data-vizyto-widget]').forEach((el) => el.remove())
+}
+
+// Open/close the modal of the most-recently-mounted launcher instance. Prefill
+// optionally jumps to a service/specialist (e.g. a "book this barber" CTA).
+export function open(prefill?: Prefill) {
+  if (!activeController?.open) {
+    console.warn('[vizyto] open() called but no launcher instance is mounted')
+    return
+  }
+  activeController.open(prefill)
+}
+
+export function close() {
+  activeController?.close?.()
 }
 
 function findScript(): HTMLScriptElement | null {
@@ -140,10 +161,11 @@ function mountFromScript() {
     token: ds.vizytoToken,
     userId: Number(ds.vizytoUser) || undefined,
     inline: inlineTarget || ds.vizytoInline != null,
+    showLauncher: ds.vizytoLauncher !== 'hidden',
   })
 }
 
-;(window as any).VizytoBooking = { mount, unmount }
+;(window as any).VizytoBooking = { mount, unmount, open, close }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountFromScript)
 else mountFromScript()
