@@ -309,6 +309,17 @@ export const css = `
 .vz-or { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: var(--vz-text-muted); font-size: 12px; }
 .vz-or::before, .vz-or::after { content: ""; flex: 1; height: 1px; background: var(--vz-border); }
 
+.vz-vizyto-card { margin: 0 0 16px; padding: 15px 16px; background: linear-gradient(135deg, color-mix(in srgb, var(--vz-accent) 13%, var(--vz-surface)), color-mix(in srgb, var(--vz-accent) 5%, var(--vz-surface))); border: 1px solid color-mix(in srgb, var(--vz-accent) 26%, var(--vz-border)); border-radius: var(--vz-r-md); }
+.vz-vizyto-brand { display: flex; margin-bottom: 10px; }
+.vz-vizyto-brand svg { display: block; }
+.vz-vizyto-title { font-family: var(--vz-font); font-size: 14px; font-weight: 600; color: var(--vz-text); line-height: 1.25; margin-bottom: 13px; }
+.vz-vizyto-perks { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 8px; }
+.vz-vizyto-perks li { display: flex; align-items: center; gap: 9px; font-family: var(--vz-font); font-size: 12.5px; color: var(--vz-text); line-height: 1.35; }
+.vz-vizyto-tick { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex: none; border-radius: 50%; background: color-mix(in srgb, var(--vz-accent) 18%, var(--vz-surface)); color: var(--vz-accent); }
+.vz-vizyto-cta { display: flex; align-items: center; justify-content: center; gap: 4px; width: 100%; padding: 10px 14px; background: var(--vz-surface); color: var(--vz-accent); border: 1px solid color-mix(in srgb, var(--vz-accent) 45%, var(--vz-border)); border-radius: var(--vz-r-sm); font-family: var(--vz-font); font-size: 13.5px; font-weight: 600; cursor: pointer; transition: background .15s var(--vz-ease-out), border-color .15s var(--vz-ease-out), box-shadow .15s var(--vz-ease-out); }
+.vz-vizyto-cta:hover { background: color-mix(in srgb, var(--vz-accent) 10%, var(--vz-surface)); border-color: var(--vz-accent); box-shadow: 0 2px 10px color-mix(in srgb, var(--vz-accent) 16%, transparent); }
+.vz-vizyto-cta svg { color: currentColor; }
+
 .vz-oauth-list { display: grid; gap: 10px; }
 .vz-oauth {
   display: inline-flex; align-items: center; justify-content: center; gap: 10px; width: 100%;

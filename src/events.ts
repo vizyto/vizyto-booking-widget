@@ -4,17 +4,17 @@
 // delivered four ways, all opt-out-able, so whatever the consumer already has
 // wired just works:
 //
-//   1. VizytoBooking.on(type, handler)        — programmatic subscription
+//   1. VizytoBooking.on(type, handler)        - programmatic subscription
 //   2. window 'vizyto:<type>' + 'vizyto:event' CustomEvent (detail = payload)
-//   3. config.onEvent(e)                       — a callback passed to mount()
-//   4. window.dataLayer.push({ event: 'vizyto_<type>', ... })  — GTM/GA (unless dataLayer:false)
+//   3. config.onEvent(e)                       - a callback passed to mount()
+//   4. window.dataLayer.push({ event: 'vizyto_<type>', ... })  - GTM/GA (unless dataLayer:false)
 //
 // The conversion you almost certainly care about is `booking_completed`: it
 // carries appointmentId plus `value`/`currency` in GA4-ecommerce shape.
 
 export type VizytoEventType =
   | 'ready' // business loaded, widget interactive
-  | 'open' // modal opened (launcher) — carries { source }
+  | 'open' // modal opened (launcher) - carries { source }
   | 'close' // modal closed
   | 'service_selected'
   | 'specialist_selected'
@@ -22,9 +22,9 @@ export type VizytoEventType =
   | 'details_started' // reached the contact-details step
   | 'otp_sent'
   | 'otp_verified'
-  | 'authenticated' // signed in — carries { method }
+  | 'authenticated' // signed in - carries { method }
   | 'booking_submitted' // reservation POST fired
-  | 'booking_completed' // reservation confirmed — THE conversion
+  | 'booking_completed' // reservation confirmed - THE conversion
   | 'booking_failed'
   | 'slot_lost' // chosen slot was taken before confirm
 
@@ -78,7 +78,7 @@ export type EmitterContext = {
 }
 
 // Builds an emit() bound to one instance's context. Cheap to call from render
-// handlers — it never throws into the booking flow.
+// handlers - it never throws into the booking flow.
 export function createEmitter(ctx: EmitterContext): EmitFn {
   return (type, payload) => {
     const e: VizytoEvent = { type, businessId: ctx.businessId, ts: Date.now(), ...payload }

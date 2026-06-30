@@ -5,7 +5,7 @@ import { SummaryCard, type SummaryRow } from '../ui/SummaryCard'
 import { Field } from '../ui/Field'
 import { Button } from '../ui/Button'
 import { Turnstile } from '../ui/Turnstile'
-import { Shield } from '../ui/icons'
+import { Shield, Check, ChevronRight, VizytoLogo } from '../ui/icons'
 
 export type Contact = { firstName: string; lastName: string; phone: string; email: string }
 
@@ -50,7 +50,7 @@ export function StepIdentify({
     if (!contact.lastName.trim()) next.lastName = 'Podaj nazwisko'
     const phone = normalizePlPhone(contact.phone)
     if (!phone) next.phone = 'Niepoprawny numer'
-    if (!emailOk(contact.email)) next.email = 'Niepoprawny e-mail'
+    if (contact.email.trim() && !emailOk(contact.email)) next.email = 'Niepoprawny e-mail'
     setErrs(next)
     if (Object.keys(next).length) return
     onSendCode(phone!)
@@ -60,6 +60,21 @@ export function StepIdentify({
     <div class="vz-fade-in">
       <StepHeader title="Twoje dane" />
       <SummaryCard rows={summary} />
+
+      {!emailExists && (
+        <div class="vz-vizyto-card">
+          <div class="vz-vizyto-brand"><VizytoLogo height={16} /></div>
+          <div class="vz-vizyto-title">Rezerwuj szybciej z kontem Vizyto</div>
+          <ul class="vz-vizyto-perks">
+            <li><span class="vz-vizyto-tick"><Check size={12} /></span> Bez kodu SMS - rezerwujesz od razu</li>
+            <li><span class="vz-vizyto-tick"><Check size={12} /></span> Twoje dane uzupełnią się automatycznie</li>
+            <li><span class="vz-vizyto-tick"><Check size={12} /></span> Historia wizyt i przypomnienia w jednym miejscu</li>
+          </ul>
+          <button class="vz-vizyto-cta" onClick={onGoLogin} type="button">
+            Zaloguj się przez Vizyto <ChevronRight size={15} />
+          </button>
+        </div>
+      )}
 
       <div class="vz-fields">
         <Field label="Imię" value={contact.firstName} onInput={(v) => set('firstName', v)} autoComplete="given-name" error={errs.firstName} />
@@ -76,7 +91,7 @@ export function StepIdentify({
           full
         />
         <Field
-          label="E-mail"
+          label="E-mail (opcjonalnie)"
           value={contact.email}
           onInput={(v) => set('email', v)}
           onBlur={onCheckEmail}
@@ -111,15 +126,6 @@ export function StepIdentify({
       <div class="vz-hint" style="display:flex;align-items:center;justify-content:center;gap:6px;">
         <Shield size={13} /> Potwierdzamy numer kodem SMS, by chronić terminy.
       </div>
-
-      {!emailExists && (
-        <>
-          <div class="vz-or">lub</div>
-          <button class="vz-link" onClick={onGoLogin} type="button" style="display:block;margin:0 auto;">
-            Masz konto Vizyto? Zaloguj się
-          </button>
-        </>
-      )}
     </div>
   )
 }

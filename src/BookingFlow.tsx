@@ -78,7 +78,7 @@ export function BookingFlow({
   const [slots, setSlots] = useState<Slots>({})
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [refetch, setRefetch] = useState(0)
-  // 0 service, 1 specialist, 2 termin — skip ahead when prefilled.
+  // 0 service, 1 specialist, 2 termin - skip ahead when prefilled.
   const [selStep, setSelStep] = useState(initialService && initialResource != null ? 2 : initialService ? 1 : 0)
 
   // flow
@@ -403,7 +403,7 @@ export function BookingFlow({
     const r = await oauthLogin(cfg, provider)
     setOauthBusy(null)
     if (!r.ok) {
-      if (r.code === 'POPUP_CLOSED') return // user closed the popup — no error
+      if (r.code === 'POPUP_CLOSED') return // user closed the popup - no error
       setLoginErr(
         r.code === 'POPUP_BLOCKED'
           ? 'Zezwól na wyskakujące okienka, aby zalogować się tą metodą.'
@@ -560,7 +560,7 @@ export function BookingFlow({
         {phase === 'slotLost' && (
           <div class="vz-fade-in" style="text-align:center;padding:8px 0;">
             <div class="vz-done-title" style="font-size:18px;">Ten termin właśnie zniknął</div>
-            <p class="vz-lead" style="margin-top:8px;">Ktoś był szybszy. Wybierz inny wolny termin — Twoje dane zostają zapisane.</p>
+            <p class="vz-lead" style="margin-top:8px;">Ktoś był szybszy. Wybierz inny wolny termin - Twoje dane zostają zapisane.</p>
             <button class="vz-btn mt" onClick={recoverSlot} type="button">Wybierz inny termin</button>
           </div>
         )}

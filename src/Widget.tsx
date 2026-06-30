@@ -55,7 +55,7 @@ export function Widget({
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
   const overlayRef = useRef<HTMLDivElement>(null)
-  const openSource = useRef<string>('launcher') // why the modal last opened — attached to the 'open' event
+  const openSource = useRef<string>('launcher') // why the modal last opened - attached to the 'open' event
   const wasOpen = useRef(open) // for emitting open/close only on real transitions
 
   async function load() {
@@ -75,7 +75,7 @@ export function Widget({
     if (open) load()
   }, [open])
 
-  // Emit open/close on real transitions (launcher only — inline is always open).
+  // Emit open/close on real transitions (launcher only - inline is always open).
   useEffect(() => {
     if (mode !== 'launcher' || open === wasOpen.current) return
     wasOpen.current = open

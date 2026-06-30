@@ -40,7 +40,7 @@ export function StepLogin({
   return (
     <div class="vz-fade-in">
       <StepHeader title="Zaloguj się" />
-      <p class="vz-lead">{prefillReason || 'Zaloguj się kontem Vizyto — pominiesz weryfikację SMS.'}</p>
+      <p class="vz-lead">{prefillReason || 'Zaloguj się kontem Vizyto - pominiesz weryfikację SMS.'}</p>
 
       <div class="vz-oauth-list">
         {PROVIDERS.map((p) => (

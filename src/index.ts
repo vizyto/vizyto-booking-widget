@@ -20,7 +20,7 @@ export type MountConfig = {
   userId?: number
   inline?: boolean | string | HTMLElement // selector/element to mount into, or true (no <div> needed)
   showLauncher?: boolean // false = no floating button; open only via VizytoBooking.open()
-  onEvent?: EventHandler // funnel events (service_selected, booking_completed, ...) — see README
+  onEvent?: EventHandler // funnel events (service_selected, booking_completed, ...) - see README
   dataLayer?: boolean // false = don't push events to window.dataLayer (GTM/GA); default true
 }
 
@@ -29,7 +29,7 @@ const resolveDark = (pref: ThemePref) => pref === 'dark' || (pref === 'auto' && 
 const applyTheme = (root: HTMLElement, pref: ThemePref) =>
   root.setAttribute('data-theme', resolveDark(pref) ? 'dark' : 'light')
 
-// Poppins (the Vizyto app font) is registered at the document level — an
+// Poppins (the Vizyto app font) is registered at the document level - an
 // @font-face inside a Shadow DOM <style> is unreliable across browsers. Injected
 // once, guarded by a marker; opt out with font:'off'.
 function injectFont() {
