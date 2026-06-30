@@ -30,7 +30,6 @@ import { StepLogin } from './steps/StepLogin'
 import { StepOtp } from './steps/StepOtp'
 import { StepDone } from './steps/StepDone'
 
-const STEP_NAMES = ['WYBÓR USŁUGI', 'WYBÓR SPECJALISTY', 'WYBÓR TERMINU', 'TWOJE DANE']
 const HORIZON = 42
 const OTP_RESEND_MS = 60_000
 
@@ -59,6 +58,15 @@ export function BookingFlow({
 }) {
   const services = useMemo(() => business.services.filter((s) => s.bookingType !== 'group'), [business])
   const workers = useMemo(() => business.resources.filter((r) => r.type === 'worker'), [business])
+
+  // With 0-1 specialists there's no specialist choice: the step is skipped and
+  // the progress is a 3-step flow. "od" (from) pricing also only applies when a
+  // service's price can vary between specialists, i.e. there are several.
+  const hasResourceStep = workers.length > 1
+  const stepNames = hasResourceStep
+    ? ['WYBÓR USŁUGI', 'WYBÓR SPECJALISTY', 'WYBÓR TERMINU', 'TWOJE DANE']
+    : ['WYBÓR USŁUGI', 'WYBÓR TERMINU', 'TWOJE DANE']
+  const totalSteps = stepNames.length
 
   // Seed selection from prefill (e.g. a tapped service or barber CTA).
   const initialService = useMemo(() => services.find((s) => s.id === prefill?.serviceId) ?? null, [services, prefill?.serviceId])
@@ -453,10 +461,22 @@ export function BookingFlow({
     setPhase('select')
   }
 
-  const progStep = phase === 'select' ? selStep : phase === 'slotLost' ? 2 : 3
+  // Map internal selStep (0 service, 1 specialist, 2 termin) onto the visible
+  // step index, collapsing the specialist step when it doesn't exist.
+  const termIdx = hasResourceStep ? 2 : 1
+  const progStep =
+    phase === 'select'
+      ? selStep === 0
+        ? 0
+        : selStep === 1
+          ? 1
+          : termIdx
+      : phase === 'slotLost'
+        ? termIdx
+        : totalSteps - 1
   const showCta = phase === 'select'
   const canAdvance = selStep === 0 ? !!service : selStep === 1 ? resource != null : !!slotKey
-  const ctaPrice = service ? `${selStep === 0 ? 'od ' : ''}${formatPrice2(service.price)}` : ''
+  const ctaPrice = service ? `${selStep === 0 && hasResourceStep ? 'od ' : ''}${formatPrice2(service.price)}` : ''
 
   return (
     <div class="vz-panel" role="dialog" aria-modal={onClose ? 'true' : undefined} aria-label="Zarezerwuj wizytę">
@@ -476,10 +496,10 @@ export function BookingFlow({
       </header>
 
       <div class="vz-body" ref={bodyRef} tabIndex={-1}>
-        {phase !== 'done' && <ProgressBar step={progStep} total={4} label={STEP_NAMES[progStep]} />}
+        {phase !== 'done' && <ProgressBar step={progStep} total={totalSteps} label={stepNames[progStep]} />}
 
         {phase === 'select' && selStep === 0 && (
-          <StepService services={services} selectedId={service?.id} onPick={pickService} />
+          <StepService services={services} selectedId={service?.id} onPick={pickService} priceFrom={hasResourceStep} />
         )}
         {phase === 'select' && selStep === 1 && service && (
           <StepResource workers={workers} service={service} selected={resource} onPick={pickResource} />

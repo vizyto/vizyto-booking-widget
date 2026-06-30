@@ -1,11 +1,16 @@
-import { useMemo, useState } from 'preact/hooks'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { DayCounts, Slots } from '../api'
 import { slotLabel } from '../api'
 import { DOW, dayNum, monthMatrix, monthOf, monthTitle, spanLabel, weekday } from '../dates'
 import { ChevronLeft, ChevronRight, Calendar, Grid, Moon, Sun, Sunrise } from '../ui/icons'
 import { Spinner } from '../ui/Spinner'
 
-const WEEK = 7
+// Day tiles flow to fill the available width: we measure the strip and show as
+// many whole tiles as fit (MIN_TILE = narrowest a tile may get), then paginate
+// the horizon in chunks of that many. Swiping left/right moves between chunks.
+const MIN_TILE = 60
+const GAP = 8
+const SWIPE_THRESHOLD = 40
 
 export function StepDateTime({
   days,
@@ -29,9 +34,34 @@ export function StepDateTime({
   onPickSlot: (k: string) => void
 }) {
   const [view, setView] = useState<'week' | 'month'>('week')
-  const [week, setWeek] = useState(0)
-  const maxWeek = Math.max(0, Math.ceil(days.length / WEEK) - 1)
+  const [perPage, setPerPage] = useState(7)
+  const [page, setPage] = useState(0)
+  const stripRef = useRef<HTMLDivElement | null>(null)
+  const touchX = useRef<number | null>(null)
   const inHorizon = useMemo(() => new Set(days), [days])
+
+  // Measure how many tiles fit and keep it in sync with the strip width.
+  useLayoutEffect(() => {
+    if (view !== 'week') return
+    const el = stripRef.current
+    if (!el) return
+    const measure = () => {
+      const w = el.clientWidth
+      if (!w) return
+      const n = Math.max(1, Math.floor((w + GAP) / (MIN_TILE + GAP)))
+      setPerPage((prev) => (prev === n ? prev : n))
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [view])
+
+  const maxPage = Math.max(0, Math.ceil(days.length / perPage) - 1)
+  // Keep the page in range when the horizon shrinks or more tiles now fit.
+  useEffect(() => {
+    setPage((p) => Math.min(p, maxPage))
+  }, [maxPage])
 
   // distinct months covered by the horizon, for month-view navigation
   const months = useMemo(() => {
@@ -51,19 +81,36 @@ export function StepDateTime({
 
   const free = (d: string) => (counts[d] ?? 0) > 0
 
-  const weekDays = days.slice(week * WEEK, week * WEEK + WEEK)
+  const safePage = Math.min(page, maxPage)
+  const pageDays = days.slice(safePage * perPage, safePage * perPage + perPage)
   const label =
     view === 'week'
-      ? weekDays.length
-        ? spanLabel(weekDays[0], weekDays[weekDays.length - 1])
+      ? pageDays.length
+        ? spanLabel(pageDays[0], pageDays[pageDays.length - 1])
         : ''
       : monthTitle(months[mIdx]?.year ?? 0, months[mIdx]?.month ?? 0)
 
-  const goPrev = () => (view === 'week' ? setWeek((w) => Math.max(0, w - 1)) : setMIdx((i) => Math.max(0, i - 1)))
+  const goPrev = () => (view === 'week' ? setPage((p) => Math.max(0, p - 1)) : setMIdx((i) => Math.max(0, i - 1)))
   const goNext = () =>
-    view === 'week' ? setWeek((w) => Math.min(maxWeek, w + 1)) : setMIdx((i) => Math.min(months.length - 1, i + 1))
-  const prevDisabled = view === 'week' ? week === 0 : mIdx === 0
-  const nextDisabled = view === 'week' ? week >= maxWeek : mIdx >= months.length - 1
+    view === 'week' ? setPage((p) => Math.min(maxPage, p + 1)) : setMIdx((i) => Math.min(months.length - 1, i + 1))
+  const prevDisabled = view === 'week' ? safePage === 0 : mIdx === 0
+  const nextDisabled = view === 'week' ? safePage >= maxPage : mIdx >= months.length - 1
+
+  const onTouchStart = (e: TouchEvent) => {
+    touchX.current = e.touches[0]?.clientX ?? null
+  }
+  const onTouchEnd = (e: TouchEvent) => {
+    const start = touchX.current
+    touchX.current = null
+    if (start == null) return
+    const dx = (e.changedTouches[0]?.clientX ?? start) - start
+    if (Math.abs(dx) < SWIPE_THRESHOLD) return
+    if (dx < 0) {
+      if (!nextDisabled) goNext()
+    } else if (!prevDisabled) {
+      goPrev()
+    }
+  }
 
   const groups = useMemo(() => {
     const keys = Object.keys(slots)
@@ -96,8 +143,8 @@ export function StepDateTime({
       </div>
 
       {view === 'week' ? (
-        <div class="vz-days">
-          {weekDays.map((d) => {
+        <div class="vz-days" ref={stripRef} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+          {pageDays.map((d) => {
             const f = free(d)
             return (
               <button class={`vz-day ${d === date ? 'active' : ''}`} disabled={!f} aria-current={d === date ? 'true' : undefined} onClick={() => onPickDate(d)} type="button">

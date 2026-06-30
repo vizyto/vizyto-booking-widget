@@ -191,9 +191,9 @@ export const css = `
 }
 .vz-toggle button.on { background: var(--vz-surface); color: var(--vz-text); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
 
-.vz-days { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.vz-days { display: flex; gap: 8px; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
 .vz-day {
-  flex: 0 0 auto; min-width: 66px; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  flex: 1 1 0; min-width: 0; max-width: 96px; display: flex; flex-direction: column; align-items: center; gap: 4px;
   padding: 12px 8px 10px; border: 1.5px solid transparent; border-radius: var(--vz-r-md);
   background: var(--vz-surface-2); color: var(--vz-text); cursor: pointer; font-family: var(--vz-font);
   font-size: 18px; font-weight: 600; transition: border-color var(--vz-dur-out), background var(--vz-dur-out);

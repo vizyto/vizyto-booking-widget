@@ -7,10 +7,13 @@ export function StepService({
   services,
   selectedId,
   onPick,
+  priceFrom = false,
 }: {
   services: Service[]
   selectedId?: number
   onPick: (s: Service) => void
+  // "od" (from) only makes sense when the price can vary by specialist.
+  priceFrom?: boolean
 }) {
   return (
     <div class="vz-fade-in">
@@ -23,7 +26,7 @@ export function StepService({
             meta={
               <>
                 <span class="vz-dur"><Clock size={14} /> {formatDuration(s.duration)}</span>
-                <span class="vz-price">od {formatPrice2(s.price)}</span>
+                <span class="vz-price">{priceFrom ? 'od ' : ''}{formatPrice2(s.price)}</span>
               </>
             }
           />

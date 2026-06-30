@@ -83,6 +83,13 @@ export function mount(config: MountConfig): HTMLElement | null {
 
   const host = document.createElement('div')
   host.setAttribute('data-vizyto-widget', '')
+  // `:host { all: initial }` resets the host to display:inline, which makes an
+  // inline embed shrink-to-fit and overflow narrow (mobile) containers. Pin it
+  // to a full-width block. Outer inline style beats the shadow :host rule.
+  if (inline) {
+    host.style.display = 'block'
+    host.style.width = '100%'
+  }
   ;(target || document.body).appendChild(host)
 
   const shadow = host.attachShadow({ mode: 'open' })
