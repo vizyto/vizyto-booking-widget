@@ -3,6 +3,7 @@ import type { ComponentChildren } from 'preact'
 import type { Business, Cfg } from './api'
 import { fetchBusiness } from './api'
 import { BookingFlow, type Auth, type Prefill } from './BookingFlow'
+import { noopEmit, type EmitFn } from './events'
 import { Spinner } from './ui/Spinner'
 import { Powered } from './ui/Powered'
 import { Calendar, Close } from './ui/icons'
@@ -37,6 +38,7 @@ export function Widget({
   preAuth,
   showLauncher = true,
   controller,
+  emit = noopEmit,
 }: {
   cfg: Cfg
   mode: 'launcher' | 'inline'
@@ -44,6 +46,7 @@ export function Widget({
   preAuth?: Auth
   showLauncher?: boolean
   controller?: WidgetController
+  emit?: EmitFn
 }) {
   const [open, setOpen] = useState(mode === 'inline')
   const [prefill, setPrefill] = useState<Prefill | undefined>(undefined)
@@ -52,6 +55,8 @@ export function Widget({
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
   const overlayRef = useRef<HTMLDivElement>(null)
+  const openSource = useRef<string>('launcher') // why the modal last opened — attached to the 'open' event
+  const wasOpen = useRef(open) // for emitting open/close only on real transitions
 
   async function load() {
     if (business || loading) return
@@ -60,12 +65,22 @@ export function Widget({
     const b = await fetchBusiness(cfg)
     setLoading(false)
     if (!b) setFailed(true)
-    else setBusiness(b)
+    else {
+      setBusiness(b)
+      emit('ready', { mode })
+    }
   }
 
   useEffect(() => {
     if (open) load()
   }, [open])
+
+  // Emit open/close on real transitions (launcher only — inline is always open).
+  useEffect(() => {
+    if (mode !== 'launcher' || open === wasOpen.current) return
+    wasOpen.current = open
+    emit(open ? 'open' : 'close', open ? { source: openSource.current } : undefined)
+  }, [open, mode])
 
   // Expose open/close to the host (VizytoBooking.open / .close).
   useEffect(() => {
@@ -73,6 +88,7 @@ export function Widget({
     controller.open = (p) => {
       setPrefill(p)
       setSessionId((s) => s + 1)
+      openSource.current = 'api'
       setOpen(true)
     }
     controller.close = () => setOpen(false)
@@ -123,7 +139,7 @@ export function Widget({
       </div>
     </MiniPanel>
   ) : business ? (
-    <BookingFlow key={sessionId} cfg={cfg} business={business} prefill={prefill} preAuth={preAuth} onClose={close} />
+    <BookingFlow key={sessionId} cfg={cfg} business={business} prefill={prefill} preAuth={preAuth} onClose={close} emit={emit} />
   ) : null
 
   if (mode === 'inline') return <div class="vz-inline">{content}</div>
@@ -131,7 +147,7 @@ export function Widget({
   return (
     <>
       {showLauncher && (
-        <button class="vz-launcher" onClick={() => setOpen(true)} type="button">
+        <button class="vz-launcher" onClick={() => { openSource.current = 'launcher'; setOpen(true) }} type="button">
           <Calendar size={18} />
           {label}
         </button>

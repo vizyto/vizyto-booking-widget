@@ -3,6 +3,7 @@ import { Widget, type WidgetController } from './Widget'
 import { css } from './styles'
 import type { Cfg } from './api'
 import type { Prefill } from './BookingFlow'
+import { createEmitter, off, on, type EventHandler } from './events'
 
 type ThemePref = 'light' | 'dark' | 'auto'
 
@@ -19,6 +20,8 @@ export type MountConfig = {
   userId?: number
   inline?: boolean | string | HTMLElement // selector/element to mount into, or true (no <div> needed)
   showLauncher?: boolean // false = no floating button; open only via VizytoBooking.open()
+  onEvent?: EventHandler // funnel events (service_selected, booking_completed, ...) — see README
+  dataLayer?: boolean // false = don't push events to window.dataLayer (GTM/GA); default true
 }
 
 const darkMql = () => window.matchMedia('(prefers-color-scheme: dark)')
@@ -102,8 +105,9 @@ export function mount(config: MountConfig): HTMLElement | null {
   }
 
   const showLauncher = config.showLauncher !== false
+  const emit = createEmitter({ businessId: config.businessId, onEvent: config.onEvent, dataLayer: config.dataLayer })
   const controller: WidgetController = {}
-  render(h(Widget, { cfg, mode, label, preAuth, showLauncher, controller }), root)
+  render(h(Widget, { cfg, mode, label, preAuth, showLauncher, controller, emit }), root)
   instances.push({ host, root, cleanup, controller })
   if (mode === 'launcher') activeController = controller
   return host
@@ -165,10 +169,11 @@ function mountFromScript() {
     userId: Number(ds.vizytoUser) || undefined,
     inline: inlineTarget || ds.vizytoInline != null,
     showLauncher: ds.vizytoLauncher !== 'hidden',
+    dataLayer: ds.vizytoDatalayer !== 'off',
   })
 }
 
-;(window as any).VizytoBooking = { mount, unmount, open, close }
+;(window as any).VizytoBooking = { mount, unmount, open, close, on, off }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountFromScript)
 else mountFromScript()

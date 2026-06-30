@@ -16,6 +16,7 @@ import {
   verifyGuestOtp,
 } from './api'
 import { dayMonth, nextDays } from './dates'
+import { noopEmit, type EmitFn } from './events'
 import { ProgressBar } from './ui/ProgressBar'
 import { Spinner } from './ui/Spinner'
 import { Powered } from './ui/Powered'
@@ -47,12 +48,14 @@ export function BookingFlow({
   prefill,
   preAuth,
   onClose,
+  emit = noopEmit,
 }: {
   cfg: Cfg
   business: Business
   prefill?: Prefill
   preAuth?: Auth
   onClose?: () => void
+  emit?: EmitFn
 }) {
   const services = useMemo(() => business.services.filter((s) => s.bookingType !== 'group'), [business])
   const workers = useMemo(() => business.resources.filter((r) => r.type === 'worker'), [business])
@@ -164,6 +167,8 @@ export function BookingFlow({
     booking.current = true
     setBookingErr('')
     setPhase('confirming')
+    const ctx = bookingCtx(key)
+    emit('booking_submitted', { ...ctx, userId: a.userId })
     const r = await createAppointment(
       cfg,
       { businessServiceId: service.id, startDate: slotStartDate(date, key), bookedById: a.userId, resourceId },
@@ -172,21 +177,48 @@ export function BookingFlow({
     booking.current = false
     if (r.ok) {
       setPhase('done')
+      emit('booking_completed', {
+        ...ctx,
+        userId: a.userId,
+        appointmentId: r.data?.id ?? null,
+        // GA4-ecommerce convenience: value in major units (PLN), price is grosze.
+        value: service.price / 100,
+        currency: 'PLN',
+      })
       return
     }
     if (r.code === 'BOOKED_BY_MISMATCH' || r.code === 'VERIFICATION_REQUIRED') {
       setAuth(null)
       setIdentifyErr('Potwierdź numer telefonu, aby dokończyć rezerwację.')
       setPhase('identify')
+      emit('booking_failed', { ...ctx, code: r.code, reason: 'verification_required' })
       return
     }
     if (r.code === 'NETWORK') {
       setBookingErr('Brak połączenia. Spróbuj ponownie.')
+      emit('booking_failed', { ...ctx, code: r.code, reason: 'network' })
       return
     }
     setSlotKey('')
     setPhase('slotLost')
+    emit('slot_lost', { ...ctx, code: r.code })
+    emit('booking_failed', { ...ctx, code: r.code, reason: 'slot_lost' })
   }
+
+  // Resolve a specialist choice to a stable {id,name} shape for event payloads.
+  const resourceEvent = (r: ResChoice) =>
+    r === 'any' ? { resourceId: null, resourceName: 'Dowolny specjalista' } : { resourceId: r, resourceName: workers.find((w) => w.id === r)?.name ?? '' }
+
+  // The full booking context shared by every funnel event past slot selection.
+  const bookingCtx = (key = slotKey) => ({
+    serviceId: service?.id,
+    serviceName: service?.name,
+    price: service?.price,
+    ...resourceEvent(resource ?? 'any'),
+    date,
+    time: key ? slotLabel(date, key, business.timezone) : '',
+    startDate: key ? slotStartDate(date, key) : '',
+  })
 
   // ---- selection (select-then-Dalej) ----
   function pickService(s: Service) {
@@ -196,6 +228,7 @@ export function BookingFlow({
       // clear the chosen day/slot since availability is per service.
       setDate('')
       setSlotKey('')
+      emit('service_selected', { serviceId: s.id, serviceName: s.name, price: s.price, durationMin: s.duration })
     }
   }
   function pickResource(r: ResChoice) {
@@ -203,14 +236,17 @@ export function BookingFlow({
       setResource(r)
       setDate('')
       setSlotKey('')
+      emit('specialist_selected', resourceEvent(r))
     }
   }
   function dalej() {
     if (selStep === 0) {
       if (!service) return
       if (workers.length <= 1) {
-        setResource(workers.length === 1 ? workers[0].id : 'any')
+        const r: ResChoice = workers.length === 1 ? workers[0].id : 'any'
+        setResource(r)
         setSelStep(2)
+        emit('specialist_selected', { ...resourceEvent(r), auto: true })
       } else setSelStep(1)
     } else if (selStep === 1) {
       if (resource == null) return
@@ -218,7 +254,10 @@ export function BookingFlow({
     } else {
       if (!slotKey) return
       if (auth) void book(auth, slotKey)
-      else setPhase('identify')
+      else {
+        emit('details_started', bookingCtx(slotKey))
+        setPhase('identify')
+      }
     }
   }
 
@@ -268,12 +307,14 @@ export function BookingFlow({
     setCode('')
     setAttemptsLeft(3)
     setOtpErr('')
+    const maskedPhone = r.maskedPhone || maskPhone(phone)
     setOtpInfo({
-      maskedPhone: r.maskedPhone || maskPhone(phone),
+      maskedPhone,
       expiresAt: Date.now() + r.expiresIn * 1000,
       resendAt: Date.now() + OTP_RESEND_MS,
     })
     setPhase('otp')
+    emit('otp_sent', { maskedPhone, resend: false })
   }
   async function onResend() {
     setSending(true)
@@ -293,11 +334,13 @@ export function BookingFlow({
     }
     setCode('')
     setAttemptsLeft(3)
+    const maskedPhone = r.maskedPhone || maskPhone(contact.phone)
     setOtpInfo({
-      maskedPhone: r.maskedPhone || maskPhone(contact.phone),
+      maskedPhone,
       expiresAt: Date.now() + r.expiresIn * 1000,
       resendAt: Date.now() + OTP_RESEND_MS,
     })
+    emit('otp_sent', { maskedPhone, resend: true })
   }
   async function onVerify(c: string) {
     if (verifying) return
@@ -314,6 +357,8 @@ export function BookingFlow({
     if (r.ok) {
       const a = { userId: r.data.userId, token: r.data.token }
       setAuth(a)
+      emit('otp_verified', { userId: a.userId })
+      emit('authenticated', { method: 'otp', userId: a.userId })
       void book(a)
       return
     }
@@ -348,6 +393,7 @@ export function BookingFlow({
     }
     const a = { userId: r.data.userId, token: r.data.token }
     setAuth(a)
+    emit('authenticated', { method: 'password', userId: a.userId })
     void book(a)
   }
   async function onOAuth(provider: OAuthProvider) {
@@ -367,6 +413,7 @@ export function BookingFlow({
     }
     const a = { userId: r.data.userId, token: r.data.token }
     setAuth(a)
+    emit('authenticated', { method: provider, userId: a.userId })
     void book(a)
   }
   function goLogin() {
@@ -447,7 +494,10 @@ export function BookingFlow({
             timezone={business.timezone}
             selectedSlot={slotKey}
             onPickDate={(d) => { setDate(d); setSlotKey('') }}
-            onPickSlot={setSlotKey}
+            onPickSlot={(key) => {
+              setSlotKey(key)
+              emit('datetime_selected', { ...bookingCtx(key), slotKey: key })
+            }}
           />
         )}
 

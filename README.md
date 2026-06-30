@@ -143,6 +143,50 @@ VizytoBooking.unmount()     // usuwa wszystkie instancje
 Tag `<script>` z atrybutami `data-*` woła `mount()` automatycznie po załadowaniu.
 `data-vizyto-launcher="hidden"` ukrywa przycisk (otwierasz przez `open()`).
 
+## Eventy (konwersje, analityka)
+
+Widget emituje event po każdym kroku lejka, więc strona-host może liczyć
+konwersje (GA4 / GTM / Meta Pixel / własny backend) bez wiedzy o naszym kodzie.
+Każdy event dociera **czterema** kanałami — podłącz się tym, który już masz:
+
+```js
+// 1) Subskrypcja programistyczna (zwraca funkcję odpinającą)
+const offAll = VizytoBooking.on('*', (e) => console.log(e.type, e))
+VizytoBooking.on('booking_completed', (e) => {
+  gtag('event', 'purchase', { value: e.value, currency: e.currency, transaction_id: e.appointmentId })
+})
+
+// 2) Globalny CustomEvent na window: 'vizyto:<type>' oraz zbiorczy 'vizyto:event'
+window.addEventListener('vizyto:booking_completed', (ev) => console.log(ev.detail))
+
+// 3) Callback w mount()
+VizytoBooking.mount({ businessId: 24, siteKey: 'pk_live_...', onEvent: (e) => {/* ... */} })
+
+// 4) window.dataLayer (GTM/GA) — push { event: 'vizyto_<type>', ... } automatycznie.
+//    Wyłącz: mount({ dataLayer: false }) lub data-vizyto-datalayer="off".
+```
+
+Każdy payload niesie `type`, `businessId`, `ts` (epoch ms) + pola właściwe dla
+kroku. Lejek:
+
+| Event | Kiedy | Kluczowe pola |
+|---|---|---|
+| `ready` | biznes wczytany, widget gotowy | `mode` |
+| `open` / `close` | otwarcie/zamknięcie modala (launcher) | `source` (`launcher`/`api`) |
+| `service_selected` | wybór usługi | `serviceId`, `serviceName`, `price` (grosze), `durationMin` |
+| `specialist_selected` | wybór specjalisty | `resourceId` (`null` = dowolny), `resourceName` |
+| `datetime_selected` | wybór terminu | `date`, `time`, `slotKey`, `startDate` |
+| `details_started` | wejście w krok danych | kontekst rezerwacji |
+| `otp_sent` | wysłany kod SMS | `maskedPhone`, `resend` |
+| `otp_verified` | poprawny kod | `userId` |
+| `authenticated` | zalogowanie | `method` (`otp`/`password`/`google`/…), `userId` |
+| `booking_submitted` | start zapisu rezerwacji | kontekst + `userId` |
+| **`booking_completed`** | **rezerwacja potwierdzona (KONWERSJA)** | `appointmentId`, `value` (PLN), `currency`, kontekst |
+| `booking_failed` | błąd zapisu | `code`, `reason` (`network`/`slot_lost`/`verification_required`) |
+| `slot_lost` | termin zajęty przed potwierdzeniem | `code`, kontekst |
+
+> Telefon i e-mail nie trafiają do eventów (tylko `maskedPhone`) — żadnego PII.
+
 ### Tryb testowy (bez backendu)
 
 Ustaw `data-vizyto-api="mock"` w `index.html`. Wbudowany mock obsługuje cały
