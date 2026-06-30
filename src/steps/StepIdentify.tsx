@@ -1,11 +1,12 @@
 import { useState } from 'preact/hooks'
-import { normalizePlPhone } from '../api'
+import { isLikelyPhone } from '../data/countries'
 import { StepHeader } from '../ui/StepHeader'
 import { SummaryCard, type SummaryRow } from '../ui/SummaryCard'
 import { Field } from '../ui/Field'
+import { PhoneField } from '../ui/PhoneField'
 import { Button } from '../ui/Button'
 import { Turnstile } from '../ui/Turnstile'
-import { Shield, Check, ChevronRight, VizytoLogo } from '../ui/icons'
+import { Shield, Check, ChevronRight, Mail, VizytoLogo } from '../ui/icons'
 
 export type Contact = { firstName: string; lastName: string; phone: string; email: string }
 
@@ -48,12 +49,11 @@ export function StepIdentify({
     const next: typeof errs = {}
     if (!contact.firstName.trim()) next.firstName = 'Podaj imię'
     if (!contact.lastName.trim()) next.lastName = 'Podaj nazwisko'
-    const phone = normalizePlPhone(contact.phone)
-    if (!phone) next.phone = 'Niepoprawny numer'
+    if (!isLikelyPhone(contact.phone)) next.phone = 'Niepoprawny numer'
     if (contact.email.trim() && !emailOk(contact.email)) next.email = 'Niepoprawny e-mail'
     setErrs(next)
     if (Object.keys(next).length) return
-    onSendCode(phone!)
+    onSendCode(contact.phone)
   }
 
   return (
@@ -79,16 +79,11 @@ export function StepIdentify({
       <div class="vz-fields">
         <Field label="Imię" value={contact.firstName} onInput={(v) => set('firstName', v)} autoComplete="given-name" error={errs.firstName} />
         <Field label="Nazwisko" value={contact.lastName} onInput={(v) => set('lastName', v)} autoComplete="family-name" error={errs.lastName} />
-        <Field
+        <PhoneField
           label="Telefon"
           value={contact.phone}
-          onInput={(v) => set('phone', v)}
-          type="tel"
-          inputMode="tel"
-          autoComplete="tel"
-          placeholder="+48 600 700 800"
+          onChange={(v) => set('phone', v)}
           error={errs.phone}
-          full
         />
         <Field
           label="E-mail (opcjonalnie)"
@@ -98,6 +93,8 @@ export function StepIdentify({
           type="email"
           inputMode="email"
           autoComplete="email"
+          placeholder="adres@email.com"
+          icon={<Mail size={17} />}
           error={errs.email}
           full
         />

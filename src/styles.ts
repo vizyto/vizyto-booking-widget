@@ -263,7 +263,7 @@ export const css = `
 
 /* ---- FIELDS / INPUTS --------------------------------------------------- */
 .vz-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.vz-field { display: flex; flex-direction: column; gap: 6px; }
+.vz-field { display: flex; flex-direction: column; gap: 6px; position: relative; }
 .vz-field.full { grid-column: 1 / -1; }
 .vz-label { font-size: 12px; font-weight: 500; color: var(--vz-text-muted); padding-left: 2px; }
 .vz-input {
@@ -275,6 +275,36 @@ export const css = `
 .vz-input:focus { border-color: var(--vz-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--vz-accent) 22%, transparent); }
 .vz-input.invalid { border-color: var(--vz-error); }
 .vz-field-err { font-size: 11.5px; color: var(--vz-error); padding-left: 2px; }
+
+/* ---- INPUT ICON + PHONE (country code) --------------------------------- */
+.vz-input-wrap { position: relative; }
+.vz-input-wrap.has-icon .vz-input { padding-right: 42px; }
+.vz-input-icon { position: absolute; right: 13px; top: 50%; transform: translateY(-50%); display: flex; color: var(--vz-text-muted); pointer-events: none; }
+
+.vz-phone { display: flex; align-items: stretch; border: 1.5px solid var(--vz-border); border-radius: var(--vz-r-md); background: var(--vz-input-bg); overflow: hidden; transition: border-color var(--vz-dur-out), box-shadow var(--vz-dur-out); }
+.vz-phone:focus-within { border-color: var(--vz-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--vz-accent) 22%, transparent); }
+.vz-phone.invalid { border-color: var(--vz-error); }
+.vz-phone-cc { display: flex; align-items: center; gap: 6px; padding: 0 9px 0 13px; border: 0; border-right: 1.5px solid var(--vz-border); background: transparent; color: var(--vz-text); font-family: var(--vz-font); font-size: 15px; cursor: pointer; transition: background var(--vz-dur-out); }
+.vz-phone-cc:hover { background: var(--vz-surface-2); }
+.vz-flag { font-size: 18px; line-height: 1; }
+.vz-dial { font-weight: 500; font-variant-numeric: tabular-nums; }
+.vz-cc-caret { display: flex; color: var(--vz-text-muted); transform: rotate(90deg); transition: transform var(--vz-dur-out); }
+.vz-cc-caret.up { transform: rotate(-90deg); }
+.vz-phone-num { flex: 1; min-width: 0; padding: 13px; border: 0; outline: 0; background: transparent; color: var(--vz-text); font-family: var(--vz-font); font-size: 16px; }
+.vz-phone-num::placeholder { color: var(--vz-text-muted); opacity: .7; }
+
+.vz-cc-pop { position: absolute; z-index: 50; left: 0; right: 0; top: calc(100% + 6px); background: var(--vz-surface); border: 1px solid var(--vz-border); border-radius: var(--vz-r-md); box-shadow: var(--vz-shadow-modal); overflow: hidden; animation: vz-fade var(--vz-dur-out) var(--vz-ease-out); }
+.vz-cc-pop.up { top: auto; bottom: calc(100% + 6px); }
+.vz-cc-search { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--vz-border); color: var(--vz-text-muted); }
+.vz-cc-search-input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--vz-text); font-family: var(--vz-font); font-size: 14px; }
+.vz-cc-search-input::placeholder { color: var(--vz-text-muted); opacity: .8; }
+.vz-cc-list { max-height: 240px; overflow-y: auto; padding: 6px; }
+.vz-cc-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 0; border-radius: var(--vz-r-sm); background: transparent; color: var(--vz-text); font-family: var(--vz-font); font-size: 14px; text-align: left; cursor: pointer; }
+.vz-cc-item:hover { background: var(--vz-surface-2); }
+.vz-cc-item.on { background: var(--vz-selected); }
+.vz-cc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vz-cc-dial { color: var(--vz-text-muted); font-variant-numeric: tabular-nums; }
+.vz-cc-empty { padding: 16px; text-align: center; color: var(--vz-text-muted); font-size: 13px; }
 
 /* ---- OTP INPUT --------------------------------------------------------- */
 .vz-otp-wrap { position: relative; display: flex; justify-content: center; margin: 8px 0 4px; }
