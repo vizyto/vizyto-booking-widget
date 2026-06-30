@@ -38,6 +38,7 @@ export function StepDateTime({
   const [page, setPage] = useState(0)
   const stripRef = useRef<HTMLDivElement | null>(null)
   const touchX = useRef<number | null>(null)
+  const swiped = useRef(false)
   const inHorizon = useMemo(() => new Set(days), [days])
 
   // Measure how many tiles fit and keep it in sync with the strip width.
@@ -98,6 +99,7 @@ export function StepDateTime({
 
   const onTouchStart = (e: TouchEvent) => {
     touchX.current = e.touches[0]?.clientX ?? null
+    swiped.current = false
   }
   const onTouchEnd = (e: TouchEvent) => {
     const start = touchX.current
@@ -105,6 +107,8 @@ export function StepDateTime({
     if (start == null) return
     const dx = (e.changedTouches[0]?.clientX ?? start) - start
     if (Math.abs(dx) < SWIPE_THRESHOLD) return
+    // A real swipe: flag it so the trailing click on a day tile doesn't pick a date.
+    swiped.current = true
     if (dx < 0) {
       if (!nextDisabled) goNext()
     } else if (!prevDisabled) {
@@ -147,7 +151,7 @@ export function StepDateTime({
           {pageDays.map((d) => {
             const f = free(d)
             return (
-              <button class={`vz-day ${d === date ? 'active' : ''}`} disabled={!f} aria-current={d === date ? 'true' : undefined} onClick={() => onPickDate(d)} type="button">
+              <button class={`vz-day ${d === date ? 'active' : ''}${f ? '' : ' is-disabled'}`} aria-disabled={f ? undefined : 'true'} aria-current={d === date ? 'true' : undefined} onClick={() => { if (swiped.current) { swiped.current = false; return } if (f) onPickDate(d) }} type="button">
                 <small>{weekday(d)}</small>
                 {dayNum(d)}
                 <span class={`vz-free${f ? '' : ' ghost'}`} />

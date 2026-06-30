@@ -198,8 +198,8 @@ export const css = `
   background: var(--vz-surface-2); color: var(--vz-text); cursor: pointer; font-family: var(--vz-font);
   font-size: 18px; font-weight: 600; transition: border-color var(--vz-dur-out), background var(--vz-dur-out);
 }
-.vz-day[disabled] { opacity: .38; cursor: default; }
-.vz-day:not([disabled]):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+.vz-day.is-disabled { opacity: .38; cursor: default; }
+.vz-day:not(.is-disabled):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
 .vz-day.active { border-color: var(--vz-accent); background: var(--vz-selected); }
 .vz-day small { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; color: var(--vz-text-muted); }
 .vz-day .vz-free { width: 7px; height: 7px; border-radius: 50%; background: var(--vz-success); }
