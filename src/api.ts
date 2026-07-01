@@ -8,14 +8,27 @@ import * as mock from './mock'
 
 export type Cfg = { apiBase: string; siteKey: string; businessId: number; token?: string; turnstileKey?: string; mock?: boolean }
 
+// Per-employee override of a service's price/duration. The business can set a
+// different price/duration for a given worker; the API resolves the fallback
+// (override value ?? service base) and returns it as effectivePrice/Duration.
+// A service's active rows also define *which* workers offer it at all.
+export type ResourceService = {
+  id: number
+  resourceId: number
+  businessServiceId: number
+  effectivePrice: number // grosze
+  effectiveDuration: number // minutes
+  isActive: boolean
+}
 export type Service = {
   id: number
   name: string
   description: string | null
-  price: number // grosze
-  duration: number // minutes
+  price: number // grosze (business default; a worker may override it)
+  duration: number // minutes (business default; a worker may override it)
   bookingType: string
   bookingMode: string | null
+  resourceServices?: ResourceService[]
 }
 export type Resource = {
   id: number
@@ -33,7 +46,17 @@ export type Business = {
   services: Service[]
   resources: Resource[]
   workingHours: WorkingHour[]
+  // Migration/trial period: bookings are non-binding "practice" bookings and the
+  // UI shows a "rezerwacja próbna" notice. Derived server-side from testModeEnabledAt.
+  isTestMode?: boolean
+  // Whether the business accepts waitlist sign-ups when a day has no free slots.
+  waitlistEnabled?: boolean
 }
+
+// A named group of services (PRO -> kategorie usług). Fetched from a separate
+// public endpoint; the widget maps each category to the ids of the services it
+// contains and reuses the service objects already loaded on the business.
+export type ServiceCategory = { id: number; name: string; serviceIds: number[] }
 
 export type Slots = Record<string, number[]> // UTC "HH:mm" -> available resourceIds
 export type DayCounts = Record<string, number>
@@ -64,6 +87,26 @@ export async function fetchBusiness(cfg: Cfg): Promise<Business | null> {
     return r.ok ? ((await r.json()) as Business) : null
   } catch {
     return null
+  }
+}
+
+export async function getServiceCategories(cfg: Cfg): Promise<ServiceCategory[]> {
+  if (cfg.mock) return mock.getServiceCategories()
+  try {
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/service-categories`, { headers: headers(cfg) })
+    if (!r.ok) return []
+    const data = await r.json()
+    const arr = Array.isArray(data) ? data : data?.data ?? []
+    return arr
+      .map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        // Each category row wraps the service in { businessService: {...} }.
+        serviceIds: (c.services ?? []).map((s: any) => s.businessService?.id ?? s.businessServiceId).filter((x: any) => x != null),
+      }))
+      .filter((c: ServiceCategory) => c.serviceIds.length > 0)
+  } catch {
+    return []
   }
 }
 
@@ -224,9 +267,39 @@ export function oauthLogin(cfg: Cfg, provider: OAuthProvider): Promise<LoginResu
   })
 }
 
+export type WaitlistParams = {
+  businessServiceId: number
+  resourceId?: number | null
+  dateFrom: string // YYYY-MM-DD (business local)
+  dateTo: string // YYYY-MM-DD (business local)
+  timeFrom?: string | null // HH:mm (business local) or null = any
+  timeTo?: string | null
+  bookedById: number
+}
+export type WaitlistResult = { ok: true; data: any } | { ok: false; code: string }
+
+// Join the waitlist for a service on a date range / time window. Requires an
+// authenticated user with a complete profile (name + phone), so the widget runs
+// the same guest-OTP / login path as booking before calling this.
+export async function joinWaitlist(cfg: Cfg, p: WaitlistParams, token: string | null): Promise<WaitlistResult> {
+  if (cfg.mock) return mock.joinWaitlist(p, token)
+  try {
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/waitlist`, {
+      method: 'POST',
+      headers: headers(cfg, token ? { authorization: `Bearer ${token}` } : undefined),
+      body: JSON.stringify(p),
+    })
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}` }
+    return { ok: true, data }
+  } catch {
+    return { ok: false, code: 'NETWORK' }
+  }
+}
+
 export async function createAppointment(
   cfg: Cfg,
-  p: { businessServiceId: number; startDate: string; bookedById: number; resourceId?: number },
+  p: { businessServiceId: number; startDate: string; bookedById: number; resourceId?: number; notes?: string },
   token: string | null,
 ): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
   if (cfg.mock) return mock.createAppointment(p, token)
@@ -242,6 +315,37 @@ export async function createAppointment(
   } catch {
     return { ok: false, code: 'NETWORK' }
   }
+}
+
+// ---- per-employee price/duration overrides -------------------------------
+// The business can override a service's price and duration for an individual
+// worker (PRO -> pracownik -> usługi). The public API delivers these as
+// service.resourceServices[]; the helpers below resolve the value the customer
+// actually sees for a chosen specialist, mirroring the Vizyto client app.
+
+// Effective price/duration when this service is performed by a given worker.
+// Falls back to the service base when the worker has no override row.
+export function effectiveForWorker(service: Service, workerId: number): { price: number; duration: number } {
+  const rs = service.resourceServices?.find((r) => r.resourceId === workerId && r.isActive)
+  return rs ? { price: rs.effectivePrice, duration: rs.effectiveDuration } : { price: service.price, duration: service.duration }
+}
+
+// Whether a worker offers this service at all. When the service has active
+// override rows, only the listed workers offer it; when it has none (legacy or
+// unmapped services, e.g. the mock), every worker is assumed to offer it at the
+// base price.
+export function workerOffersService(service: Service, workerId: number): boolean {
+  const rows = service.resourceServices?.filter((r) => r.isActive)
+  if (!rows || rows.length === 0) return true
+  return rows.some((r) => r.resourceId === workerId)
+}
+
+// Min/max effective price across the given workers who offer the service. Used
+// for "od" (from) display on the service step and for "Dowolny specjalista".
+export function priceRange(service: Service, workers: Resource[]): { min: number; max: number } {
+  const prices = workers.filter((w) => workerOffersService(service, w.id)).map((w) => effectiveForWorker(service, w.id).price)
+  if (prices.length === 0) return { min: service.price, max: service.price }
+  return { min: Math.min(...prices), max: Math.max(...prices) }
 }
 
 // ---- formatting / phone helpers -----------------------------------------

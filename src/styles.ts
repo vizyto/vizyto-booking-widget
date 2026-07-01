@@ -397,6 +397,40 @@ export const css = `
 }
 .vz-grab { display: none; width: 38px; height: 4px; border-radius: 999px; background: var(--vz-border); margin: 8px auto 0; }
 
+/* ---- CATEGORY TABS ----------------------------------------------------- */
+.vz-cats { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 0 14px; padding-bottom: 2px; }
+.vz-cats::-webkit-scrollbar { display: none; }
+.vz-cat { flex: 0 0 auto; padding: 7px 13px; border-radius: var(--vz-r-pill); border: 1px solid var(--vz-border); background: var(--vz-surface); color: var(--vz-text-muted); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background var(--vz-dur-out), color var(--vz-dur-out), border-color var(--vz-dur-out); }
+.vz-cat:hover { color: var(--vz-text); }
+.vz-cat.on { background: var(--vz-selected); color: var(--vz-accent); border-color: var(--vz-accent); }
+
+/* ---- TEST-MODE NOTICE -------------------------------------------------- */
+.vz-notice { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 16px; padding: 12px 14px; border-radius: var(--vz-r-md); background: color-mix(in srgb, var(--vz-warning) 12%, var(--vz-surface)); border: 1px solid color-mix(in srgb, var(--vz-warning) 34%, var(--vz-border)); }
+.vz-notice-ico { color: var(--vz-warning); flex: 0 0 auto; margin-top: 1px; display: flex; }
+.vz-notice-title { font-size: 13px; font-weight: 600; color: var(--vz-text); }
+.vz-notice-body { font-size: 12px; color: var(--vz-text-muted); margin-top: 3px; line-height: 1.5; }
+
+/* ---- NOTES TEXTAREA ---------------------------------------------------- */
+.vz-notes { display: block; margin-top: 14px; }
+.vz-notes-label { display: block; font-size: 12.5px; font-weight: 600; color: var(--vz-text-muted); margin-bottom: 6px; }
+.vz-textarea { width: 100%; resize: vertical; min-height: 72px; padding: 11px 13px; border-radius: var(--vz-r-md); border: 1.5px solid var(--vz-border); background: var(--vz-input-bg); color: var(--vz-text); font-family: inherit; font-size: 14px; line-height: 1.5; }
+.vz-textarea:focus { outline: none; border-color: var(--vz-accent); }
+.vz-textarea::placeholder { color: var(--vz-text-muted); }
+
+/* ---- WAITLIST FORM ----------------------------------------------------- */
+.vz-wl-label { font-size: 12.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--vz-text-muted); margin-bottom: 8px; }
+.vz-wl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.vz-wl-opt { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; text-align: left; border-radius: var(--vz-r-md); border: 1.5px solid var(--vz-border); background: var(--vz-surface); color: var(--vz-text); font-family: inherit; cursor: pointer; transition: background var(--vz-dur-out), border-color var(--vz-dur-out); }
+.vz-wl-opt:hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+.vz-wl-opt.on { background: var(--vz-selected); border-color: var(--vz-accent); }
+.vz-wl-opt-t { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; }
+.vz-wl-opt.on .vz-wl-opt-t { color: var(--vz-accent); }
+.vz-wl-opt-t svg { color: var(--vz-accent); }
+.vz-wl-opt-s { font-size: 11.5px; color: var(--vz-text-muted); }
+.vz-wl-link { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; margin-top: 20px; padding: 11px; border: 0; border-top: 1px solid var(--vz-border); background: transparent; color: var(--vz-text-muted); font-family: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; transition: color var(--vz-dur-out); }
+.vz-wl-link:hover { color: var(--vz-accent); }
+.vz-wl-link svg { color: var(--vz-accent); }
+
 /* ---- REDUCED MOTION ---------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   .vz-root *, .vz-root *::before, .vz-root *::after {

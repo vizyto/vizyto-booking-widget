@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import type { DayCounts, Slots } from '../api'
 import { slotLabel } from '../api'
 import { DOW, dayNum, monthMatrix, monthOf, monthTitle, spanLabel, weekday } from '../dates'
-import { ChevronLeft, ChevronRight, Calendar, Grid, Moon, Sun, Sunrise } from '../ui/icons'
+import { ChevronLeft, ChevronRight, Calendar, Grid, Moon, Sun, Sunrise, Bell } from '../ui/icons'
 import { Spinner } from '../ui/Spinner'
 
 // Day tiles flow to fill the available width: we measure the strip and show as
@@ -22,6 +22,8 @@ export function StepDateTime({
   selectedSlot,
   onPickDate,
   onPickSlot,
+  canWaitlist = false,
+  onJoinWaitlist,
 }: {
   days: string[]
   counts: DayCounts
@@ -32,6 +34,9 @@ export function StepDateTime({
   selectedSlot: string
   onPickDate: (d: string) => void
   onPickSlot: (k: string) => void
+  // When a selected day has no free slots, offer to join the waitlist.
+  canWaitlist?: boolean
+  onJoinWaitlist?: () => void
 }) {
   const [view, setView] = useState<'week' | 'month'>('week')
   const [perPage, setPerPage] = useState(7)
@@ -182,18 +187,32 @@ export function StepDateTime({
       ) : loading ? (
         <div class="vz-center"><Spinner /> Szukam wolnych godzin…</div>
       ) : groups.length === 0 ? (
-        <div class="vz-muted" style="margin-top:20px;text-align:center;">Brak dostępnych terminów tego dnia. Wybierz inny.</div>
+        <div style="margin-top:20px;text-align:center;">
+          <div class="vz-muted">Brak dostępnych terminów tego dnia. Wybierz inny.</div>
+          {canWaitlist && onJoinWaitlist && (
+            <button class="vz-btn ghost mt" onClick={onJoinWaitlist} type="button">
+              <Bell size={17} /> Powiadom mnie, gdy się zwolni
+            </button>
+          )}
+        </div>
       ) : (
-        groups.map((g) => (
-          <div class="vz-slot-group">
-            <div class="vz-slot-group-h"><g.Icon size={16} /> {g.label}</div>
-            <div class="vz-slots vz-stagger">
-              {g.items.map(({ k, lab }) => (
-                <button class={`vz-slot${k === selectedSlot ? ' selected' : ''}`} onClick={() => onPickSlot(k)} type="button">{lab}</button>
-              ))}
+        <>
+          {groups.map((g) => (
+            <div class="vz-slot-group">
+              <div class="vz-slot-group-h"><g.Icon size={16} /> {g.label}</div>
+              <div class="vz-slots vz-stagger">
+                {g.items.map(({ k, lab }) => (
+                  <button class={`vz-slot${k === selectedSlot ? ' selected' : ''}`} onClick={() => onPickSlot(k)} type="button">{lab}</button>
+                ))}
+              </div>
             </div>
-          </div>
-        ))
+          ))}
+          {canWaitlist && onJoinWaitlist && (
+            <button class="vz-wl-link" onClick={onJoinWaitlist} type="button">
+              <Bell size={14} /> Nie pasuje żaden termin? Powiadom mnie, gdy się zwolni.
+            </button>
+          )}
+        </>
       )}
     </div>
   )

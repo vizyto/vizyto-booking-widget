@@ -27,6 +27,9 @@ export type VizytoEventType =
   | 'booking_completed' // reservation confirmed - THE conversion
   | 'booking_failed'
   | 'slot_lost' // chosen slot was taken before confirm
+  | 'waitlist_started' // opened the waitlist form (a day had no free slots)
+  | 'waitlist_joined' // waitlist sign-up confirmed
+  | 'waitlist_failed'
 
 export type VizytoEvent = {
   type: VizytoEventType

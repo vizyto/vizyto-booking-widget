@@ -16,6 +16,8 @@ export function StepIdentify({
   summary,
   contact,
   onChange,
+  notes,
+  onNotes,
   emailExists,
   onCheckEmail,
   onSendCode,
@@ -29,6 +31,9 @@ export function StepIdentify({
   summary: SummaryRow[]
   contact: Contact
   onChange: (c: Contact) => void
+  // Optional appointment note ("Notatki") - only rendered when onNotes is passed.
+  notes?: string
+  onNotes?: (v: string) => void
   emailExists: boolean
   onCheckEmail: () => void
   onSendCode: (normalizedPhone: string) => void
@@ -99,6 +104,19 @@ export function StepIdentify({
           full
         />
       </div>
+
+      {onNotes && (
+        <label class="vz-notes">
+          <span class="vz-notes-label">Notatki (opcjonalnie)</span>
+          <textarea
+            class="vz-textarea"
+            rows={3}
+            value={notes ?? ''}
+            onInput={(e) => onNotes((e.target as HTMLTextAreaElement).value)}
+            placeholder="Dodatkowe informacje dla specjalisty"
+          />
+        </label>
+      )}
 
       {error && <div class="vz-err" role="alert">{error}</div>}
 

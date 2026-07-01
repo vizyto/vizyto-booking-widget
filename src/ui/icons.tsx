@@ -65,6 +65,15 @@ export const Search = ({ size = 18, ...p }: P) => (
 export const Shield = ({ size = 18, ...p }: P) => (
   <svg {...base(size)} {...p}><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /></svg>
 )
+export const Bell = ({ size = 18, ...p }: P) => (
+  <svg {...base(size)} {...p}><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
+)
+export const Info = ({ size = 18, ...p }: P) => (
+  <svg {...base(size)} {...p}><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></svg>
+)
+export const Sparkles = ({ size = 18, ...p }: P) => (
+  <svg {...base(size)} {...p}><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" /></svg>
+)
 
 // Brand glyphs (own fills, not stroke-based).
 export const GoogleG = ({ size = 18 }: { size?: number }) => (

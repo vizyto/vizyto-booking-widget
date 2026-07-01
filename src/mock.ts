@@ -13,7 +13,10 @@ import type {
   LoginResult,
   OtpSendResult,
   OtpVerifyResult,
+  ServiceCategory,
   Slots,
+  WaitlistParams,
+  WaitlistResult,
 } from './api'
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -24,9 +27,25 @@ const BUSINESS: Business = {
   slug: 'proper-barbershop',
   timezone: 'Europe/Warsaw',
   services: [
+    // No overrides -> every worker offers it at the base price (no "od").
     { id: 1, name: 'Strzyżenie', description: 'Klasyczne strzyżenie', price: 6000, duration: 45, bookingType: 'single', bookingMode: null },
-    { id: 2, name: 'Broda', description: 'Modelowanie brody', price: 5000, duration: 30, bookingType: 'single', bookingMode: null },
-    { id: 3, name: 'Strzyżenie + broda', description: 'Pełny pakiet', price: 10000, duration: 75, bookingType: 'single', bookingMode: null },
+    // Kuba charges more for Broda -> "od 50,00 zł" on the service step.
+    {
+      id: 2, name: 'Broda', description: 'Modelowanie brody', price: 5000, duration: 30, bookingType: 'single', bookingMode: null,
+      resourceServices: [
+        { id: 201, resourceId: 11, businessServiceId: 2, effectivePrice: 5000, effectiveDuration: 30, isActive: true },
+        { id: 202, resourceId: 12, businessServiceId: 2, effectivePrice: 6000, effectiveDuration: 30, isActive: true },
+        { id: 203, resourceId: 13, businessServiceId: 2, effectivePrice: 5000, effectiveDuration: 30, isActive: true },
+      ],
+    },
+    // Offered only by Marek & Kuba (Ola filtered out); Kuba's price+duration overridden.
+    {
+      id: 3, name: 'Strzyżenie + broda', description: 'Pełny pakiet', price: 10000, duration: 75, bookingType: 'single', bookingMode: null,
+      resourceServices: [
+        { id: 301, resourceId: 11, businessServiceId: 3, effectivePrice: 10000, effectiveDuration: 75, isActive: true },
+        { id: 302, resourceId: 12, businessServiceId: 3, effectivePrice: 13000, effectiveDuration: 90, isActive: true },
+      ],
+    },
   ],
   resources: [
     { id: 11, type: 'worker', name: 'Marek', position: 'Barber', image: null },
@@ -34,6 +53,10 @@ const BUSINESS: Business = {
     { id: 13, type: 'worker', name: 'Ola', position: 'Barberka', image: null },
   ],
   workingHours: [],
+  // Demo levers: show the "rezerwacja próbna" notice and enable the waitlist so
+  // both flows are reachable in the local configurator.
+  isTestMode: true,
+  waitlistEnabled: true,
 }
 
 const WORKER_IDS = BUSINESS.resources.map((r) => r.id)
@@ -41,6 +64,23 @@ const WORKER_IDS = BUSINESS.resources.map((r) => r.id)
 export async function fetchBusiness(): Promise<Business> {
   await wait(280)
   return BUSINESS
+}
+
+export async function getServiceCategories(): Promise<ServiceCategory[]> {
+  await wait(120)
+  return [
+    { id: 1, name: 'Włosy', serviceIds: [1] },
+    { id: 2, name: 'Broda i pakiety', serviceIds: [2, 3] },
+  ]
+}
+
+let waitlistCount = 0
+export async function joinWaitlist(_p: WaitlistParams, _token: string | null): Promise<WaitlistResult> {
+  await wait(500)
+  // Second sign-up in a session simulates the "already waiting" duplicate error.
+  waitlistCount += 1
+  if (waitlistCount > 1) return { ok: false, code: 'WAITLIST_DUPLICATE' }
+  return { ok: true, data: { id: 555, status: 'active' } }
 }
 
 // Sundays closed; every 4th day from today thinned to zero so "Brak terminów"

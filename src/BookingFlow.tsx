@@ -1,19 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import type { Business, Cfg, DayCounts, OAuthProvider, Resource, Service, Slots } from './api'
+import type { Business, Cfg, DayCounts, OAuthProvider, Resource, Service, ServiceCategory, Slots } from './api'
 import {
   checkEmail,
   createAppointment,
+  effectiveForWorker,
   formatDuration,
   formatPrice2,
   getAvailability,
   getCounts,
+  getServiceCategories,
+  joinWaitlist,
   loginEmail,
   maskPhone,
   oauthLogin,
+  priceRange,
   sendGuestOtp,
   slotLabel,
   slotStartDate,
   verifyGuestOtp,
+  workerOffersService,
 } from './api'
 import { dayMonth, nextDays } from './dates'
 import { noopEmit, type EmitFn } from './events'
@@ -21,20 +26,33 @@ import { ProgressBar } from './ui/ProgressBar'
 import { Spinner } from './ui/Spinner'
 import { Powered } from './ui/Powered'
 import { ArrowLeft, ArrowRight, Close } from './ui/icons'
-import type { SummaryRow } from './ui/SummaryCard'
+import { SummaryCard, type SummaryRow } from './ui/SummaryCard'
+import { Button } from './ui/Button'
 import { StepService } from './steps/StepService'
 import { StepResource } from './steps/StepResource'
 import { StepDateTime } from './steps/StepDateTime'
 import { StepIdentify, type Contact } from './steps/StepIdentify'
+import { StepWaitlist, type WaitlistPrefs } from './steps/StepWaitlist'
 import { StepLogin } from './steps/StepLogin'
 import { StepOtp } from './steps/StepOtp'
 import { StepDone } from './steps/StepDone'
+import { Notice } from './ui/Notice'
+import { Bell } from './ui/icons'
 
 const HORIZON = 42
 const OTP_RESEND_MS = 60_000
 
+// Add whole days to a YYYY-MM-DD string in UTC (DST-safe).
+const addDays = (ymd: string, n: number) => {
+  const d = new Date(`${ymd}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+
 type ResChoice = number | 'any'
-type Phase = 'select' | 'identify' | 'login' | 'otp' | 'confirming' | 'done' | 'slotLost'
+type Phase = 'select' | 'identify' | 'login' | 'otp' | 'confirming' | 'done' | 'slotLost' | 'waitlist' | 'waitlistDone'
+// Whether the identify/auth path finishes by booking a slot or joining a waitlist.
+type Intent = 'book' | 'waitlist'
 export type Auth = { userId: number; token: string | null }
 
 const emptyContact: Contact = { firstName: '', lastName: '', phone: '', email: '' }
@@ -59,26 +77,38 @@ export function BookingFlow({
   const services = useMemo(() => business.services.filter((s) => s.bookingType !== 'group'), [business])
   const workers = useMemo(() => business.resources.filter((r) => r.type === 'worker'), [business])
 
+  // selection (declared here because offeringWorkers below depends on the picked
+  // service; the rest of the selection state follows further down).
+  const initialServiceRef = useMemo(() => services.find((s) => s.id === prefill?.serviceId) ?? null, [services, prefill?.serviceId])
+  const [service, setService] = useState<Service | null>(initialServiceRef)
+
+  // A service can be offered by only a subset of workers, each possibly with an
+  // overridden price/duration. Once a service is picked we work with just the
+  // workers who actually offer it; before that, the whole team drives structure.
+  const offeringWorkers = useMemo(
+    () => (service ? workers.filter((w) => workerOffersService(service, w.id)) : workers),
+    [workers, service],
+  )
+
   // With 0-1 specialists there's no specialist choice: the step is skipped and
   // the progress is a 3-step flow. "od" (from) pricing also only applies when a
   // service's price can vary between specialists, i.e. there are several.
-  const hasResourceStep = workers.length > 1
+  const hasResourceStep = offeringWorkers.length > 1
   const stepNames = hasResourceStep
     ? ['WYBÓR USŁUGI', 'WYBÓR SPECJALISTY', 'WYBÓR TERMINU', 'TWOJE DANE']
     : ['WYBÓR USŁUGI', 'WYBÓR TERMINU', 'TWOJE DANE']
   const totalSteps = stepNames.length
 
-  // Seed selection from prefill (e.g. a tapped service or barber CTA).
-  const initialService = useMemo(() => services.find((s) => s.id === prefill?.serviceId) ?? null, [services, prefill?.serviceId])
+  // Seed the specialist from prefill (a tapped barber CTA), or auto-pick when
+  // the chosen service is offered by 0-1 of the workers who offer it.
   const initialResource = useMemo<ResChoice | null>(() => {
-    if (prefill?.resourceId && workers.some((w) => w.id === prefill.resourceId)) return prefill.resourceId
-    if (initialService && workers.length === 0) return 'any'
-    if (initialService && workers.length === 1) return workers[0].id
+    if (prefill?.resourceId && offeringWorkers.some((w) => w.id === prefill.resourceId)) return prefill.resourceId
+    if (service && offeringWorkers.length === 0) return 'any'
+    if (service && offeringWorkers.length === 1) return offeringWorkers[0].id
     return null
-  }, [workers, prefill?.resourceId, initialService])
+  }, [offeringWorkers, prefill?.resourceId, service])
 
   // selection
-  const [service, setService] = useState<Service | null>(initialService)
   const [resource, setResource] = useState<ResChoice | null>(initialResource)
   const [date, setDate] = useState('')
   const [slotKey, setSlotKey] = useState('')
@@ -87,13 +117,23 @@ export function BookingFlow({
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [refetch, setRefetch] = useState(0)
   // 0 service, 1 specialist, 2 termin - skip ahead when prefilled.
-  const [selStep, setSelStep] = useState(initialService && initialResource != null ? 2 : initialService ? 1 : 0)
+  const [selStep, setSelStep] = useState(initialServiceRef && initialResource != null ? 2 : initialServiceRef ? 1 : 0)
 
   // flow
   const [phase, setPhase] = useState<Phase>('select')
   const [contact, setContact] = useState<Contact>(emptyContact)
+  const [notes, setNotes] = useState('')
   const [emailExists, setEmailExists] = useState(false)
   const [auth, setAuth] = useState<Auth | null>(preAuth ?? null)
+
+  // Service categories (optional grouping) fetched from a separate public endpoint.
+  const [categories, setCategories] = useState<ServiceCategory[]>([])
+
+  // The identify/auth path can end in a booking or a waitlist sign-up.
+  const [intent, setIntent] = useState<Intent>('book')
+  const [wlPrefs, setWlPrefs] = useState<WaitlistPrefs | null>(null)
+  const [wlBusy, setWlBusy] = useState(false)
+  const [wlErr, setWlErr] = useState('')
 
   // otp
   const [code, setCode] = useState('')
@@ -122,6 +162,14 @@ export function BookingFlow({
   const days = useMemo(() => nextDays(HORIZON), [])
   const worker: Resource | undefined = typeof resource === 'number' ? workers.find((w) => w.id === resource) : undefined
   const workerName = resource === 'any' || resource == null ? 'Dowolny specjalista' : worker?.name ?? ''
+
+  useEffect(() => {
+    let cancelled = false
+    getServiceCategories(cfg).then((c) => !cancelled && setCategories(c))
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     if (!service) return
@@ -161,14 +209,43 @@ export function BookingFlow({
     bodyRef.current?.scrollTo(0, 0)
   }, [phase, selStep])
 
+  // Effective price/duration for the current service+specialist choice, honoring
+  // any per-employee override. When no specialist is fixed yet (service step or
+  // "Dowolny"), fall back to the "od {min}" range across the offering workers.
+  const range = service ? priceRange(service, offeringWorkers) : { min: 0, max: 0 }
+  const priceVaries = range.min !== range.max
+  const selEff = service && typeof resource === 'number' ? effectiveForWorker(service, resource) : null
+  const shownPrice = selEff ? selEff.price : range.min
+  const shownDuration = selEff ? selEff.duration : service?.duration ?? 0
+  const showFrom = !selEff && priceVaries
+  // Price used for analytics/booking payload: the exact override for a chosen
+  // specialist, else the service base (the backend assigns the price for "Dowolny").
+  const selectedPrice = selEff ? selEff.price : service?.price ?? 0
+
   const summaryRows: SummaryRow[] = service
     ? [
         { label: 'Usługa', value: service.name },
         { label: 'Specjalista', value: workerName },
         { label: 'Termin', value: `${dayMonth(date)}, ${slotLabel(date, slotKey, business.timezone)}` },
-        { label: 'Cena', value: formatPrice2(service.price), total: true },
+        { label: 'Cena', value: `${showFrom ? 'od ' : ''}${formatPrice2(shownPrice)}`, total: true },
       ]
     : []
+
+  // Summary shown on the identify step when the intent is a waitlist sign-up
+  // (no fixed time/price yet - just the service, specialist and date range).
+  const waitlistSummary: SummaryRow[] = service
+    ? [
+        { label: 'Usługa', value: service.name },
+        { label: 'Specjalista', value: workerName },
+        {
+          label: 'Zakres',
+          value: wlPrefs ? `od ${dayMonth(date)} · ${wlPrefs.rangeDays} ${wlPrefs.rangeDays === 1 ? 'dzień' : 'dni'}` : dayMonth(date),
+        },
+      ]
+    : []
+
+  // Waitlist sign-up is offered when the business allows it and a service is chosen.
+  const canWaitlist = business.waitlistEnabled !== false && !!service
 
   async function book(a: Auth, key = slotKey) {
     if (!service || !date || !key || booking.current) return
@@ -179,7 +256,7 @@ export function BookingFlow({
     emit('booking_submitted', { ...ctx, userId: a.userId })
     const r = await createAppointment(
       cfg,
-      { businessServiceId: service.id, startDate: slotStartDate(date, key), bookedById: a.userId, resourceId },
+      { businessServiceId: service.id, startDate: slotStartDate(date, key), bookedById: a.userId, resourceId, notes: notes.trim() || undefined },
       a.token,
     )
     booking.current = false
@@ -190,7 +267,7 @@ export function BookingFlow({
         userId: a.userId,
         appointmentId: r.data?.id ?? null,
         // GA4-ecommerce convenience: value in major units (PLN), price is grosze.
-        value: service.price / 100,
+        value: selectedPrice / 100,
         currency: 'PLN',
       })
       return
@@ -213,6 +290,72 @@ export function BookingFlow({
     emit('booking_failed', { ...ctx, code: r.code, reason: 'slot_lost' })
   }
 
+  // After authentication, either book the chosen slot or join the waitlist.
+  function complete(a: Auth) {
+    if (intent === 'waitlist') void submitWaitlist(a)
+    else void book(a)
+  }
+
+  const waitlistErrorMsg = (code: string) =>
+    code === 'WAITLIST_DUPLICATE'
+      ? 'Już czekasz na termin tej usługi w tym zakresie dat.'
+      : code === 'WAITLIST_LIMIT_REACHED'
+        ? 'Masz już 3 aktywne zapisy - usuń któryś w profilu Vizyto, aby dodać nowy.'
+        : code === 'WAITLIST_DISABLED'
+          ? 'Ten salon nie prowadzi listy oczekujących.'
+          : code === 'INCOMPLETE_PROFILE'
+            ? 'Uzupełnij imię, nazwisko i telefon, aby zapisać się na listę.'
+            : code === 'NETWORK'
+              ? 'Brak połączenia. Spróbuj ponownie.'
+              : 'Nie udało się zapisać na listę. Spróbuj ponownie.'
+
+  async function submitWaitlist(a: Auth, prefs = wlPrefs) {
+    if (!service || !date || !prefs || wlBusy) return
+    setWlBusy(true)
+    setWlErr('')
+    const dateTo = addDays(date, prefs.rangeDays - 1)
+    const r = await joinWaitlist(
+      cfg,
+      { businessServiceId: service.id, resourceId: resourceId ?? null, dateFrom: date, dateTo, timeFrom: prefs.timeFrom, timeTo: prefs.timeTo, bookedById: a.userId },
+      a.token,
+    )
+    setWlBusy(false)
+    if (r.ok) {
+      setPhase('waitlistDone')
+      emit('waitlist_joined', {
+        serviceId: service.id,
+        serviceName: service.name,
+        ...resourceEvent(resource ?? 'any'),
+        dateFrom: date,
+        dateTo,
+        timeFrom: prefs.timeFrom,
+        timeTo: prefs.timeTo,
+      })
+      return
+    }
+    setWlErr(waitlistErrorMsg(r.code))
+    setPhase('waitlist')
+    emit('waitlist_failed', { code: r.code })
+  }
+
+  // Open the waitlist form for the selected service/day. The sign-up needs an
+  // authenticated user, which the identify/OTP path supplies at submit time.
+  function startWaitlist() {
+    setIntent('waitlist')
+    setWlErr('')
+    emit('waitlist_started', { serviceId: service?.id, ...resourceEvent(resource ?? 'any'), date })
+    setPhase('waitlist')
+  }
+
+  function onWaitlistFormSubmit(prefs: WaitlistPrefs) {
+    setWlPrefs(prefs)
+    if (auth) void submitWaitlist(auth, prefs)
+    else {
+      emit('details_started', { serviceId: service?.id, waitlist: true })
+      setPhase('identify')
+    }
+  }
+
   // Resolve a specialist choice to a stable {id,name} shape for event payloads.
   const resourceEvent = (r: ResChoice) =>
     r === 'any' ? { resourceId: null, resourceName: 'Dowolny specjalista' } : { resourceId: r, resourceName: workers.find((w) => w.id === r)?.name ?? '' }
@@ -221,7 +364,7 @@ export function BookingFlow({
   const bookingCtx = (key = slotKey) => ({
     serviceId: service?.id,
     serviceName: service?.name,
-    price: service?.price,
+    price: service ? selectedPrice : undefined,
     ...resourceEvent(resource ?? 'any'),
     date,
     time: key ? slotLabel(date, key, business.timezone) : '',
@@ -232,8 +375,10 @@ export function BookingFlow({
   function pickService(s: Service) {
     if (s.id !== service?.id) {
       setService(s)
-      // keep any preselected specialist (worker list is business-wide); just
-      // clear the chosen day/slot since availability is per service.
+      // Keep a preselected specialist only if they also offer the new service;
+      // otherwise drop the choice so the user re-picks from the offering workers.
+      if (typeof resource === 'number' && !workerOffersService(s, resource)) setResource(null)
+      // Availability is per service, so the chosen day/slot no longer applies.
       setDate('')
       setSlotKey('')
       emit('service_selected', { serviceId: s.id, serviceName: s.name, price: s.price, durationMin: s.duration })
@@ -250,8 +395,8 @@ export function BookingFlow({
   function dalej() {
     if (selStep === 0) {
       if (!service) return
-      if (workers.length <= 1) {
-        const r: ResChoice = workers.length === 1 ? workers[0].id : 'any'
+      if (offeringWorkers.length <= 1) {
+        const r: ResChoice = offeringWorkers.length === 1 ? offeringWorkers[0].id : 'any'
         setResource(r)
         setSelStep(2)
         emit('specialist_selected', { ...resourceEvent(r), auto: true })
@@ -261,6 +406,7 @@ export function BookingFlow({
       setSelStep(2)
     } else {
       if (!slotKey) return
+      setIntent('book')
       if (auth) void book(auth, slotKey)
       else {
         emit('details_started', bookingCtx(slotKey))
@@ -271,12 +417,13 @@ export function BookingFlow({
 
   // ---- back (rendered in the panel header) ----
   const backFn: (() => void) | null = (() => {
-    if (phase === 'identify') return () => setPhase('select')
+    if (phase === 'identify') return () => setPhase(intent === 'waitlist' ? 'waitlist' : 'select')
+    if (phase === 'waitlist') return () => { setWlErr(''); setIntent('book'); setSelStep(2); setPhase('select') }
     if (phase === 'login') return () => { setLoginErr(''); setPhase('identify') }
     if (phase === 'otp') return () => { setOtpErr(''); setPhase('identify') }
     if (phase === 'slotLost') return () => recoverSlot()
     if (phase === 'select') {
-      if (selStep === 2) return () => setSelStep(workers.length > 1 ? 1 : 0)
+      if (selStep === 2) return () => setSelStep(hasResourceStep ? 1 : 0)
       if (selStep === 1) return () => setSelStep(0)
       return onClose ?? null // first step: back closes (launcher)
     }
@@ -367,7 +514,7 @@ export function BookingFlow({
       setAuth(a)
       emit('otp_verified', { userId: a.userId })
       emit('authenticated', { method: 'otp', userId: a.userId })
-      void book(a)
+      complete(a)
       return
     }
     if (r.code === 'EMAIL_IN_USE') {
@@ -402,7 +549,7 @@ export function BookingFlow({
     const a = { userId: r.data.userId, token: r.data.token }
     setAuth(a)
     emit('authenticated', { method: 'password', userId: a.userId })
-    void book(a)
+    complete(a)
   }
   async function onOAuth(provider: OAuthProvider) {
     if (oauthBusy || loggingIn) return
@@ -422,7 +569,7 @@ export function BookingFlow({
     const a = { userId: r.data.userId, token: r.data.token }
     setAuth(a)
     emit('authenticated', { method: provider, userId: a.userId })
-    void book(a)
+    complete(a)
   }
   function goLogin() {
     setLoginReason('')
@@ -444,6 +591,11 @@ export function BookingFlow({
     setSlotKey('')
     setSelStep(0)
     setContact(emptyContact)
+    setNotes('')
+    setIntent('book')
+    setWlPrefs(null)
+    setWlBusy(false)
+    setWlErr('')
     setEmailExists(false)
     setAuth(preAuth ?? null)
     setCode('')
@@ -471,12 +623,12 @@ export function BookingFlow({
         : selStep === 1
           ? 1
           : termIdx
-      : phase === 'slotLost'
+      : phase === 'slotLost' || phase === 'waitlist'
         ? termIdx
         : totalSteps - 1
   const showCta = phase === 'select'
   const canAdvance = selStep === 0 ? !!service : selStep === 1 ? resource != null : !!slotKey
-  const ctaPrice = service ? `${selStep === 0 && hasResourceStep ? 'od ' : ''}${formatPrice2(service.price)}` : ''
+  const ctaPrice = service ? `${showFrom ? 'od ' : ''}${formatPrice2(shownPrice)}` : ''
 
   return (
     <div class="vz-panel" role="dialog" aria-modal={onClose ? 'true' : undefined} aria-label="Zarezerwuj wizytę">
@@ -496,13 +648,21 @@ export function BookingFlow({
       </header>
 
       <div class="vz-body" ref={bodyRef} tabIndex={-1}>
-        {phase !== 'done' && <ProgressBar step={progStep} total={totalSteps} label={stepNames[progStep]} />}
+        {phase !== 'done' && phase !== 'waitlistDone' && (
+          <ProgressBar step={progStep} total={totalSteps} label={stepNames[progStep]} />
+        )}
+
+        {business.isTestMode && (phase === 'select' || phase === 'identify' || phase === 'waitlist') && (
+          <Notice title="Rezerwacja próbna">
+            Ten salon dopiero uruchamia rezerwacje online. Złożona tu rezerwacja nie jest jeszcze wiążąca - potwierdź ją bezpośrednio z salonem.
+          </Notice>
+        )}
 
         {phase === 'select' && selStep === 0 && (
-          <StepService services={services} selectedId={service?.id} onPick={pickService} priceFrom={hasResourceStep} />
+          <StepService services={services} workers={workers} categories={categories} selectedId={service?.id} onPick={pickService} />
         )}
         {phase === 'select' && selStep === 1 && service && (
-          <StepResource workers={workers} service={service} selected={resource} onPick={pickResource} />
+          <StepResource workers={offeringWorkers} service={service} selected={resource} onPick={pickResource} />
         )}
         {phase === 'select' && selStep === 2 && service && (
           <StepDateTime
@@ -518,14 +678,29 @@ export function BookingFlow({
               setSlotKey(key)
               emit('datetime_selected', { ...bookingCtx(key), slotKey: key })
             }}
+            canWaitlist={canWaitlist}
+            onJoinWaitlist={startWaitlist}
+          />
+        )}
+
+        {phase === 'waitlist' && service && (
+          <StepWaitlist
+            serviceName={service.name}
+            workerName={workerName}
+            date={date}
+            onSubmit={onWaitlistFormSubmit}
+            busy={wlBusy}
+            error={wlErr}
           />
         )}
 
         {phase === 'identify' && service && (
           <StepIdentify
-            summary={summaryRows}
+            summary={intent === 'waitlist' ? waitlistSummary : summaryRows}
             contact={contact}
             onChange={onContactChange}
+            notes={intent === 'waitlist' ? undefined : notes}
+            onNotes={intent === 'waitlist' ? undefined : setNotes}
             emailExists={emailExists}
             onCheckEmail={onCheckEmail}
             onSendCode={onSendCode}
@@ -587,6 +762,17 @@ export function BookingFlow({
         {phase === 'done' && (
           <StepDone rows={summaryRows} phone={contact.phone} email={contact.email} onClose={onClose} onRestart={restart} />
         )}
+        {phase === 'waitlistDone' && (
+          <div class="vz-done vz-fade-in">
+            <div class="vz-check"><Bell size={28} /></div>
+            <div class="vz-done-title">Jesteś na liście!</div>
+            <div class="vz-done-sub">
+              Damy Ci znać SMS-em{contact.email ? ' i e-mailem' : ''}, gdy tylko zwolni się pasujący termin usługi <b style="color:var(--vz-text)">{service?.name}</b>.
+            </div>
+            <div style="margin-top:18px;text-align:left;"><SummaryCard rows={waitlistSummary} /></div>
+            {onClose ? <Button onClick={onClose}>Gotowe</Button> : <Button variant="ghost" onClick={restart}>Nowa rezerwacja</Button>}
+          </div>
+        )}
       </div>
 
       {showCta && (
@@ -596,7 +782,7 @@ export function BookingFlow({
               {service ? (
                 <>
                   <div class="vz-cta-svc">{service.name}</div>
-                  <div class="vz-cta-meta"><b>{ctaPrice}</b> · {formatDuration(service.duration)}</div>
+                  <div class="vz-cta-meta"><b>{ctaPrice}</b> · {formatDuration(shownDuration)}</div>
                 </>
               ) : (
                 <div class="vz-cta-meta">Wybierz usługę, aby kontynuować</div>
