@@ -62,11 +62,15 @@ export type Slots = Record<string, number[]> // UTC "HH:mm" -> available resourc
 export type DayCounts = Record<string, number>
 export type GuestData = { userId: number; token: string | null }
 
+// mode: 'login' = the phone already belongs to a Vizyto account and the SAME
+// code will log the customer into it (no duplicate guest account); 'guest' =
+// the classic guest-signup path.
+export type OtpMode = 'login' | 'guest'
 export type OtpSendResult =
-  | { ok: true; expiresIn: number; maskedPhone: string }
+  | { ok: true; expiresIn: number; maskedPhone: string; mode: OtpMode }
   | { ok: false; code: 'RATE_LIMITED' | 'SITE_KEY_REQUIRED' | 'NETWORK' | string; retryAfter?: number }
 export type OtpVerifyResult =
-  | { ok: true; data: GuestData }
+  | { ok: true; data: GuestData; mode: OtpMode }
   | { ok: false; code: 'INVALID' | 'EXPIRED' | 'EMAIL_IN_USE' | 'NETWORK' | string; remainingAttempts?: number }
 export type CheckEmailResult = { exists: boolean; providers: string[] } | { error: true }
 export type LoginResult =
@@ -153,7 +157,7 @@ export async function sendGuestOtp(cfg: Cfg, p: { phone: string; turnstileToken?
       body: JSON.stringify({ businessId: cfg.businessId, phone: p.phone, turnstileToken: p.turnstileToken || undefined }),
     })
     const data = await r.json().catch(() => ({}))
-    if (r.ok) return { ok: true, expiresIn: data.expiresIn ?? 300, maskedPhone: data.maskedPhone ?? '' }
+    if (r.ok) return { ok: true, expiresIn: data.expiresIn ?? 300, maskedPhone: data.maskedPhone ?? '', mode: data.mode === 'login' ? 'login' : 'guest' }
     if (r.status === 429) return { ok: false, code: 'RATE_LIMITED', retryAfter: data?.retryAfter }
     return { ok: false, code: data?.code || `HTTP_${r.status}` }
   } catch {
@@ -173,7 +177,7 @@ export async function verifyGuestOtp(
       body: JSON.stringify({ businessId: cfg.businessId, ...p }),
     })
     const data = await r.json().catch(() => ({}))
-    if (r.ok) return { ok: true, data: { userId: data.userId, token: data.token ?? null } }
+    if (r.ok) return { ok: true, data: { userId: data.userId, token: data.token ?? null }, mode: data.mode === 'login' ? 'login' : 'guest' }
     if (r.status === 409) return { ok: false, code: 'EMAIL_IN_USE' }
     return {
       ok: false,

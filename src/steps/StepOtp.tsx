@@ -5,6 +5,7 @@ import { Turnstile } from '../ui/Turnstile'
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 
 export function StepOtp({
+  existingAccount,
   maskedPhone,
   code,
   onCode,
@@ -20,6 +21,9 @@ export function StepOtp({
   turnstileToken,
   onTurnstile,
 }: {
+  // The phone already belongs to a Vizyto account: the code logs the customer
+  // into it, so the booking lands in their real history.
+  existingAccount?: boolean
   maskedPhone: string
   code: string
   onCode: (v: string) => void
@@ -43,8 +47,13 @@ export function StepOtp({
     <div class="vz-fade-in">
       <StepHeader title="Weryfikacja SMS" />
       <p class="vz-lead">
-        Wpisaliśmy 4-cyfrowy kod na numer <b style="color:var(--vz-text)">{maskedPhone}</b>. Wpisz go poniżej.
+        Wysłaliśmy 4-cyfrowy kod na numer <b style="color:var(--vz-text)">{maskedPhone}</b>. Wpisz go poniżej.
       </p>
+      {existingAccount && (
+        <p class="vz-hint" style="margin-top:-4px;margin-bottom:12px;">
+          Ten numer ma już konto Vizyto - kod zaloguje Cię, a rezerwacja trafi na Twoje konto.
+        </p>
+      )}
 
       <OtpInput value={code} onInput={onCode} onComplete={onComplete} disabled={verifying || expired} invalid={!!error} />
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import type { Business, Cfg, DayCounts, OAuthProvider, Resource, Service, ServiceCategory, Slots } from './api'
+import type { Business, Cfg, DayCounts, OAuthProvider, OtpMode, Resource, Service, ServiceCategory, Slots } from './api'
 import {
   checkEmail,
   createAppointment,
@@ -142,6 +142,8 @@ export function BookingFlow({
   // next send re-gates. Only enforced when cfg.turnstileKey is configured.
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
   const [otpInfo, setOtpInfo] = useState({ maskedPhone: '', expiresAt: 0, resendAt: 0 })
+  // 'login' = this phone already has a Vizyto account; the code doubles as a login.
+  const [otpMode, setOtpMode] = useState<OtpMode>('guest')
   const [attemptsLeft, setAttemptsLeft] = useState(3)
   const [now, setNow] = useState(() => Date.now())
 
@@ -462,6 +464,7 @@ export function BookingFlow({
     setCode('')
     setAttemptsLeft(3)
     setOtpErr('')
+    setOtpMode(r.mode)
     const maskedPhone = r.maskedPhone || maskPhone(phone)
     setOtpInfo({
       maskedPhone,
@@ -489,6 +492,7 @@ export function BookingFlow({
     }
     setCode('')
     setAttemptsLeft(3)
+    setOtpMode(r.mode)
     const maskedPhone = r.maskedPhone || maskPhone(contact.phone)
     setOtpInfo({
       maskedPhone,
@@ -513,7 +517,7 @@ export function BookingFlow({
       const a = { userId: r.data.userId, token: r.data.token }
       setAuth(a)
       emit('otp_verified', { userId: a.userId })
-      emit('authenticated', { method: 'otp', userId: a.userId })
+      emit('authenticated', { method: r.mode === 'login' ? 'otp-login' : 'otp', userId: a.userId })
       complete(a)
       return
     }
@@ -727,6 +731,7 @@ export function BookingFlow({
         )}
         {phase === 'otp' && (
           <StepOtp
+            existingAccount={otpMode === 'login'}
             maskedPhone={otpInfo.maskedPhone}
             code={code}
             onCode={setCode}

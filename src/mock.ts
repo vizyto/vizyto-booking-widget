@@ -120,6 +120,10 @@ export async function getAvailability(p: { date: string }): Promise<Slots> {
 let lastOtpAt = 0
 let attempts = 0
 
+// Mock existing-account phone: any number ending in 777 behaves like a phone
+// already attached to a Vizyto account (OTP doubles as a login).
+const isExistingAccountPhone = (phone: string) => phone.replace(/\D/g, '').endsWith('777')
+
 export async function sendGuestOtp(p: { phone: string }): Promise<OtpSendResult> {
   await wait(450)
   const since = (Date.now() - lastOtpAt) / 1000
@@ -128,7 +132,7 @@ export async function sendGuestOtp(p: { phone: string }): Promise<OtpSendResult>
   attempts = 0
   // eslint-disable-next-line no-console
   console.info('%c[vizyto mock] OTP = 1234', 'color:#fd9320;font-weight:bold')
-  return { ok: true, expiresIn: 300, maskedPhone: p.phone.replace(/\d(?=\d{3})/g, '*') }
+  return { ok: true, expiresIn: 300, maskedPhone: p.phone.replace(/\d(?=\d{3})/g, '*'), mode: isExistingAccountPhone(p.phone) ? 'login' : 'guest' }
 }
 
 export async function verifyGuestOtp(p: {
@@ -139,10 +143,14 @@ export async function verifyGuestOtp(p: {
   otp: string
 }): Promise<OtpVerifyResult> {
   await wait(500)
+  if (p.otp === '1234' && isExistingAccountPhone(p.phone)) {
+    lastOtpAt = 0
+    return { ok: true, data: { userId: 555, token: 'mock-token' }, mode: 'login' }
+  }
   if (p.email.trim().toLowerCase() === 'taken@example.com') return { ok: false, code: 'EMAIL_IN_USE' }
   if (p.otp === '1234') {
     lastOtpAt = 0
-    return { ok: true, data: { userId: 999, token: 'mock-token' } }
+    return { ok: true, data: { userId: 999, token: 'mock-token' }, mode: 'guest' }
   }
   attempts += 1
   const remaining = Math.max(0, 3 - attempts)
