@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { Business, Cfg, DayCounts, OAuthProvider, OtpMode, Resource, Service, ServiceCategory, Slots } from './api'
 import {
   checkEmail,
+  checkWaitlistWindow,
   createAppointment,
   effectiveForWorker,
   formatDuration,
@@ -241,7 +242,9 @@ export function BookingFlow({
         { label: 'Specjalista', value: workerName },
         {
           label: 'Zakres',
-          value: wlPrefs ? `od ${dayMonth(date)} · ${wlPrefs.rangeDays} ${wlPrefs.rangeDays === 1 ? 'dzień' : 'dni'}` : dayMonth(date),
+          value: wlPrefs
+            ? `od ${dayMonth(addDays(date, wlPrefs.startOffset))} · ${wlPrefs.rangeDays} ${wlPrefs.rangeDays === 1 ? 'dzień' : 'dni'}`
+            : dayMonth(date),
         },
       ]
     : []
@@ -305,7 +308,9 @@ export function BookingFlow({
         ? 'Masz już 3 aktywne zapisy - usuń któryś w profilu Vizyto, aby dodać nowy.'
         : code === 'WAITLIST_DISABLED'
           ? 'Ten salon nie prowadzi listy oczekujących.'
-          : code === 'INCOMPLETE_PROFILE'
+          : code === 'WAITLIST_SLOTS_AVAILABLE'
+            ? 'W tym zakresie są wolne terminy - wybierz godzinę w kalendarzu.'
+            : code === 'INCOMPLETE_PROFILE'
             ? 'Uzupełnij imię, nazwisko i telefon, aby zapisać się na listę.'
             : code === 'NETWORK'
               ? 'Brak połączenia. Spróbuj ponownie.'
@@ -315,10 +320,11 @@ export function BookingFlow({
     if (!service || !date || !prefs || wlBusy) return
     setWlBusy(true)
     setWlErr('')
-    const dateTo = addDays(date, prefs.rangeDays - 1)
+    const dateFrom = addDays(date, prefs.startOffset)
+    const dateTo = addDays(dateFrom, prefs.rangeDays - 1)
     const r = await joinWaitlist(
       cfg,
-      { businessServiceId: service.id, resourceId: resourceId ?? null, dateFrom: date, dateTo, timeFrom: prefs.timeFrom, timeTo: prefs.timeTo, bookedById: a.userId },
+      { businessServiceId: service.id, resourceId: resourceId ?? null, dateFrom, dateTo, timeFrom: prefs.timeFrom, timeTo: prefs.timeTo, bookedById: a.userId },
       a.token,
     )
     setWlBusy(false)
@@ -328,7 +334,7 @@ export function BookingFlow({
         serviceId: service.id,
         serviceName: service.name,
         ...resourceEvent(resource ?? 'any'),
-        dateFrom: date,
+        dateFrom,
         dateTo,
         timeFrom: prefs.timeFrom,
         timeTo: prefs.timeTo,
@@ -693,6 +699,16 @@ export function BookingFlow({
             workerName={workerName}
             date={date}
             onSubmit={onWaitlistFormSubmit}
+            onShowSlots={(d) => {
+              // The pre-check found free slots in the chosen window - jump the
+              // calendar there instead of accepting a pointless signup.
+              setDate(d)
+              setSlotKey('')
+              setPhase('select')
+            }}
+            check={(win) =>
+              checkWaitlistWindow(cfg, { businessServiceId: service.id, resourceId: resourceId ?? null, ...win })
+            }
             busy={wlBusy}
             error={wlErr}
           />

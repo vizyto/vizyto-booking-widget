@@ -15,6 +15,8 @@ import type {
   OtpVerifyResult,
   ServiceCategory,
   Slots,
+  WaitlistCheck,
+  WaitlistCheckParams,
   WaitlistParams,
   WaitlistResult,
 } from './api'
@@ -72,6 +74,12 @@ export async function getServiceCategories(): Promise<ServiceCategory[]> {
     { id: 1, name: 'Włosy', serviceIds: [1] },
     { id: 2, name: 'Broda i pakiety', serviceIds: [2, 3] },
   ]
+}
+
+// Mock windows never have free slots, so the whole waitlist flow stays reachable.
+export async function checkWaitlistWindow(_p: WaitlistCheckParams): Promise<WaitlistCheck> {
+  await wait(300)
+  return { available: false, date: null, time: null, matchedSlots: 0 }
 }
 
 let waitlistCount = 0

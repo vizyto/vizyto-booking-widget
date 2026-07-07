@@ -282,6 +282,39 @@ export type WaitlistParams = {
 }
 export type WaitlistResult = { ok: true; data: any } | { ok: false; code: string }
 
+export type WaitlistCheckParams = {
+  businessServiceId: number
+  resourceId?: number | null
+  dateFrom: string // YYYY-MM-DD (business local)
+  dateTo: string // YYYY-MM-DD (business local)
+  timeFrom?: string | null // HH:mm (business local) or null = any
+  timeTo?: string | null
+}
+export type WaitlistCheck = { available: boolean; date: string | null; time: string | null; matchedSlots: number }
+
+const NO_SLOTS: WaitlistCheck = { available: false, date: null, time: null, matchedSlots: 0 }
+
+// Pre-check of a prospective waitlist window: the waitlist is a fallback, so
+// when the window still has a bookable slot the form steers to booking instead.
+// Fails open (available: false) - the server enforces the same gate on join.
+export async function checkWaitlistWindow(cfg: Cfg, p: WaitlistCheckParams): Promise<WaitlistCheck> {
+  if (cfg.mock) return mock.checkWaitlistWindow(p)
+  try {
+    const q = new URLSearchParams({ businessServiceId: String(p.businessServiceId), dateFrom: p.dateFrom, dateTo: p.dateTo })
+    if (p.resourceId) q.set('resourceId', String(p.resourceId))
+    if (p.timeFrom) q.set('timeFrom', p.timeFrom)
+    if (p.timeTo) q.set('timeTo', p.timeTo)
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/waitlist/check?${q.toString()}`, {
+      headers: headers(cfg),
+    })
+    if (!r.ok) return NO_SLOTS
+    const data = await r.json().catch(() => null)
+    return data && typeof data.available === 'boolean' ? data : NO_SLOTS
+  } catch {
+    return NO_SLOTS
+  }
+}
+
 // Join the waitlist for a service on a date range / time window. Requires an
 // authenticated user with a complete profile (name + phone), so the widget runs
 // the same guest-OTP / login path as booking before calling this.
