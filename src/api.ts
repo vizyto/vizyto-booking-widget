@@ -20,6 +20,15 @@ export type ResourceService = {
   effectiveDuration: number // minutes
   isActive: boolean
 }
+// Whitelist gate for online booking (bookingAccess on the business). For a
+// 'restricted' business viewerCanBook is null for an anonymous viewer - the UI
+// should invite a login, not refuse.
+export type BookingAccessPolicy = 'everyone' | 'restricted'
+export type BookingAccess = { policy: BookingAccessPolicy; viewerCanBook: boolean | null }
+// Viewer's access to a single service. 'locked' stays selectable (logging in
+// may unlock it) and renders with a discreet chip; hidden services never reach
+// the widget at all.
+export type ServiceViewerAccess = 'bookable' | 'locked'
 export type Service = {
   id: number
   name: string
@@ -29,6 +38,7 @@ export type Service = {
   bookingType: string
   bookingMode: string | null
   resourceServices?: ResourceService[]
+  viewerAccess?: ServiceViewerAccess
 }
 export type Resource = {
   id: number
@@ -43,6 +53,9 @@ export type Business = {
   name: string
   slug: string | null
   timezone: string | null
+  // Contact phone - shown on the access-restricted screen so a turned-away
+  // customer still has a way to book.
+  phone?: string | null
   services: Service[]
   resources: Resource[]
   workingHours: WorkingHour[]
@@ -51,6 +64,8 @@ export type Business = {
   isTestMode?: boolean
   // Whether the business accepts waitlist sign-ups when a day has no free slots.
   waitlistEnabled?: boolean
+  // Whitelist gate; absent (older API) = open to everyone.
+  bookingAccess?: BookingAccess
 }
 
 // A named group of services (PRO -> kategorie usług). Fetched from a separate
@@ -114,37 +129,89 @@ export async function getServiceCategories(cfg: Cfg): Promise<ServiceCategory[]>
   }
 }
 
+// The availability GETs answer 403 { code: 'BOOKING_ACCESS_RESTRICTED' } when
+// the viewer may not book the service (whitelist gate). Surfaced as a flag so
+// the calendar can invite a login instead of showing a silently empty grid.
+export type CountsResult = { counts: DayCounts; restricted: boolean }
+export type SlotsResult = { slots: Slots; restricted: boolean }
+
+async function isAccessRestricted(r: Response): Promise<boolean> {
+  if (r.status !== 403) return false
+  const data = await r.json().catch(() => null)
+  return (data as any)?.code === 'BOOKING_ACCESS_RESTRICTED'
+}
+
 export async function getCounts(
   cfg: Cfg,
-  p: { startDate: string; endDate: string; businessServiceId: number; resourceId?: number },
-): Promise<DayCounts> {
-  if (cfg.mock) return mock.getCounts(p)
+  p: { startDate: string; endDate: string; businessServiceId: number; resourceId?: number; bookedById?: number },
+): Promise<CountsResult> {
+  if (cfg.mock) return { counts: await mock.getCounts(p), restricted: false }
   const q = new URLSearchParams({ startDate: p.startDate, endDate: p.endDate, businessServiceId: String(p.businessServiceId) })
   if (p.resourceId) q.set('resourceId', String(p.resourceId))
+  // After login the whitelist gate is resolved for this user, not the anonym.
+  if (p.bookedById) q.set('bookedById', String(p.bookedById))
   try {
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability-counts?${q}`, {
       headers: headers(cfg),
     })
-    return r.ok ? ((await r.json()) as DayCounts) : {}
+    if (r.ok) return { counts: (await r.json()) as DayCounts, restricted: false }
+    return { counts: {}, restricted: await isAccessRestricted(r) }
   } catch {
-    return {}
+    return { counts: {}, restricted: false }
   }
 }
 
 export async function getAvailability(
   cfg: Cfg,
-  p: { date: string; businessServiceId: number; resourceId?: number },
-): Promise<Slots> {
-  if (cfg.mock) return mock.getAvailability(p)
+  p: { date: string; businessServiceId: number; resourceId?: number; bookedById?: number },
+): Promise<SlotsResult> {
+  if (cfg.mock) return { slots: await mock.getAvailability(p), restricted: false }
   const q = new URLSearchParams({ date: p.date, businessServiceId: String(p.businessServiceId) })
   if (p.resourceId) q.set('resourceId', String(p.resourceId))
+  if (p.bookedById) q.set('bookedById', String(p.bookedById))
   try {
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability?${q}`, {
       headers: headers(cfg),
     })
-    return r.ok ? ((await r.json()) as Slots) : {}
+    if (r.ok) return { slots: (await r.json()) as Slots, restricted: false }
+    return { slots: {}, restricted: await isAccessRestricted(r) }
   } catch {
-    return {}
+    return { slots: {}, restricted: false }
+  }
+}
+
+// Lightweight viewer-access probe (GET .../booking-access). bookedById is a
+// plain query param - the same trust model as the availability endpoints; the
+// authoritative gate stays in POST /appointments. Fails open on network/HTTP
+// errors: a hiccup must not block a legitimate booking, the POST backstop
+// still guards the write.
+export type BookingAccessCheck = {
+  policy: BookingAccessPolicy
+  viewerCanBook: boolean | null
+  serviceAccess: 'bookable' | 'locked' | 'hidden' | null
+}
+
+export async function checkBookingAccess(
+  cfg: Cfg,
+  p: { bookedById?: number; businessServiceId?: number },
+): Promise<BookingAccessCheck> {
+  const open: BookingAccessCheck = { policy: 'everyone', viewerCanBook: true, serviceAccess: 'bookable' }
+  if (cfg.mock) return open
+  const q = new URLSearchParams()
+  if (p.bookedById != null) q.set('bookedById', String(p.bookedById))
+  if (p.businessServiceId != null) q.set('businessServiceId', String(p.businessServiceId))
+  try {
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/booking-access?${q}`, { headers: headers(cfg) })
+    if (!r.ok) return open
+    const data = await r.json().catch(() => null)
+    if (!data) return open
+    return {
+      policy: data.policy === 'restricted' ? 'restricted' : 'everyone',
+      viewerCanBook: typeof data.viewerCanBook === 'boolean' ? data.viewerCanBook : null,
+      serviceAccess: data.serviceAccess ?? null,
+    }
+  } catch {
+    return open
   }
 }
 

@@ -157,9 +157,17 @@ export const css = `
 .vz-card-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .vz-card-title { font-size: 16px; font-weight: 600; line-height: 1.25; }
 .vz-card-sub { font-size: 13px; color: var(--vz-text-muted); }
-.vz-card-meta { display: flex; align-items: center; gap: 8px; font-size: 13.5px; margin-top: 2px; }
+.vz-card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; font-size: 13.5px; margin-top: 2px; }
 .vz-card-meta .vz-dur { color: var(--vz-text-muted); display: inline-flex; align-items: center; gap: 4px; }
 .vz-card-meta .vz-price { font-weight: 600; }
+/* Discreet "Dla stałych klientów" chip on whitelist-locked services. Not an
+   error - logging in may unlock the service, so it stays calm and selectable. */
+.vz-lock-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
+  border-radius: var(--vz-r-pill); border: 1px solid var(--vz-border); background: var(--vz-surface);
+  color: var(--vz-text-muted); font-size: 11px; font-weight: 500; white-space: nowrap;
+}
+.vz-lock-chip svg { flex: 0 0 auto; }
 .vz-radio {
   width: 26px; height: 26px; flex: 0 0 auto; border-radius: 50%; border: 2px solid var(--vz-border);
   display: flex; align-items: center; justify-content: center; color: var(--vz-on-accent);
@@ -328,6 +336,7 @@ export const css = `
 }
 .vz-cta .vz-btn { margin-top: 0; }
 .vz-btn.mt { margin-top: 18px; }
+a.vz-btn { text-decoration: none; }
 .vz-btn:hover { filter: brightness(1.05); }
 .vz-btn:active { transform: scale(.985); }
 .vz-btn[disabled] { opacity: .5; cursor: default; filter: none; }
@@ -379,6 +388,9 @@ export const css = `
 .vz-done { text-align: center; padding: 10px 0 4px; }
 .vz-check { width: 64px; height: 64px; border-radius: 50%; margin: 4px auto 16px; background: color-mix(in srgb, var(--vz-success) 16%, var(--vz-surface)); color: var(--vz-success); display: flex; align-items: center; justify-content: center; animation: vz-pop-check 360ms var(--vz-ease-out); }
 .vz-check svg { width: 32px; height: 32px; }
+/* Warning-tinted variant (access-restricted screens). */
+.vz-check.warn { background: color-mix(in srgb, var(--vz-warning) 14%, var(--vz-surface)); color: var(--vz-warning); }
+.vz-check.warn svg { width: 28px; height: 28px; }
 @keyframes vz-pop-check { from { transform: scale(.6); opacity: 0 } to { transform: scale(1); opacity: 1 } }
 .vz-done-title { font-size: 22px; font-weight: 600; }
 .vz-done-sub { color: var(--vz-text-muted); font-size: 13.5px; margin-top: 6px; line-height: 1.5; }

@@ -64,7 +64,8 @@ export function StepIdentify({
   return (
     <div class="vz-fade-in">
       <StepHeader title="Twoje dane" />
-      <SummaryCard rows={summary} />
+      {/* No rows = access-check login before any slot is chosen - skip the card. */}
+      {summary.length > 0 && <SummaryCard rows={summary} />}
 
       {!emailExists && (
         <div class="vz-vizyto-card">
