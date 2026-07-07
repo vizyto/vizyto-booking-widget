@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { Business, Cfg, DayCounts, OAuthProvider, OtpMode, Resource, Service, ServiceCategory, Slots } from './api'
 import {
+  checkBookingAccess,
   checkEmail,
   checkWaitlistWindow,
   createAppointment,
@@ -38,7 +39,7 @@ import { StepLogin } from './steps/StepLogin'
 import { StepOtp } from './steps/StepOtp'
 import { StepDone } from './steps/StepDone'
 import { Notice } from './ui/Notice'
-import { Bell } from './ui/icons'
+import { Bell, Lock, Phone } from './ui/icons'
 
 const HORIZON = 42
 const OTP_RESEND_MS = 60_000
@@ -51,7 +52,7 @@ const addDays = (ymd: string, n: number) => {
 }
 
 type ResChoice = number | 'any'
-type Phase = 'select' | 'identify' | 'login' | 'otp' | 'confirming' | 'done' | 'slotLost' | 'waitlist' | 'waitlistDone'
+type Phase = 'select' | 'identify' | 'login' | 'otp' | 'confirming' | 'done' | 'slotLost' | 'waitlist' | 'waitlistDone' | 'restricted'
 // Whether the identify/auth path finishes by booking a slot or joining a waitlist.
 type Intent = 'book' | 'waitlist'
 export type Auth = { userId: number; token: string | null }
@@ -130,6 +131,16 @@ export function BookingFlow({
   // Service categories (optional grouping) fetched from a separate public endpoint.
   const [categories, setCategories] = useState<ServiceCategory[]>([])
 
+  // ---- whitelist gate (bookingAccess) ----
+  // accessOk = the viewer is confirmed allowed to book at business level.
+  // Starts false for a 'restricted' business until a post-login probe says yes
+  // (fetchBusiness is anonymous, so viewerCanBook is null there).
+  const initialAccessOk = business.bookingAccess?.policy !== 'restricted' || business.bookingAccess?.viewerCanBook === true
+  const [accessOk, setAccessOk] = useState(initialAccessOk)
+  // Availability/counts answered 403 BOOKING_ACCESS_RESTRICTED for this viewer:
+  // the calendar shows a login invitation instead of a silently empty grid.
+  const [calRestricted, setCalRestricted] = useState(false)
+
   // The identify/auth path can end in a booking or a waitlist sign-up.
   const [intent, setIntent] = useState<Intent>('book')
   const [wlPrefs, setWlPrefs] = useState<WaitlistPrefs | null>(null)
@@ -174,16 +185,26 @@ export function BookingFlow({
     }
   }, [])
 
+  // bookedById resolves the whitelist gate for the logged-in user (anonymously
+  // a restricted business 403s), so both queries re-run after authentication.
   useEffect(() => {
     if (!service) return
     let cancelled = false
-    getCounts(cfg, { startDate: days[0], endDate: days[days.length - 1], businessServiceId: service.id, resourceId }).then(
-      (x) => !cancelled && setCounts(x),
-    )
+    getCounts(cfg, {
+      startDate: days[0],
+      endDate: days[days.length - 1],
+      businessServiceId: service.id,
+      resourceId,
+      bookedById: auth?.userId,
+    }).then((x) => {
+      if (cancelled) return
+      setCounts(x.counts)
+      setCalRestricted(x.restricted)
+    })
     return () => {
       cancelled = true
     }
-  }, [service?.id, resourceId, refetch])
+  }, [service?.id, resourceId, refetch, auth?.userId])
 
   useEffect(() => {
     if (!service || !date) {
@@ -192,13 +213,17 @@ export function BookingFlow({
     }
     let cancelled = false
     setLoadingSlots(true)
-    getAvailability(cfg, { date, businessServiceId: service.id, resourceId })
-      .then((x) => !cancelled && setSlots(x))
+    getAvailability(cfg, { date, businessServiceId: service.id, resourceId, bookedById: auth?.userId })
+      .then((x) => {
+        if (cancelled) return
+        setSlots(x.slots)
+        if (x.restricted) setCalRestricted(true)
+      })
       .finally(() => !cancelled && setLoadingSlots(false))
     return () => {
       cancelled = true
     }
-  }, [service?.id, resourceId, date, refetch])
+  }, [service?.id, resourceId, date, refetch, auth?.userId])
 
   useEffect(() => {
     if (phase !== 'otp') return
@@ -284,6 +309,14 @@ export function BookingFlow({
       emit('booking_failed', { ...ctx, code: r.code, reason: 'verification_required' })
       return
     }
+    if (r.code === 'BOOKING_ACCESS_RESTRICTED') {
+      // Backstop: the server-side whitelist gate refused the write (the probe
+      // failed open or access changed mid-flow). Same screen as the soft check.
+      setPhase('restricted')
+      emit('booking_access_denied', { userId: a.userId, serviceId: service.id, stage: 'create' })
+      emit('booking_failed', { ...ctx, code: r.code, reason: 'access_restricted' })
+      return
+    }
     if (r.code === 'NETWORK') {
       setBookingErr('Brak połączenia. Spróbuj ponownie.')
       emit('booking_failed', { ...ctx, code: r.code, reason: 'network' })
@@ -295,10 +328,32 @@ export function BookingFlow({
     emit('booking_failed', { ...ctx, code: r.code, reason: 'slot_lost' })
   }
 
+  // Hard whitelist check right after any path that establishes a session (OTP
+  // verify, e-mail login, OAuth). Resolves access for the actual user and the
+  // selected service; anything but 'bookable' stops before the booking step.
+  // Runs while the caller's busy flag is still up, so the button keeps spinning.
+  async function ensureBookingAccess(a: Auth): Promise<boolean> {
+    const needsCheck = business.bookingAccess?.policy === 'restricted' || service?.viewerAccess === 'locked' || calRestricted
+    if (!needsCheck) return true
+    const r = await checkBookingAccess(cfg, { bookedById: a.userId, businessServiceId: service?.id })
+    const allowed = service ? r.serviceAccess === 'bookable' : r.viewerCanBook !== false
+    if (!allowed) {
+      setPhase('restricted')
+      emit('booking_access_denied', { userId: a.userId, serviceId: service?.id ?? null, stage: 'check' })
+      return false
+    }
+    if (r.viewerCanBook === true) setAccessOk(true)
+    setCalRestricted(false)
+    return true
+  }
+
   // After authentication, either book the chosen slot or join the waitlist.
+  // No slot yet (access-check login from the banner / locked calendar): the
+  // viewer is confirmed - just resume selection where they left off.
   function complete(a: Auth) {
     if (intent === 'waitlist') void submitWaitlist(a)
-    else void book(a)
+    else if (service && date && slotKey) void book(a)
+    else setPhase('select')
   }
 
   const waitlistErrorMsg = (code: string) =>
@@ -430,6 +485,8 @@ export function BookingFlow({
     if (phase === 'login') return () => { setLoginErr(''); setPhase('identify') }
     if (phase === 'otp') return () => { setOtpErr(''); setPhase('identify') }
     if (phase === 'slotLost') return () => recoverSlot()
+    // Back to the service list - other services may still be bookable for this viewer.
+    if (phase === 'restricted') return () => { setSelStep(0); setPhase('select') }
     if (phase === 'select') {
       if (selStep === 2) return () => setSelStep(hasResourceStep ? 1 : 0)
       if (selStep === 1) return () => setSelStep(0)
@@ -518,15 +575,17 @@ export function BookingFlow({
       phone: contact.phone,
       otp: c,
     })
-    setVerifying(false)
     if (r.ok) {
       const a = { userId: r.data.userId, token: r.data.token }
       setAuth(a)
       emit('otp_verified', { userId: a.userId })
       emit('authenticated', { method: r.mode === 'login' ? 'otp-login' : 'otp', userId: a.userId })
-      complete(a)
+      const allowed = await ensureBookingAccess(a)
+      setVerifying(false)
+      if (allowed) complete(a)
       return
     }
+    setVerifying(false)
     if (r.code === 'EMAIL_IN_USE') {
       setLoginReason('Ten e-mail ma już konto Vizyto. Zaloguj się, aby dokończyć rezerwację.')
       setPhase('login')
@@ -551,23 +610,25 @@ export function BookingFlow({
     setLoggingIn(true)
     setLoginErr('')
     const r = await loginEmail(cfg, { email: email.trim().toLowerCase(), password })
-    setLoggingIn(false)
     if (!r.ok) {
+      setLoggingIn(false)
       setLoginErr(r.code === 'SITE_KEY_REQUIRED' ? 'Rezerwacja jest chwilowo niedostępna.' : 'Nieprawidłowy e-mail lub hasło.')
       return
     }
     const a = { userId: r.data.userId, token: r.data.token }
     setAuth(a)
     emit('authenticated', { method: 'password', userId: a.userId })
-    complete(a)
+    const allowed = await ensureBookingAccess(a)
+    setLoggingIn(false)
+    if (allowed) complete(a)
   }
   async function onOAuth(provider: OAuthProvider) {
     if (oauthBusy || loggingIn) return
     setOauthBusy(provider)
     setLoginErr('')
     const r = await oauthLogin(cfg, provider)
-    setOauthBusy(null)
     if (!r.ok) {
+      setOauthBusy(null)
       if (r.code === 'POPUP_CLOSED') return // user closed the popup - no error
       setLoginErr(
         r.code === 'POPUP_BLOCKED'
@@ -579,12 +640,23 @@ export function BookingFlow({
     const a = { userId: r.data.userId, token: r.data.token }
     setAuth(a)
     emit('authenticated', { method: provider, userId: a.userId })
-    complete(a)
+    const allowed = await ensureBookingAccess(a)
+    setOauthBusy(null)
+    if (allowed) complete(a)
   }
   function goLogin() {
     setLoginReason('')
     setLoginErr('')
     setPhase('login')
+  }
+  // Shortcut from the access banner / locked calendar: jump into the phone
+  // identify step before any slot is chosen, purely to establish who the viewer
+  // is. After auth, ensureBookingAccess() + complete() resume selection.
+  function goAccessLogin() {
+    setIntent('book')
+    setIdentifyErr('')
+    emit('details_started', { serviceId: service?.id ?? null, accessCheck: true })
+    setPhase('identify')
   }
   function recoverSlot() {
     setSlotKey('')
@@ -608,6 +680,8 @@ export function BookingFlow({
     setWlErr('')
     setEmailExists(false)
     setAuth(preAuth ?? null)
+    setAccessOk(initialAccessOk)
+    setCalRestricted(false)
     setCode('')
     setAttemptsLeft(3)
     setOtpInfo({ maskedPhone: '', expiresAt: 0, resendAt: 0 })
@@ -637,6 +711,12 @@ export function BookingFlow({
         ? termIdx
         : totalSteps - 1
   const showCta = phase === 'select'
+  // Whitelist banner on the selection phases: only for an unconfirmed viewer,
+  // and not while the calendar already shows its own dedicated login prompt.
+  const showAccessBanner =
+    business.bookingAccess?.policy === 'restricted' && !accessOk && !auth && phase === 'select' && !(selStep === 2 && calRestricted)
+  // tel: link for the restricted screen (spaces/dashes stripped).
+  const businessPhone = business.phone?.trim() || ''
   const canAdvance = selStep === 0 ? !!service : selStep === 1 ? resource != null : !!slotKey
   const ctaPrice = service ? `${showFrom ? 'od ' : ''}${formatPrice2(shownPrice)}` : ''
 
@@ -658,7 +738,7 @@ export function BookingFlow({
       </header>
 
       <div class="vz-body" ref={bodyRef} tabIndex={-1}>
-        {phase !== 'done' && phase !== 'waitlistDone' && (
+        {phase !== 'done' && phase !== 'waitlistDone' && phase !== 'restricted' && (
           <ProgressBar step={progStep} total={totalSteps} label={stepNames[progStep]} />
         )}
 
@@ -668,13 +748,32 @@ export function BookingFlow({
           </Notice>
         )}
 
+        {showAccessBanner && (
+          <Notice title="Rezerwacje online dla stałych klientów">
+            Zaloguj się numerem telefonu, aby sprawdzić swój dostęp.{' '}
+            <button class="vz-link" onClick={goAccessLogin} type="button">Zaloguj się</button>
+          </Notice>
+        )}
+
         {phase === 'select' && selStep === 0 && (
           <StepService services={services} workers={workers} categories={categories} selectedId={service?.id} onPick={pickService} />
         )}
         {phase === 'select' && selStep === 1 && service && (
           <StepResource workers={offeringWorkers} service={service} selected={resource} onPick={pickResource} />
         )}
-        {phase === 'select' && selStep === 2 && service && (
+        {phase === 'select' && selStep === 2 && service && calRestricted && (
+          // Availability answered BOOKING_ACCESS_RESTRICTED for this (anonymous)
+          // viewer - invite a login instead of rendering an empty calendar.
+          <div class="vz-fade-in" style="text-align:center;padding:8px 0;">
+            <div class="vz-check warn"><Lock size={26} /></div>
+            <div class="vz-done-title" style="font-size:18px;">Usługa dla stałych klientów</div>
+            <p class="vz-lead" style="margin-top:8px;">
+              Ten salon udostępnia rezerwacje online wybranym klientom. Zaloguj się numerem telefonu, aby sprawdzić swój dostęp.
+            </p>
+            <button class="vz-btn mt" onClick={goAccessLogin} type="button">Zaloguj się</button>
+          </div>
+        )}
+        {phase === 'select' && selStep === 2 && service && !calRestricted && (
           <StepDateTime
             days={days}
             counts={counts}
@@ -714,13 +813,15 @@ export function BookingFlow({
           />
         )}
 
-        {phase === 'identify' && service && (
+        {phase === 'identify' && (
           <StepIdentify
-            summary={intent === 'waitlist' ? waitlistSummary : summaryRows}
+            // Access-check login (no slot picked yet): no summary and no notes -
+            // the user is only confirming who they are.
+            summary={intent === 'waitlist' ? waitlistSummary : slotKey ? summaryRows : []}
             contact={contact}
             onChange={onContactChange}
-            notes={intent === 'waitlist' ? undefined : notes}
-            onNotes={intent === 'waitlist' ? undefined : setNotes}
+            notes={intent === 'waitlist' || !slotKey ? undefined : notes}
+            onNotes={intent === 'waitlist' || !slotKey ? undefined : setNotes}
             emailExists={emailExists}
             onCheckEmail={onCheckEmail}
             onSendCode={onSendCode}
@@ -778,6 +879,27 @@ export function BookingFlow({
             <div class="vz-done-title" style="font-size:18px;">Ten termin właśnie zniknął</div>
             <p class="vz-lead" style="margin-top:8px;">Ktoś był szybszy. Wybierz inny wolny termin - Twoje dane zostają zapisane.</p>
             <button class="vz-btn mt" onClick={recoverSlot} type="button">Wybierz inny termin</button>
+          </div>
+        )}
+        {phase === 'restricted' && (
+          <div class="vz-fade-in" style="text-align:center;padding:8px 0;">
+            <div class="vz-check warn"><Lock size={26} /></div>
+            <div class="vz-done-title" style="font-size:18px;">Rezerwacje dla wybranych klientów</div>
+            <p class="vz-lead" style="margin-top:8px;">
+              Rezerwacje online w tym salonie są dostępne dla wybranych klientów. Skontaktuj się z salonem, aby umówić wizytę.
+            </p>
+            {businessPhone && (
+              <a class="vz-btn mt" href={`tel:${businessPhone.replace(/[\s\-()]/g, '')}`}>
+                <Phone size={17} /> Zadzwoń: {businessPhone}
+              </a>
+            )}
+            <button
+              class={`vz-btn${businessPhone ? ' ghost' : ' mt'}`}
+              onClick={() => { setSelStep(0); setPhase('select') }}
+              type="button"
+            >
+              Wróć do usług
+            </button>
           </div>
         )}
         {phase === 'done' && (

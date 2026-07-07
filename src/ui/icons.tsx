@@ -68,6 +68,9 @@ export const Shield = ({ size = 18, ...p }: P) => (
 export const Bell = ({ size = 18, ...p }: P) => (
   <svg {...base(size)} {...p}><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
 )
+export const Lock = ({ size = 18, ...p }: P) => (
+  <svg {...base(size)} {...p}><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+)
 export const Info = ({ size = 18, ...p }: P) => (
   <svg {...base(size)} {...p}><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></svg>
 )
