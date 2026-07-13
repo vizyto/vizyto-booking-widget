@@ -302,7 +302,10 @@ export function BookingFlow({
       })
       return
     }
-    if (r.code === 'BOOKED_BY_MISMATCH' || r.code === 'VERIFICATION_REQUIRED') {
+    // PHONE_VERIFICATION_REQUIRED: the account's phoneVerified flag dropped
+    // after the session was minted (e.g. a number change in the app) - the
+    // widget's own OTP re-login is exactly the verification the API wants.
+    if (r.code === 'BOOKED_BY_MISMATCH' || r.code === 'VERIFICATION_REQUIRED' || r.code === 'PHONE_VERIFICATION_REQUIRED') {
       setAuth(null)
       setIdentifyErr('Potwierdź numer telefonu, aby dokończyć rezerwację.')
       setPhase('identify')
