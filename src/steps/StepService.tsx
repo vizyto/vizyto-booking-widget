@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'preact/hooks'
 import type { Resource, Service, ServiceCategory } from '../api'
-import { formatDuration, formatPrice2, priceRange } from '../api'
+import { formatDuration, formatPrice2, richTextToPlain, serviceBaseRange } from '../api'
 import { SelectCard } from '../ui/SelectCard'
 import { Clock, Lock } from '../ui/icons'
 
@@ -32,6 +32,11 @@ export function StepService({
   const [active, setActive] = useState<number | 'all'>('all')
   const shown = active === 'all' ? services : cats.find((c) => c.id === active)?.items ?? services
 
+  // When any shown service has a photo, render a thumbnail square on every card
+  // (photo or a letter placeholder) so the list stays aligned; otherwise keep
+  // the clean text-only layout.
+  const anyImage = useMemo(() => shown.some((s) => !!s.image), [shown])
+
   return (
     <div class="vz-fade-in">
       {cats.length > 0 && (
@@ -48,11 +53,13 @@ export function StepService({
       )}
       <div class="vz-list vz-stagger">
         {shown.map((s) => {
-          const { min, max } = priceRange(s, workers)
-          const from = min !== max
+          const { min, from } = serviceBaseRange(s, workers)
+          const desc = richTextToPlain(s.description)
           return (
             <SelectCard
+              thumb={anyImage ? (s.image ?? null) : undefined}
               title={s.name}
+              desc={desc || undefined}
               selected={s.id === selectedId}
               onSelect={() => onPick(s)}
               meta={

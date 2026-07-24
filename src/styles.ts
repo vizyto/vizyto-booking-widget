@@ -154,9 +154,19 @@ export const css = `
 }
 .vz-card-av img { width: 100%; height: 100%; object-fit: cover; }
 .vz-card.selected .vz-card-av { background: color-mix(in srgb, var(--vz-accent) 18%, var(--vz-surface)); color: var(--vz-accent); }
+/* Rounded-square service photo (or letter placeholder), aligned with avatars. */
+.vz-card-thumb {
+  width: 56px; height: 56px; flex: 0 0 auto; border-radius: var(--vz-r-md); overflow: hidden;
+  background: var(--vz-surface); display: flex; align-items: center; justify-content: center;
+  color: var(--vz-text-muted); font-weight: 600; font-size: 20px;
+}
+.vz-card-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.vz-card.selected .vz-card-thumb { background: color-mix(in srgb, var(--vz-accent) 18%, var(--vz-surface)); color: var(--vz-accent); }
 .vz-card-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .vz-card-title { font-size: 16px; font-weight: 600; line-height: 1.25; }
 .vz-card-sub { font-size: 13px; color: var(--vz-text-muted); }
+/* Plain, clamped service description (2 lines). */
+.vz-card-desc { font-size: 12.5px; color: var(--vz-text-muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .vz-card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; font-size: 13.5px; margin-top: 2px; }
 .vz-card-meta .vz-dur { color: var(--vz-text-muted); display: inline-flex; align-items: center; gap: 4px; }
 .vz-card-meta .vz-price { font-weight: 600; }
