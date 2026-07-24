@@ -99,23 +99,47 @@ export function BookingFlow({
     [workers, service],
   )
 
-  // With 0-1 specialists there's no specialist choice: the step is skipped and
-  // the progress is a 3-step flow. "od" (from) pricing also only applies when a
-  // service's price can vary between specialists, i.e. there are several.
-  const hasResourceStep = offeringWorkers.length > 1
+  // Offerings-pool F2/F3: a service is either staff-realized (customer picks a
+  // worker) or unit-realized (customer picks an object from the primary pool, or
+  // "Dowolny"). providerSelection 'auto' means the server assigns and there is no
+  // pick step at all.
+  const isUnit = service?.fulfillmentMode === 'unit'
+  const providerAuto = service?.providerSelection === 'auto'
+  const unitTag = (service?.primaryObjectCategoryTag ?? null) || null
+  // Bookable, customer-selectable objects of the service's primary pool.
+  const poolUnits = useMemo(() => {
+    if (!service || !isUnit || !unitTag) return []
+    return business.resources.filter(
+      (r) =>
+        r.type === 'object' &&
+        r.isBookable !== false &&
+        r.isCustomerSelectable !== false &&
+        (((r.categoryTag ?? '') as string).trim() || null) === unitTag,
+    )
+  }, [business, service, isUnit, unitTag])
+  // Whoever the customer chooses among for this service (memoized for stable
+  // effect/memo deps).
+  const selectableProviders = useMemo(() => (isUnit ? poolUnits : offeringWorkers), [isUnit, poolUnits, offeringWorkers])
+
+  // With 0-1 providers, or providerSelection 'auto', there's no pick step: it is
+  // skipped and the progress is a 3-step flow. "od" (from) pricing only applies
+  // when a staff service's price can vary between workers.
+  const hasResourceStep = !providerAuto && selectableProviders.length > 1
+  const providerStepName = isUnit ? 'WYBÓR ZASOBU' : 'WYBÓR SPECJALISTY'
   const stepNames = hasResourceStep
-    ? ['WYBÓR USŁUGI', 'WYBÓR SPECJALISTY', 'WYBÓR TERMINU', 'TWOJE DANE']
+    ? ['WYBÓR USŁUGI', providerStepName, 'WYBÓR TERMINU', 'TWOJE DANE']
     : ['WYBÓR USŁUGI', 'WYBÓR TERMINU', 'TWOJE DANE']
   const totalSteps = stepNames.length
 
-  // Seed the specialist from prefill (a tapped barber CTA), or auto-pick when
-  // the chosen service is offered by 0-1 of the workers who offer it.
+  // Seed the provider from prefill (a tapped barber CTA), or auto-pick when the
+  // chosen service has 0-1 selectable providers or assigns automatically.
   const initialResource = useMemo<ResChoice | null>(() => {
-    if (prefill?.resourceId && offeringWorkers.some((w) => w.id === prefill.resourceId)) return prefill.resourceId
-    if (service && offeringWorkers.length === 0) return 'any'
-    if (service && offeringWorkers.length === 1) return offeringWorkers[0].id
+    if (prefill?.resourceId && selectableProviders.some((w) => w.id === prefill.resourceId)) return prefill.resourceId
+    if (service && providerAuto) return 'any'
+    if (service && selectableProviders.length === 0) return 'any'
+    if (service && selectableProviders.length === 1) return selectableProviders[0].id
     return null
-  }, [offeringWorkers, prefill?.resourceId, service])
+  }, [selectableProviders, providerAuto, prefill?.resourceId, service])
 
   // selection
   const [resource, setResource] = useState<ResChoice | null>(initialResource)
@@ -212,8 +236,11 @@ export function BookingFlow({
   // length, so counts/slots must refetch when they do.
   const addonKey = addonIds.join(',')
   const days = useMemo(() => nextDays(HORIZON), [])
-  const worker: Resource | undefined = typeof resource === 'number' ? workers.find((w) => w.id === resource) : undefined
-  const workerName = resource === 'any' || resource == null ? 'Dowolny specjalista' : worker?.name ?? ''
+  // The pinned provider (worker or pool unit); undefined for "Dowolny"/auto.
+  const pinnedResource: Resource | undefined = typeof resource === 'number' ? business.resources.find((r) => r.id === resource) : undefined
+  const anyProviderLabel = isUnit ? (unitTag ? `Dowolny: ${unitTag}` : 'Dowolny') : 'Dowolny specjalista'
+  const providerName = resource === 'any' || resource == null ? anyProviderLabel : pinnedResource?.name ?? ''
+  const providerRowLabel = isUnit ? 'Zasób' : 'Specjalista'
 
   useEffect(() => {
     let cancelled = false
@@ -302,7 +329,7 @@ export function BookingFlow({
         ...(chosenVariant && hasVariants
           ? [{ label: 'Wariant', value: chosenVariant.label || formatDuration(chosenVariant.durationMinutes) }]
           : []),
-        { label: 'Specjalista', value: workerName },
+        { label: providerRowLabel, value: providerName },
         { label: 'Termin', value: `${dayMonth(date)}, ${slotLabel(date, slotKey, business.timezone)}` },
         ...(chosenAddonNames.length ? [{ label: 'Dodatki', value: chosenAddonNames.join(', ') }] : []),
         { label: 'Cena', value: `${showFrom ? 'od ' : ''}${formatPrice2(shownPrice)}`, total: true },
@@ -314,7 +341,7 @@ export function BookingFlow({
   const waitlistSummary: SummaryRow[] = service
     ? [
         { label: 'Usługa', value: service.name },
-        { label: 'Specjalista', value: workerName },
+        { label: providerRowLabel, value: providerName },
         {
           label: 'Zakres',
           value: wlPrefs
@@ -483,7 +510,9 @@ export function BookingFlow({
 
   // Resolve a specialist choice to a stable {id,name} shape for event payloads.
   const resourceEvent = (r: ResChoice) =>
-    r === 'any' ? { resourceId: null, resourceName: 'Dowolny specjalista' } : { resourceId: r, resourceName: workers.find((w) => w.id === r)?.name ?? '' }
+    r === 'any'
+      ? { resourceId: null, resourceName: anyProviderLabel }
+      : { resourceId: r, resourceName: business.resources.find((x) => x.id === r)?.name ?? '' }
 
   // The full booking context shared by every funnel event past slot selection.
   const bookingCtx = (key = slotKey) => ({
@@ -500,9 +529,10 @@ export function BookingFlow({
   function pickService(s: Service) {
     if (s.id !== service?.id) {
       setService(s)
-      // Keep a preselected specialist only if they also offer the new service;
-      // otherwise drop the choice so the user re-picks from the offering workers.
-      if (typeof resource === 'number' && !workerOffersService(s, resource)) setResource(null)
+      // Keep a preselected specialist only for a staff service they still offer;
+      // drop it when switching to a unit service (a worker id is never a valid
+      // pool unit) or to a service they don't perform - the step/skip re-derives.
+      if (s.fulfillmentMode === 'unit' || (typeof resource === 'number' && !workerOffersService(s, resource))) setResource(null)
       // Availability is per service, so the chosen day/slot no longer applies.
       setDate('')
       setSlotKey('')
@@ -549,8 +579,9 @@ export function BookingFlow({
   function dalej() {
     if (selStep === 0) {
       if (!service || configuring || !addonsValid(service, addonIds)) return
-      if (offeringWorkers.length <= 1) {
-        const r: ResChoice = offeringWorkers.length === 1 ? offeringWorkers[0].id : 'any'
+      if (!hasResourceStep) {
+        // No pick step: providerSelection 'auto', or 0-1 selectable providers.
+        const r: ResChoice = !providerAuto && selectableProviders.length === 1 ? selectableProviders[0].id : 'any'
         setResource(r)
         setSelStep(2)
         emit('specialist_selected', { ...resourceEvent(r), auto: true })
@@ -867,7 +898,14 @@ export function BookingFlow({
           <StepService services={services} workers={workers} categories={categories} selectedId={service?.id} onPick={pickService} />
         )}
         {phase === 'select' && !configuring && selStep === 1 && service && (
-          <StepResource workers={offeringWorkers} service={service} selected={resource} onPick={pickResource} />
+          <StepResource
+            providers={selectableProviders}
+            service={service}
+            mode={isUnit ? 'unit' : 'staff'}
+            anyLabel={anyProviderLabel}
+            selected={resource}
+            onPick={pickResource}
+          />
         )}
         {phase === 'select' && !configuring && selStep === 2 && service && calRestricted && (
           // Availability answered BOOKING_ACCESS_RESTRICTED for this (anonymous)
@@ -903,7 +941,7 @@ export function BookingFlow({
         {phase === 'waitlist' && service && (
           <StepWaitlist
             serviceName={service.name}
-            workerName={workerName}
+            workerName={providerName}
             date={date}
             onSubmit={onWaitlistFormSubmit}
             onShowSlots={(d) => {
@@ -1046,8 +1084,8 @@ export function BookingFlow({
             </div>
             {selStep >= 1 && resource != null && (
               <div class="vz-cta-who">
-                <span class="vz-card-av">{worker?.image ? <img src={worker.image} alt="" /> : worker ? worker.name.charAt(0) : '✦'}</span>
-                <span>{resource === 'any' ? 'Dowolny' : worker?.name}</span>
+                <span class="vz-card-av">{pinnedResource?.image ? <img src={pinnedResource.image} alt="" /> : pinnedResource ? pinnedResource.name.charAt(0) : '✦'}</span>
+                <span>{resource === 'any' ? 'Dowolny' : pinnedResource?.name}</span>
               </div>
             )}
           </div>

@@ -5,50 +5,67 @@ import { Clock } from '../ui/icons'
 
 type ResChoice = number | 'any'
 
+// Provider pick step. 'staff' lists the workers who offer the service (with
+// per-employee price/duration); 'unit' lists the objects in the service's
+// primary pool (loża, tor, stanowisko) - all at the service price. Both offer a
+// "Dowolny" option that lets the server assign the first free provider.
 export function StepResource({
-  workers,
+  providers,
   service,
+  mode,
+  anyLabel,
   selected,
   onPick,
 }: {
-  // Only the workers who actually offer this service.
-  workers: Resource[]
+  providers: Resource[]
   service: Service
+  mode: 'staff' | 'unit'
+  // Label of the "Dowolny ..." option (specialist vs pool type).
+  anyLabel: string
   selected: ResChoice | null
   onPick: (r: ResChoice) => void
 }) {
-  const { min, max } = priceRange(service, workers)
+  const { min, max } = priceRange(service, providers)
   const priceVaries = min !== max
   return (
     <div class="vz-fade-in">
       <div class="vz-list vz-stagger">
-        {workers.length > 1 && (
+        {providers.length > 1 && (
           <SelectCard
             avatar="✦"
-            title="Dowolny specjalista"
+            title={anyLabel}
             sub="najszybszy wolny termin"
             selected={selected === 'any'}
             onSelect={() => onPick('any')}
-            meta={
-              <span class="vz-price">{priceVaries ? 'od ' : ''}{formatPrice2(min)}</span>
-            }
+            meta={mode === 'staff' ? <span class="vz-price">{priceVaries ? 'od ' : ''}{formatPrice2(min)}</span> : undefined}
           />
         )}
-        {workers.map((w) => {
-          const eff = effectiveForWorker(service, w.id)
+        {providers.map((p) => {
+          if (mode === 'unit') {
+            return (
+              <SelectCard
+                avatar={p.image ? <img src={p.image} alt="" /> : p.name.charAt(0)}
+                title={p.name}
+                sub={p.position || undefined}
+                selected={selected === p.id}
+                onSelect={() => onPick(p.id)}
+              />
+            )
+          }
+          const eff = effectiveForWorker(service, p.id)
           return (
             <SelectCard
-              avatar={w.image ? <img src={w.image} alt="" /> : w.name.charAt(0)}
-              title={w.name}
-              sub={w.position || undefined}
+              avatar={p.image ? <img src={p.image} alt="" /> : p.name.charAt(0)}
+              title={p.name}
+              sub={p.position || undefined}
               meta={
                 <>
                   <span class="vz-dur"><Clock size={14} /> {formatDuration(eff.duration)}</span>
                   <span class="vz-price">{formatPrice2(eff.price)}</span>
                 </>
               }
-              selected={selected === w.id}
-              onSelect={() => onPick(w.id)}
+              selected={selected === p.id}
+              onSelect={() => onPick(p.id)}
             />
           )
         })}
