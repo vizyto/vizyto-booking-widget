@@ -545,7 +545,13 @@ export function resolveVariant(service: Service, chosenDurationMinutes: number |
 // server does not recompute it from worker overrides); otherwise fall back to
 // the per-worker override for a pinned worker, else the service base.
 function variantOrBase(service: Service, variant: ServiceDurationOption | null, workerId?: number): { price: number; duration: number } {
-  if (variant) return { price: variant.priceCents ?? service.price, duration: variant.durationMinutes }
+  if (variant) {
+    // A variant with null priceCents ("cena na miejscu") falls back to the pinned
+    // worker's override, then the service base - mirroring the server's create
+    // precedence (chosenDurationPrice ?? resourceService.price ?? service.price).
+    const fallback = typeof workerId === 'number' ? effectiveForWorker(service, workerId).price : service.price
+    return { price: variant.priceCents ?? fallback, duration: variant.durationMinutes }
+  }
   if (typeof workerId === 'number') return effectiveForWorker(service, workerId)
   return { price: service.price, duration: service.duration }
 }
@@ -609,7 +615,9 @@ export function configuredTotals(
 // (possibly overridden) prices. `from` drives the "od" prefix.
 export function serviceBaseRange(service: Service, workers: Resource[]): { min: number; max: number; from: boolean } {
   const opts = service.durationOptions ?? []
-  if (opts.length >= 2) {
+  // Any length preset drives the card price (matching the server + web, which
+  // treat one option as a variant); "od" applies only when the presets differ.
+  if (opts.length > 0) {
     const prices = opts.map((o) => o.priceCents ?? service.price)
     const min = Math.min(...prices)
     const max = Math.max(...prices)

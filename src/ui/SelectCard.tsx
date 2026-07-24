@@ -1,3 +1,4 @@
+import { useState } from 'preact/hooks'
 import type { ComponentChildren, VNode } from 'preact'
 import { Check } from './icons'
 
@@ -27,6 +28,8 @@ export function SelectCard({
   selected: boolean
   onSelect: () => void
 }) {
+  // A broken/unreachable photo degrades to the same letter placeholder as null.
+  const [imgOk, setImgOk] = useState(true)
   return (
     <button
       type="button"
@@ -36,7 +39,9 @@ export function SelectCard({
       onClick={onSelect}
     >
       {thumb !== undefined && (
-        <span class="vz-card-thumb">{thumb ? <img src={thumb} alt="" loading="lazy" /> : title.charAt(0)}</span>
+        <span class="vz-card-thumb">
+          {thumb && imgOk ? <img src={thumb} alt="" loading="lazy" onError={() => setImgOk(false)} /> : title.charAt(0)}
+        </span>
       )}
       {avatar !== undefined && <span class="vz-card-av">{avatar}</span>}
       <span class="vz-card-main">

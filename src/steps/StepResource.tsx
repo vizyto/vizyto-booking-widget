@@ -29,7 +29,7 @@ export function StepResource({
   const priceVaries = min !== max
   return (
     <div class="vz-fade-in">
-      <div class="vz-list vz-stagger">
+      <div class="vz-list vz-stagger" role="radiogroup" aria-label={mode === 'unit' ? 'Wybór zasobu' : 'Wybór specjalisty'}>
         {providers.length > 1 && (
           <SelectCard
             avatar="✦"

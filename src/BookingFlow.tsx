@@ -105,7 +105,9 @@ export function BookingFlow({
   // pick step at all.
   const isUnit = service?.fulfillmentMode === 'unit'
   const providerAuto = service?.providerSelection === 'auto'
-  const unitTag = (service?.primaryObjectCategoryTag ?? null) || null
+  // Trim both sides of the pool match (web computeUnitPickTag/getSelectableUnits
+  // trim too): a whitespace-bearing tag must not silently empty the pool.
+  const unitTag = ((service?.primaryObjectCategoryTag ?? '') as string).trim() || null
   // Bookable, customer-selectable objects of the service's primary pool.
   const poolUnits = useMemo(() => {
     if (!service || !isUnit || !unitTag) return []
@@ -306,7 +308,7 @@ export function BookingFlow({
   // the price yet (no worker, no variant), fall back to the "od {min}" range
   // across the offering workers.
   const chosenWorker = typeof resource === 'number' ? resource : undefined
-  const hasVariants = (service?.durationOptions?.length ?? 0) >= 2
+  const hasVariants = (service?.durationOptions?.length ?? 0) > 0
   const workerRange = service ? priceRange(service, offeringWorkers) : { min: 0, max: 0 }
   const priceVaries = workerRange.min !== workerRange.max
   const cfgTotals = service ? configuredTotals(service, variantDuration, addonIds, chosenWorker) : { price: 0, duration: 0 }
@@ -530,9 +532,16 @@ export function BookingFlow({
     if (s.id !== service?.id) {
       setService(s)
       // Keep a preselected specialist only for a staff service they still offer;
-      // drop it when switching to a unit service (a worker id is never a valid
-      // pool unit) or to a service they don't perform - the step/skip re-derives.
-      if (s.fulfillmentMode === 'unit' || (typeof resource === 'number' && !workerOffersService(s, resource))) setResource(null)
+      // drop it otherwise. A pinned number must be an actual worker offering the
+      // new staff service - a pool object id (type !== 'worker') is never valid
+      // and, because a no-rows service treats every id as offered, would
+      // otherwise leak through into the booking. Unit services always reset.
+      if (
+        s.fulfillmentMode === 'unit' ||
+        (typeof resource === 'number' &&
+          (business.resources.find((r) => r.id === resource)?.type !== 'worker' || !workerOffersService(s, resource)))
+      )
+        setResource(null)
       // Availability is per service, so the chosen day/slot no longer applies.
       setDate('')
       setSlotKey('')
@@ -587,7 +596,7 @@ export function BookingFlow({
         emit('specialist_selected', { ...resourceEvent(r), auto: true })
       } else setSelStep(1)
     } else if (selStep === 1) {
-      if (resource == null) return
+      if (!resourceValid) return
       setSelStep(2)
     } else {
       if (!slotKey) return
@@ -844,8 +853,12 @@ export function BookingFlow({
     business.bookingAccess?.policy === 'restricted' && !accessOk && !auth && phase === 'select' && !(selStep === 2 && calRestricted)
   // tel: link for the restricted screen (spaces/dashes stripped).
   const businessPhone = business.phone?.trim() || ''
+  // A pinned provider must belong to the current service's selectable set;
+  // "any" (Dowolny/auto) is always valid. Guards a stale id from a previous
+  // service from surviving into an enabled "Dalej".
+  const resourceValid = resource === 'any' || (typeof resource === 'number' && selectableProviders.some((p) => p.id === resource))
   const canAdvance =
-    selStep === 0 ? !!service && !configuring && addonsValid(service, addonIds) : selStep === 1 ? resource != null : !!slotKey
+    selStep === 0 ? !!service && !configuring && addonsValid(service, addonIds) : selStep === 1 ? resourceValid : !!slotKey
   const ctaPrice = service ? `${showFrom ? 'od ' : ''}${formatPrice2(shownPrice)}` : ''
 
   return (

@@ -163,7 +163,7 @@ export const css = `
 .vz-card-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .vz-card.selected .vz-card-thumb { background: color-mix(in srgb, var(--vz-accent) 18%, var(--vz-surface)); color: var(--vz-accent); }
 .vz-card-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.vz-card-title { font-size: 16px; font-weight: 600; line-height: 1.25; }
+.vz-card-title { font-size: 16px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
 .vz-card-sub { font-size: 13px; color: var(--vz-text-muted); }
 /* Plain, clamped service description (2 lines). */
 .vz-card-desc { font-size: 12.5px; color: var(--vz-text-muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -196,12 +196,12 @@ export const css = `
   transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
 }
 .vz-opt + .vz-opt { margin-top: 8px; }
-.vz-opt:not([disabled]):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
-.vz-opt:not([disabled]):active { transform: scale(.99); }
+.vz-opt:not([disabled]):not(.locked):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+.vz-opt:not([disabled]):not(.locked):active { transform: scale(.99); }
 .vz-opt.on { border-color: var(--vz-accent); background: var(--vz-selected); }
-.vz-opt[disabled] { opacity: .45; cursor: default; }
+.vz-opt[disabled], .vz-opt.locked { opacity: .45; cursor: default; }
 .vz-opt-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.vz-opt-name { font-size: 14.5px; font-weight: 600; line-height: 1.25; }
+.vz-opt-name { font-size: 14.5px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
 .vz-opt-desc { font-size: 12px; color: var(--vz-text-muted); line-height: 1.4; }
 .vz-opt-price { font-size: 13.5px; font-weight: 600; white-space: nowrap; }
 .vz-opt-tick {

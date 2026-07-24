@@ -44,7 +44,7 @@ export function StepConfigure({
       {hasVariants && (
         <div class="vz-cfg-section">
           <div class="vz-cfg-h"><span>Wariant</span></div>
-          <div class="vz-stagger">
+          <div class="vz-stagger" role="radiogroup" aria-label="Wariant">
             {variants.map((o) => {
               const on = activeVariant?.durationMinutes === o.durationMinutes
               return (
@@ -71,18 +71,22 @@ export function StepConfigure({
               <span>{g.name}</span>
               <span class="vz-cfg-hint">{groupHint(g.minSelect, g.maxSelect)}</span>
             </div>
-            <div class="vz-stagger">
+            <div class="vz-stagger" role="group" aria-label={g.name}>
               {g.addons.map((a) => {
                 const on = chosen.has(a.id)
                 const locked = !on && atMax
                 return (
                   <button
                     type="button"
-                    class={`vz-opt${on ? ' on' : ''}`}
+                    class={`vz-opt${on ? ' on' : ''}${locked ? ' locked' : ''}`}
                     role="checkbox"
                     aria-checked={on}
-                    disabled={locked}
-                    onClick={() => onToggleAddon(a.id)}
+                    aria-disabled={locked ? 'true' : undefined}
+                    onClick={() => {
+                      // aria-disabled (not native disabled) keeps the row focusable
+                      // and in the a11y tree; the handler enforces the cap.
+                      if (!locked) onToggleAddon(a.id)
+                    }}
                   >
                     <span class="vz-opt-main">
                       <span class="vz-opt-name">{a.name}</span>

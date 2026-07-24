@@ -51,7 +51,7 @@ export function StepService({
           ))}
         </div>
       )}
-      <div class="vz-list vz-stagger">
+      <div class="vz-list vz-stagger" role="radiogroup" aria-label="Usługi">
         {shown.map((s) => {
           const { min, from } = serviceBaseRange(s, workers)
           const desc = richTextToPlain(s.description)
