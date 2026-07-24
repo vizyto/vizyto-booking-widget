@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { Business, CartItem, Cfg, DayCounts, OAuthProvider, OtpMode, Resource, Service, ServiceCategory, Slots } from './api'
 import {
+  addonNames,
+  addonTotals,
+  addonsValid,
   bookingIdempotencyKey,
   checkBookingAccess,
   checkEmail,
   checkWaitlistWindow,
+  configuredTotals,
   createAppointment,
-  effectiveForWorker,
   formatDuration,
   formatPrice2,
   getCartCounts,
@@ -17,7 +20,9 @@ import {
   maskPhone,
   oauthLogin,
   priceRange,
+  resolveVariant,
   sendGuestOtp,
+  serviceHasOptions,
   slotLabel,
   slotStartDate,
   verifyGuestOtp,
@@ -32,6 +37,7 @@ import { ArrowLeft, ArrowRight, Close } from './ui/icons'
 import { SummaryCard, type SummaryRow } from './ui/SummaryCard'
 import { Button } from './ui/Button'
 import { StepService } from './steps/StepService'
+import { StepConfigure } from './steps/StepConfigure'
 import { StepResource } from './steps/StepResource'
 import { StepDateTime } from './steps/StepDateTime'
 import { StepIdentify, type Contact } from './steps/StepIdentify'
@@ -113,14 +119,32 @@ export function BookingFlow({
 
   // selection
   const [resource, setResource] = useState<ResChoice | null>(initialResource)
+  // configure sub-step (variants + add-ons) for the picked service. Auto-opens
+  // when the service offers choices; hidden otherwise. variantDuration = chosen
+  // length preset (null = default shortest); addonIds = selected add-ons.
+  const [configuring, setConfiguring] = useState<boolean>(!!initialServiceRef && serviceHasOptions(initialServiceRef))
+  const [variantDuration, setVariantDuration] = useState<number | null>(
+    initialServiceRef ? resolveVariant(initialServiceRef, null)?.durationMinutes ?? null : null,
+  )
+  const [addonIds, setAddonIds] = useState<number[]>([])
   const [date, setDate] = useState('')
   const [slotKey, setSlotKey] = useState('')
   const [counts, setCounts] = useState<DayCounts>({})
   const [slots, setSlots] = useState<Slots>([])
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [refetch, setRefetch] = useState(0)
-  // 0 service, 1 specialist, 2 termin - skip ahead when prefilled.
-  const [selStep, setSelStep] = useState(initialServiceRef && initialResource != null ? 2 : initialServiceRef ? 1 : 0)
+  // 0 service, 1 specialist, 2 termin - skip ahead when prefilled. A prefilled
+  // service that offers variants/add-ons stays on step 0 so the customer
+  // configures it (auto-opened above) before advancing.
+  const [selStep, setSelStep] = useState(
+    initialServiceRef && serviceHasOptions(initialServiceRef)
+      ? 0
+      : initialServiceRef && initialResource != null
+        ? 2
+        : initialServiceRef
+          ? 1
+          : 0,
+  )
 
   // flow
   const [phase, setPhase] = useState<Phase>('select')
@@ -175,9 +199,18 @@ export function BookingFlow({
 
   const resourceId = resource === 'any' || resource == null ? undefined : resource
   // The cart position for the current selection. A single service is a 1-item
-  // cart; add-ons and the chosen variant length are folded in from F2, so
-  // availability and create always agree on the chain shape.
-  const buildCartItem = (svc: Service): CartItem => ({ businessServiceId: svc.id, resourceId })
+  // cart; the chosen variant length + add-ons are folded in so availability and
+  // create always agree on the chain shape. addonIds/variantDuration always
+  // belong to the currently selected `service`.
+  const buildCartItem = (svc: Service): CartItem => ({
+    businessServiceId: svc.id,
+    resourceId,
+    addonIds: addonIds.length ? addonIds : undefined,
+    durationMinutes: variantDuration ?? undefined,
+  })
+  // Stable dep for availability effects: the chosen add-ons change the chain
+  // length, so counts/slots must refetch when they do.
+  const addonKey = addonIds.join(',')
   const days = useMemo(() => nextDays(HORIZON), [])
   const worker: Resource | undefined = typeof resource === 'number' ? workers.find((w) => w.id === resource) : undefined
   const workerName = resource === 'any' || resource == null ? 'Dowolny specjalista' : worker?.name ?? ''
@@ -208,7 +241,7 @@ export function BookingFlow({
     return () => {
       cancelled = true
     }
-  }, [service?.id, resourceId, refetch, auth?.userId])
+  }, [service?.id, resourceId, variantDuration, addonKey, refetch, auth?.userId])
 
   useEffect(() => {
     if (!service || !date) {
@@ -227,7 +260,7 @@ export function BookingFlow({
     return () => {
       cancelled = true
     }
-  }, [service?.id, resourceId, date, refetch, auth?.userId])
+  }, [service?.id, resourceId, variantDuration, addonKey, date, refetch, auth?.userId])
 
   useEffect(() => {
     if (phase !== 'otp') return
@@ -241,24 +274,37 @@ export function BookingFlow({
     bodyRef.current?.scrollTo(0, 0)
   }, [phase, selStep])
 
-  // Effective price/duration for the current service+specialist choice, honoring
-  // any per-employee override. When no specialist is fixed yet (service step or
-  // "Dowolny"), fall back to the "od {min}" range across the offering workers.
-  const range = service ? priceRange(service, offeringWorkers) : { min: 0, max: 0 }
-  const priceVaries = range.min !== range.max
-  const selEff = service && typeof resource === 'number' ? effectiveForWorker(service, resource) : null
-  const shownPrice = selEff ? selEff.price : range.min
-  const shownDuration = selEff ? selEff.duration : service?.duration ?? 0
-  const showFrom = !selEff && priceVaries
-  // Price used for analytics/booking payload: the exact override for a chosen
-  // specialist, else the service base (the backend assigns the price for "Dowolny").
-  const selectedPrice = selEff ? selEff.price : service?.price ?? 0
+  // Effective price/duration for the current configuration: chosen variant +
+  // add-ons + any per-employee override for a pinned worker. When nothing pins
+  // the price yet (no worker, no variant), fall back to the "od {min}" range
+  // across the offering workers.
+  const chosenWorker = typeof resource === 'number' ? resource : undefined
+  const hasVariants = (service?.durationOptions?.length ?? 0) >= 2
+  const workerRange = service ? priceRange(service, offeringWorkers) : { min: 0, max: 0 }
+  const priceVaries = workerRange.min !== workerRange.max
+  const cfgTotals = service ? configuredTotals(service, variantDuration, addonIds, chosenWorker) : { price: 0, duration: 0 }
+  // "od" only when the price is still a range: no worker pinned, no variant (a
+  // variant is always concretely chosen), and the workers' prices differ.
+  const showFrom = !!service && !chosenWorker && !hasVariants && priceVaries
+  const addonExtra = service ? addonTotals(service, addonIds).price : 0
+  const shownPrice = showFrom ? workerRange.min + addonExtra : cfgTotals.price
+  const shownDuration = cfgTotals.duration
+  // Price used for analytics/booking value: exact configured totals (the backend
+  // assigns the final price for "Dowolny"; base + add-ons is our best estimate).
+  const selectedPrice = cfgTotals.price
+  // Recap bits for summaries: chosen variant label + add-on names.
+  const chosenVariant = service ? resolveVariant(service, variantDuration) : null
+  const chosenAddonNames = service ? addonNames(service, addonIds) : []
 
   const summaryRows: SummaryRow[] = service
     ? [
         { label: 'Usługa', value: service.name },
+        ...(chosenVariant && hasVariants
+          ? [{ label: 'Wariant', value: chosenVariant.label || formatDuration(chosenVariant.durationMinutes) }]
+          : []),
         { label: 'Specjalista', value: workerName },
         { label: 'Termin', value: `${dayMonth(date)}, ${slotLabel(date, slotKey, business.timezone)}` },
+        ...(chosenAddonNames.length ? [{ label: 'Dodatki', value: chosenAddonNames.join(', ') }] : []),
         { label: 'Cena', value: `${showFrom ? 'od ' : ''}${formatPrice2(shownPrice)}`, total: true },
       ]
     : []
@@ -460,7 +506,15 @@ export function BookingFlow({
       // Availability is per service, so the chosen day/slot no longer applies.
       setDate('')
       setSlotKey('')
+      // Reset the configuration to the new service's defaults (shortest variant,
+      // no add-ons) and auto-open configure when it offers choices.
+      setVariantDuration(resolveVariant(s, null)?.durationMinutes ?? null)
+      setAddonIds([])
+      setConfiguring(serviceHasOptions(s))
       emit('service_selected', { serviceId: s.id, serviceName: s.name, price: s.price, durationMin: s.duration })
+    } else if (serviceHasOptions(s)) {
+      // Re-tapping the already-selected service reopens its configuration.
+      setConfiguring(true)
     }
   }
   function pickResource(r: ResChoice) {
@@ -471,9 +525,30 @@ export function BookingFlow({
       emit('specialist_selected', resourceEvent(r))
     }
   }
+  function pickVariant(durationMinutes: number) {
+    setVariantDuration(durationMinutes)
+    // The chain length changed - the chosen day/slot may no longer fit.
+    setDate('')
+    setSlotKey('')
+  }
+  function toggleAddon(id: number) {
+    setAddonIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+    setDate('')
+    setSlotKey('')
+  }
+  function confirmConfigure() {
+    if (service && !addonsValid(service, addonIds)) return
+    setConfiguring(false)
+    emit('addons_selected', {
+      serviceId: service?.id,
+      variantDurationMin: variantDuration ?? undefined,
+      addonIds,
+      addonCount: addonIds.length,
+    })
+  }
   function dalej() {
     if (selStep === 0) {
-      if (!service) return
+      if (!service || configuring || !addonsValid(service, addonIds)) return
       if (offeringWorkers.length <= 1) {
         const r: ResChoice = offeringWorkers.length === 1 ? offeringWorkers[0].id : 'any'
         setResource(r)
@@ -504,6 +579,8 @@ export function BookingFlow({
     // Back to the service list - other services may still be bookable for this viewer.
     if (phase === 'restricted') return () => { setSelStep(0); setPhase('select') }
     if (phase === 'select') {
+      // Configuring overlays the selection - back just closes it, keeping choices.
+      if (configuring) return () => setConfiguring(false)
       if (selStep === 2) return () => setSelStep(hasResourceStep ? 1 : 0)
       if (selStep === 1) return () => setSelStep(0)
       return onClose ?? null // first step: back closes (launcher)
@@ -685,6 +762,9 @@ export function BookingFlow({
   function restart() {
     setService(null)
     setResource(null)
+    setConfiguring(false)
+    setVariantDuration(null)
+    setAddonIds([])
     setDate('')
     setSlotKey('')
     setSelStep(0)
@@ -726,14 +806,15 @@ export function BookingFlow({
       : phase === 'slotLost' || phase === 'waitlist'
         ? termIdx
         : totalSteps - 1
-  const showCta = phase === 'select'
+  const showCta = phase === 'select' && !configuring
   // Whitelist banner on the selection phases: only for an unconfirmed viewer,
   // and not while the calendar already shows its own dedicated login prompt.
   const showAccessBanner =
     business.bookingAccess?.policy === 'restricted' && !accessOk && !auth && phase === 'select' && !(selStep === 2 && calRestricted)
   // tel: link for the restricted screen (spaces/dashes stripped).
   const businessPhone = business.phone?.trim() || ''
-  const canAdvance = selStep === 0 ? !!service : selStep === 1 ? resource != null : !!slotKey
+  const canAdvance =
+    selStep === 0 ? !!service && !configuring && addonsValid(service, addonIds) : selStep === 1 ? resource != null : !!slotKey
   const ctaPrice = service ? `${showFrom ? 'od ' : ''}${formatPrice2(shownPrice)}` : ''
 
   return (
@@ -771,13 +852,24 @@ export function BookingFlow({
           </Notice>
         )}
 
-        {phase === 'select' && selStep === 0 && (
+        {phase === 'select' && configuring && service && (
+          <StepConfigure
+            service={service}
+            variantDuration={variantDuration}
+            addonIds={addonIds}
+            workerId={chosenWorker}
+            onPickVariant={pickVariant}
+            onToggleAddon={toggleAddon}
+            onDone={confirmConfigure}
+          />
+        )}
+        {phase === 'select' && !configuring && selStep === 0 && (
           <StepService services={services} workers={workers} categories={categories} selectedId={service?.id} onPick={pickService} />
         )}
-        {phase === 'select' && selStep === 1 && service && (
+        {phase === 'select' && !configuring && selStep === 1 && service && (
           <StepResource workers={offeringWorkers} service={service} selected={resource} onPick={pickResource} />
         )}
-        {phase === 'select' && selStep === 2 && service && calRestricted && (
+        {phase === 'select' && !configuring && selStep === 2 && service && calRestricted && (
           // Availability answered BOOKING_ACCESS_RESTRICTED for this (anonymous)
           // viewer - invite a login instead of rendering an empty calendar.
           <div class="vz-fade-in" style="text-align:center;padding:8px 0;">
@@ -789,7 +881,7 @@ export function BookingFlow({
             <button class="vz-btn mt" onClick={goAccessLogin} type="button">Zaloguj się</button>
           </div>
         )}
-        {phase === 'select' && selStep === 2 && service && !calRestricted && (
+        {phase === 'select' && !configuring && selStep === 2 && service && !calRestricted && (
           <StepDateTime
             days={days}
             counts={counts}
@@ -942,6 +1034,11 @@ export function BookingFlow({
                 <>
                   <div class="vz-cta-svc">{service.name}</div>
                   <div class="vz-cta-meta"><b>{ctaPrice}</b> · {formatDuration(shownDuration)}</div>
+                  {serviceHasOptions(service) && (
+                    <div class="vz-cta-cfg">
+                      <button class="vz-link" onClick={() => setConfiguring(true)} type="button">Zmień wariant / dodatki</button>
+                    </div>
+                  )}
                 </>
               ) : (
                 <div class="vz-cta-meta">Wybierz usługę, aby kontynuować</div>

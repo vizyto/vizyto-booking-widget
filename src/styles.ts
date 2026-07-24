@@ -185,6 +185,39 @@ export const css = `
 }
 .vz-radio.on { background: var(--vz-accent); border-color: var(--vz-accent); }
 
+/* ---- CONFIGURE (variants + add-ons) ------------------------------------ */
+.vz-cfg-section { margin-bottom: 20px; }
+.vz-cfg-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; font-size: 12.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--vz-text-muted); }
+.vz-cfg-hint { font-weight: 500; letter-spacing: 0; text-transform: none; font-size: 12px; }
+.vz-opt {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  padding: 13px 14px; border: 1.5px solid var(--vz-border); border-radius: var(--vz-r-md);
+  background: var(--vz-surface-2); color: var(--vz-text); cursor: pointer; font-family: var(--vz-font);
+  transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
+}
+.vz-opt + .vz-opt { margin-top: 8px; }
+.vz-opt:not([disabled]):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+.vz-opt:not([disabled]):active { transform: scale(.99); }
+.vz-opt.on { border-color: var(--vz-accent); background: var(--vz-selected); }
+.vz-opt[disabled] { opacity: .45; cursor: default; }
+.vz-opt-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.vz-opt-name { font-size: 14.5px; font-weight: 600; line-height: 1.25; }
+.vz-opt-desc { font-size: 12px; color: var(--vz-text-muted); line-height: 1.4; }
+.vz-opt-price { font-size: 13.5px; font-weight: 600; white-space: nowrap; }
+.vz-opt-tick {
+  width: 24px; height: 24px; flex: 0 0 auto; border: 2px solid var(--vz-border);
+  display: flex; align-items: center; justify-content: center; color: var(--vz-on-accent);
+  transition: background var(--vz-dur-out), border-color var(--vz-dur-out);
+}
+.vz-opt-tick.round { border-radius: 50%; }
+.vz-opt-tick.square { border-radius: 7px; }
+.vz-opt-tick.on { background: var(--vz-accent); border-color: var(--vz-accent); }
+.vz-cfg-total { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 4px; font-size: 15px; font-weight: 600; }
+
+/* Configure recap chip on the selected service (in the CTA summary). */
+.vz-cta-cfg { display: inline-flex; align-items: center; gap: 6px; margin-top: 3px; }
+.vz-cta-cfg .vz-link { font-size: 12px; }
+
 /* ---- DATE: calendar head + days --------------------------------------- */
 .vz-cal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
 .vz-cal-month {

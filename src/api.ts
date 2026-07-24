@@ -567,6 +567,30 @@ export function addonTotals(service: Service, addonIds: number[]): { price: numb
   return { price, extraMinutes }
 }
 
+// Names of the selected add-ons, in group order, for summaries.
+export function addonNames(service: Service, addonIds: number[]): string[] {
+  if (addonIds.length === 0) return []
+  const chosen = new Set(addonIds)
+  const out: string[] = []
+  for (const g of service.addonGroups ?? []) for (const a of g.addons) if (chosen.has(a.id)) out.push(a.name)
+  return out
+}
+
+// A group is under-filled when fewer than minSelect add-ons are chosen. Blocks
+// advancing; the server re-validates on create. maxSelect is enforced in the UI
+// by locking unchecked rows once the cap is hit.
+export type AddonGroupIssue = { groupId: number; name: string; need: number }
+export function addonGroupIssues(service: Service, addonIds: number[]): AddonGroupIssue[] {
+  const chosen = new Set(addonIds)
+  const issues: AddonGroupIssue[] = []
+  for (const g of service.addonGroups ?? []) {
+    const count = g.addons.filter((a) => chosen.has(a.id)).length
+    if (count < g.minSelect) issues.push({ groupId: g.id, name: g.name, need: g.minSelect - count })
+  }
+  return issues
+}
+export const addonsValid = (service: Service, addonIds: number[]): boolean => addonGroupIssues(service, addonIds).length === 0
+
 // Effective price/duration for the full configuration (variant + add-ons), for a
 // pinned worker when known. Used for the CTA, summary and analytics value.
 export function configuredTotals(
