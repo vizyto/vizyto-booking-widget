@@ -23,36 +23,75 @@ import type {
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
+// Inline gradient thumbnail (data URI) so the service photo renders in mock mode
+// without a network fetch. Real businesses serve gallery images over the CDN.
+const THUMB =
+  "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%23fd9320'/><stop offset='1' stop-color='%23bf700f'/></linearGradient></defs><rect width='120' height='120' fill='url(%23g)'/></svg>"
+
 const BUSINESS: Business = {
   id: 24,
   name: 'Proper Barbershop',
   slug: 'proper-barbershop',
   timezone: 'Europe/Warsaw',
   services: [
-    // No overrides -> every worker offers it at the base price (no "od").
-    { id: 1, name: 'Strzyżenie', description: 'Klasyczne strzyżenie', price: 6000, duration: 45, bookingType: 'single', bookingMode: null },
-    // Kuba charges more for Broda -> "od 50,00 zł" on the service step.
+    // Variants (durationOptions >=2) + a gallery photo -> exercises the configure
+    // sub-step (length picker) and the thumbnail. No overrides otherwise.
     {
-      id: 2, name: 'Broda', description: 'Modelowanie brody', price: 5000, duration: 30, bookingType: 'single', bookingMode: null,
+      id: 1, name: 'Strzyżenie', description: '<p>Klasyczne strzyżenie nożyczkami i maszynką, z konsultacją.</p>', price: 6000, duration: 45,
+      bookingType: 'single', fulfillmentMode: 'staff', providerSelection: 'customer',
+      image: THUMB, images: [{ id: 1, url: THUMB, orderIndex: 0 }],
+      durationOptions: [
+        { label: 'Krótkie', durationMinutes: 30, priceCents: 5000 },
+        { label: 'Klasyczne', durationMinutes: 45, priceCents: 6000 },
+        { label: 'Z myciem', durationMinutes: 60, priceCents: 7500 },
+      ],
+    },
+    // Add-on groups (a bounded group + loose add-ons) + per-worker "od" pricing.
+    {
+      id: 2, name: 'Broda', description: 'Modelowanie brody', price: 5000, duration: 30,
+      bookingType: 'single', fulfillmentMode: 'staff', providerSelection: 'customer',
       resourceServices: [
         { id: 201, resourceId: 11, businessServiceId: 2, effectivePrice: 5000, effectiveDuration: 30, isActive: true },
         { id: 202, resourceId: 12, businessServiceId: 2, effectivePrice: 6000, effectiveDuration: 30, isActive: true },
         { id: 203, resourceId: 13, businessServiceId: 2, effectivePrice: 5000, effectiveDuration: 30, isActive: true },
       ],
+      addonGroups: [
+        {
+          id: 10, name: 'Pielęgnacja', description: 'Wybierz maks. 2', minSelect: 0, maxSelect: 2,
+          addons: [
+            { id: 101, name: 'Woskowanie', description: 'Utrwalenie kształtu', price: 1500, extraDurationMinutes: 10 },
+            { id: 102, name: 'Peeling twarzy', description: null, price: 2000, extraDurationMinutes: 15 },
+            { id: 103, name: 'Olejek do brody', description: null, price: 1200, extraDurationMinutes: 0 },
+          ],
+        },
+        // Loose add-ons land in pseudo-group id 0 (mirrors the API mapping).
+        { id: 0, name: 'Dodatki', description: null, minSelect: 0, maxSelect: null, addons: [{ id: 104, name: 'Napój', description: null, price: 500, extraDurationMinutes: 0 }] },
+      ],
     },
-    // Offered only by Marek & Kuba (Ola filtered out); Kuba's price+duration overridden.
+    // providerSelection 'auto' -> the specialist step is skipped even though two
+    // workers offer it (server assigns). Kuba's price+duration overridden.
     {
-      id: 3, name: 'Strzyżenie + broda', description: 'Pełny pakiet', price: 10000, duration: 75, bookingType: 'single', bookingMode: null,
+      id: 3, name: 'Strzyżenie + broda', description: 'Pełny pakiet', price: 10000, duration: 75,
+      bookingType: 'single', fulfillmentMode: 'staff', providerSelection: 'auto',
       resourceServices: [
         { id: 301, resourceId: 11, businessServiceId: 3, effectivePrice: 10000, effectiveDuration: 75, isActive: true },
         { id: 302, resourceId: 12, businessServiceId: 3, effectivePrice: 13000, effectiveDuration: 90, isActive: true },
       ],
     },
+    // 'unit' service: no worker, the customer picks a station from the 'loza' pool
+    // (or "Dowolny"). Exercises the unit-pick step.
+    {
+      id: 4, name: 'Loża VIP', description: 'Prywatna loża z obsługą', price: 12000, duration: 60,
+      bookingType: 'single', fulfillmentMode: 'unit', providerSelection: 'customer', primaryObjectCategoryTag: 'loza',
+    },
   ],
   resources: [
-    { id: 11, type: 'worker', name: 'Marek', position: 'Barber', image: null },
-    { id: 12, type: 'worker', name: 'Kuba', position: 'Senior barber', image: null },
-    { id: 13, type: 'worker', name: 'Ola', position: 'Barberka', image: null },
+    { id: 11, type: 'worker', name: 'Marek', position: 'Barber', image: null, isBookable: true, isCustomerSelectable: true, categoryTag: null },
+    { id: 12, type: 'worker', name: 'Kuba', position: 'Senior barber', image: null, isBookable: true, isCustomerSelectable: true, categoryTag: null },
+    { id: 13, type: 'worker', name: 'Ola', position: 'Barberka', image: null, isBookable: true, isCustomerSelectable: true, categoryTag: null },
+    // 'loza' pool for the unit service.
+    { id: 21, type: 'object', name: 'Loża 1', position: null, image: null, isBookable: true, isCustomerSelectable: true, categoryTag: 'loza' },
+    { id: 22, type: 'object', name: 'Loża 2', position: null, image: null, isBookable: true, isCustomerSelectable: true, categoryTag: 'loza' },
   ],
   workingHours: [],
   // Demo levers: show the "rezerwacja próbna" notice and enable the waitlist so
@@ -60,8 +99,6 @@ const BUSINESS: Business = {
   isTestMode: true,
   waitlistEnabled: true,
 }
-
-const WORKER_IDS = BUSINESS.resources.map((r) => r.id)
 
 export async function fetchBusiness(): Promise<Business> {
   await wait(280)
@@ -114,14 +151,13 @@ export async function getCounts(p: { startDate: string; endDate: string }): Prom
 
 export async function getAvailability(p: { date: string }): Promise<Slots> {
   await wait(320)
-  if (!dayIsOpen(p.date)) return {}
-  const slots: Slots = {}
+  if (!dayIsOpen(p.date)) return []
+  const slots: Slots = []
   // UTC keys 08:00..13:30 render ~10:00..15:30 in Europe/Warsaw (summer).
   for (let h = 8; h <= 13; h++) {
-    slots[`${String(h).padStart(2, '0')}:00`] = WORKER_IDS
-    slots[`${String(h).padStart(2, '0')}:30`] = WORKER_IDS
+    slots.push(`${String(h).padStart(2, '0')}:00`, `${String(h).padStart(2, '0')}:30`)
   }
-  slots['13:55'] = WORKER_IDS // sentinel: picking this triggers a "slot gone" on book
+  slots.push('13:55') // sentinel: picking this triggers a "slot gone" on book
   return slots
 }
 

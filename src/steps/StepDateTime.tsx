@@ -122,9 +122,7 @@ export function StepDateTime({
   }
 
   const groups = useMemo(() => {
-    const keys = Object.keys(slots)
-      .filter((k) => (slots[k] ?? []).length > 0)
-      .sort()
+    const keys = slots.slice().sort()
     const g: { label: string; Icon: typeof Sun; items: { k: string; lab: string }[] }[] = [
       { label: 'Rano', Icon: Sunrise, items: [] },
       { label: 'Południe', Icon: Sun, items: [] },

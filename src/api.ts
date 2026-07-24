@@ -29,6 +29,25 @@ export type BookingAccess = { policy: BookingAccessPolicy; viewerCanBook: boolea
 // may unlock it) and renders with a discreet chip; hidden services never reach
 // the widget at all.
 export type ServiceViewerAccess = 'bookable' | 'locked'
+// How the service is fulfilled (offerings-pool F2): 'staff' = customer picks a
+// worker, 'unit' = no worker, the server (or the customer, via the pool) targets
+// a free object of the primary requirement's type (bowling lane, court, station).
+export type FulfillmentMode = 'staff' | 'unit'
+// Online booking: 'customer' = the wizard shows a provider pick step (worker or
+// pool unit, with a "Dowolny" option); 'auto' = no step, the server assigns the
+// first free provider.
+export type ProviderSelection = 'customer' | 'auto'
+// A gallery image on a service (service_images), sorted by orderIndex.
+export type ServiceImage = { id: number; url: string; orderIndex: number }
+// Length preset ("1 godz. - 60 zł"). A service with >=2 options lets the customer
+// pick one; the chosen durationMinutes drives both the slot length and the price.
+export type ServiceDurationOption = { label: string | null; durationMinutes: number; priceCents: number | null }
+// A single add-on inside a group. price/extraDurationMinutes stack on top of the
+// service (and the chosen variant) when the customer selects it.
+export type ServiceAddon = { id: number; name: string; description: string | null; price: number; extraDurationMinutes: number }
+// Add-ons grouped for the booking UI. minSelect/maxSelect bound the group; loose
+// add-ons (no group) land in a pseudo-group { id: 0, minSelect: 0, maxSelect: null }.
+export type ServiceAddonGroup = { id: number; name: string; description: string | null; minSelect: number; maxSelect: number | null; addons: ServiceAddon[] }
 export type Service = {
   id: number
   name: string
@@ -36,7 +55,21 @@ export type Service = {
   price: number // grosze (business default; a worker may override it)
   duration: number // minutes (business default; a worker may override it)
   bookingType: string
-  bookingMode: string | null
+  // Offerings-pool: how the service is realized and who picks the provider.
+  // Both default server-side (staff / customer) for older payloads.
+  fulfillmentMode?: FulfillmentMode
+  providerSelection?: ProviderSelection
+  // For a 'unit' service: the object pool (primary requirement's categoryTag)
+  // taking the bookings. The unit-pick step lists that pool's members. Null for
+  // staff services or list payloads that skip the requirements relation.
+  primaryObjectCategoryTag?: string | null
+  // Length/price presets; empty = fixed `duration`/`price`. >=2 -> customer picks.
+  durationOptions?: ServiceDurationOption[]
+  // Add-ons pinned to this service; empty when the query skipped the relation.
+  addonGroups?: ServiceAddonGroup[]
+  // Gallery (sorted) + main photo (first image url) for the service card.
+  images?: ServiceImage[]
+  image?: string | null
   resourceServices?: ResourceService[]
   viewerAccess?: ServiceViewerAccess
 }
@@ -46,6 +79,13 @@ export type Resource = {
   name: string
   position: string | null
   image: string | null
+  // Offerings-pool selectability. A pool unit shown in the unit-pick step must be
+  // bookable AND customer-selectable and carry the service's primary categoryTag.
+  // Optional so older payloads (workers only) keep working: absent = assume true
+  // for a worker (the flow already filtered to bookable workers server-side).
+  isBookable?: boolean
+  isCustomerSelectable?: boolean
+  categoryTag?: string | null
 }
 export type WorkingHour = { id: number; dayOfWeek: number; openTime: string; closeTime: string; isOpened: boolean }
 export type Business = {
@@ -73,9 +113,23 @@ export type Business = {
 // contains and reuses the service objects already loaded on the business.
 export type ServiceCategory = { id: number; name: string; serviceIds: number[] }
 
-export type Slots = Record<string, number[]> // UTC "HH:mm" -> available resourceIds
+// Free chain-start times for a day, as UTC "HH:mm" keys. The cart engine resolves
+// the resource(s) per slot internally, so unlike the legacy map the widget only
+// needs the start times.
+export type Slots = string[]
 export type DayCounts = Record<string, number>
 export type GuestData = { userId: number; token: string | null }
+
+// One cart position sent to the availability + create endpoints. Array order =
+// chain order. resourceId: number = pinned, null/omitted = "Dowolny" (the engine
+// assigns). durationMinutes = the chosen length preset (variant). Every field is
+// declared in the API's t.Object schema, so nothing is silently stripped.
+export type CartItem = {
+  businessServiceId: number
+  resourceId?: number | null
+  addonIds?: number[]
+  durationMinutes?: number | null
+}
 
 // mode: 'login' = the phone already belongs to a Vizyto account and the SAME
 // code will log the customer into it (no duplicate guest account); 'guest' =
@@ -141,18 +195,21 @@ async function isAccessRestricted(r: Response): Promise<boolean> {
   return (data as any)?.code === 'BOOKING_ACCESS_RESTRICTED'
 }
 
-export async function getCounts(
+// Per-day free-slot counts over a range, via the cart contract (POST). A single
+// item is still a 1-element cart, so variants/add-ons that lengthen the chain are
+// reflected in the counts. bookedById resolves the whitelist gate for the
+// logged-in user (anonymously a restricted business fails soft to all-zero here;
+// the slots call + the create backstop still guard access).
+export async function getCartCounts(
   cfg: Cfg,
-  p: { startDate: string; endDate: string; businessServiceId: number; resourceId?: number; bookedById?: number },
+  p: { startDate: string; endDate: string; item: CartItem; bookedById?: number },
 ): Promise<CountsResult> {
-  if (cfg.mock) return { counts: await mock.getCounts(p), restricted: false }
-  const q = new URLSearchParams({ startDate: p.startDate, endDate: p.endDate, businessServiceId: String(p.businessServiceId) })
-  if (p.resourceId) q.set('resourceId', String(p.resourceId))
-  // After login the whitelist gate is resolved for this user, not the anonym.
-  if (p.bookedById) q.set('bookedById', String(p.bookedById))
+  if (cfg.mock) return { counts: await mock.getCounts({ startDate: p.startDate, endDate: p.endDate }), restricted: false }
   try {
-    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability-counts?${q}`, {
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability/cart/counts`, {
+      method: 'POST',
       headers: headers(cfg),
+      body: JSON.stringify({ from: p.startDate, to: p.endDate, items: [p.item], bookedById: p.bookedById || undefined }),
     })
     if (r.ok) return { counts: (await r.json()) as DayCounts, restricted: false }
     return { counts: {}, restricted: await isAccessRestricted(r) }
@@ -161,22 +218,27 @@ export async function getCounts(
   }
 }
 
-export async function getAvailability(
+// Free chain-start times for one day, via the cart contract (POST). Returns a
+// flat list of UTC "HH:mm" keys; the chosen variant length + add-ons are baked
+// into the chain the engine plans.
+export async function getCartSlots(
   cfg: Cfg,
-  p: { date: string; businessServiceId: number; resourceId?: number; bookedById?: number },
+  p: { date: string; item: CartItem; bookedById?: number },
 ): Promise<SlotsResult> {
-  if (cfg.mock) return { slots: await mock.getAvailability(p), restricted: false }
-  const q = new URLSearchParams({ date: p.date, businessServiceId: String(p.businessServiceId) })
-  if (p.resourceId) q.set('resourceId', String(p.resourceId))
-  if (p.bookedById) q.set('bookedById', String(p.bookedById))
+  if (cfg.mock) return { slots: await mock.getAvailability({ date: p.date }), restricted: false }
   try {
-    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability?${q}`, {
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability/cart`, {
+      method: 'POST',
       headers: headers(cfg),
+      body: JSON.stringify({ date: p.date, items: [p.item], bookedById: p.bookedById || undefined }),
     })
-    if (r.ok) return { slots: (await r.json()) as Slots, restricted: false }
-    return { slots: {}, restricted: await isAccessRestricted(r) }
+    if (r.ok) {
+      const data = (await r.json()) as { slots?: Slots }
+      return { slots: Array.isArray(data.slots) ? data.slots : [], restricted: false }
+    }
+    return { slots: [], restricted: await isAccessRestricted(r) }
   } catch {
-    return { slots: {}, restricted: false }
+    return { slots: [], restricted: false }
   }
 }
 
@@ -403,15 +465,19 @@ export async function joinWaitlist(cfg: Cfg, p: WaitlistParams, token: string | 
 
 export async function createAppointment(
   cfg: Cfg,
-  p: { businessServiceId: number; startDate: string; bookedById: number; resourceId?: number; notes?: string },
+  p: { item: CartItem; startDate: string; bookedById: number; notes?: string; idempotencyKey: string },
   token: string | null,
 ): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
-  if (cfg.mock) return mock.createAppointment(p, token)
+  if (cfg.mock) return mock.createAppointment({ startDate: p.startDate }, token)
   try {
+    const extra: Record<string, string> = { 'Idempotency-Key': p.idempotencyKey }
+    if (token) extra.authorization = `Bearer ${token}`
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments`, {
       method: 'POST',
-      headers: headers(cfg, token ? { authorization: `Bearer ${token}` } : undefined),
-      body: JSON.stringify(p),
+      headers: headers(cfg, extra),
+      // Cart contract: a single service is a 1-item cart. Each item carries its
+      // own resourceId (null = Dowolny), add-ons and chosen variant length.
+      body: JSON.stringify({ bookedById: p.bookedById, items: [p.item], startDate: p.startDate, notes: p.notes }),
     })
     const data = await r.json().catch(() => ({}))
     if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}` }
@@ -450,6 +516,120 @@ export function priceRange(service: Service, workers: Resource[]): { min: number
   const prices = workers.filter((w) => workerOffersService(service, w.id)).map((w) => effectiveForWorker(service, w.id).price)
   if (prices.length === 0) return { min: service.price, max: service.price }
   return { min: Math.min(...prices), max: Math.max(...prices) }
+}
+
+// ---- variants + add-ons --------------------------------------------------
+// The service DTO carries length presets (durationOptions) and grouped add-ons
+// (addonGroups). The helpers below resolve the effective price/duration the
+// customer sees for a given variant + add-on selection, mirroring the web wizard.
+
+// A service needs a configure sub-step only when it offers a choice: >=2 length
+// presets or at least one add-on group.
+export function serviceHasOptions(s: Service): boolean {
+  return (s.durationOptions?.length ?? 0) >= 2 || (s.addonGroups?.length ?? 0) > 0
+}
+
+// The chosen length preset, or the shortest one as the default (mirrors the API
+// default and the web wizard). Null when the service has no presets.
+export function resolveVariant(service: Service, chosenDurationMinutes: number | null): ServiceDurationOption | null {
+  const opts = service.durationOptions ?? []
+  if (opts.length === 0) return null
+  if (chosenDurationMinutes != null) {
+    const hit = opts.find((o) => o.durationMinutes === chosenDurationMinutes)
+    if (hit) return hit
+  }
+  return opts.reduce((a, b) => (b.durationMinutes < a.durationMinutes ? b : a))
+}
+
+// Base price/duration before add-ons. A chosen variant is authoritative (the
+// server does not recompute it from worker overrides); otherwise fall back to
+// the per-worker override for a pinned worker, else the service base.
+function variantOrBase(service: Service, variant: ServiceDurationOption | null, workerId?: number): { price: number; duration: number } {
+  if (variant) return { price: variant.priceCents ?? service.price, duration: variant.durationMinutes }
+  if (typeof workerId === 'number') return effectiveForWorker(service, workerId)
+  return { price: service.price, duration: service.duration }
+}
+
+// Price + extra minutes contributed by the selected add-ons.
+export function addonTotals(service: Service, addonIds: number[]): { price: number; extraMinutes: number } {
+  if (addonIds.length === 0) return { price: 0, extraMinutes: 0 }
+  const chosen = new Set(addonIds)
+  let price = 0
+  let extraMinutes = 0
+  for (const g of service.addonGroups ?? []) {
+    for (const a of g.addons) {
+      if (chosen.has(a.id)) {
+        price += a.price
+        extraMinutes += a.extraDurationMinutes
+      }
+    }
+  }
+  return { price, extraMinutes }
+}
+
+// Effective price/duration for the full configuration (variant + add-ons), for a
+// pinned worker when known. Used for the CTA, summary and analytics value.
+export function configuredTotals(
+  service: Service,
+  chosenDurationMinutes: number | null,
+  addonIds: number[],
+  workerId?: number,
+): { price: number; duration: number } {
+  const base = variantOrBase(service, resolveVariant(service, chosenDurationMinutes), workerId)
+  const add = addonTotals(service, addonIds)
+  return { price: base.price + add.price, duration: base.duration + add.extraMinutes }
+}
+
+// Base price range for the service card, before add-ons. When the service has
+// length presets the range spans them; otherwise it spans the offering workers'
+// (possibly overridden) prices. `from` drives the "od" prefix.
+export function serviceBaseRange(service: Service, workers: Resource[]): { min: number; max: number; from: boolean } {
+  const opts = service.durationOptions ?? []
+  if (opts.length >= 2) {
+    const prices = opts.map((o) => o.priceCents ?? service.price)
+    const min = Math.min(...prices)
+    const max = Math.max(...prices)
+    return { min, max, from: min !== max }
+  }
+  const { min, max } = priceRange(service, workers)
+  return { min, max, from: min !== max }
+}
+
+// ---- rich text -----------------------------------------------------------
+// Service descriptions are sanitized HTML (Tiptap, server-side allowlist). The
+// widget renders them as plain, clamped text - no innerHTML in the Shadow DOM -
+// mirroring richTextToPlain in the web app. DOMParser never executes scripts;
+// a regex strip is the fallback for exotic environments.
+export function richTextToPlain(html: string | null | undefined): string {
+  if (!html) return ''
+  const raw = String(html)
+  try {
+    const doc = new DOMParser().parseFromString(raw, 'text/html')
+    return (doc.body.textContent || '').replace(/\s+/g, ' ').trim()
+  } catch {
+    return raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+  }
+}
+
+// ---- idempotency ---------------------------------------------------------
+// Deterministic per booking intent (business + slot + cart + user), mirroring the
+// web app's bookingIdempotencyKey: a retry / double-click resolves to the same
+// appointment instead of a duplicate. Sent as the Idempotency-Key header (a body
+// field would be stripped by the API's t.Object schema).
+export function bookingIdempotencyKey(p: {
+  businessId: number
+  startDate: string
+  item: CartItem
+  bookedById: number
+  notes?: string
+}): string {
+  const sig = [
+    p.item.businessServiceId,
+    p.item.resourceId ?? 'any',
+    (p.item.addonIds ?? []).slice().sort((a, b) => a - b).join('.'),
+    p.item.durationMinutes ?? 'base',
+  ].join('-')
+  return `vzw-${p.businessId}-${p.startDate}-${sig}-${p.bookedById}-${(p.notes ?? '').length}`
 }
 
 // ---- formatting / phone helpers -----------------------------------------

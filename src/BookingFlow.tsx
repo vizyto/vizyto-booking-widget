@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import type { Business, Cfg, DayCounts, OAuthProvider, OtpMode, Resource, Service, ServiceCategory, Slots } from './api'
+import type { Business, CartItem, Cfg, DayCounts, OAuthProvider, OtpMode, Resource, Service, ServiceCategory, Slots } from './api'
 import {
+  bookingIdempotencyKey,
   checkBookingAccess,
   checkEmail,
   checkWaitlistWindow,
@@ -8,8 +9,8 @@ import {
   effectiveForWorker,
   formatDuration,
   formatPrice2,
-  getAvailability,
-  getCounts,
+  getCartCounts,
+  getCartSlots,
   getServiceCategories,
   joinWaitlist,
   loginEmail,
@@ -115,7 +116,7 @@ export function BookingFlow({
   const [date, setDate] = useState('')
   const [slotKey, setSlotKey] = useState('')
   const [counts, setCounts] = useState<DayCounts>({})
-  const [slots, setSlots] = useState<Slots>({})
+  const [slots, setSlots] = useState<Slots>([])
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [refetch, setRefetch] = useState(0)
   // 0 service, 1 specialist, 2 termin - skip ahead when prefilled.
@@ -173,6 +174,10 @@ export function BookingFlow({
   const bodyRef = useRef<HTMLDivElement>(null)
 
   const resourceId = resource === 'any' || resource == null ? undefined : resource
+  // The cart position for the current selection. A single service is a 1-item
+  // cart; add-ons and the chosen variant length are folded in from F2, so
+  // availability and create always agree on the chain shape.
+  const buildCartItem = (svc: Service): CartItem => ({ businessServiceId: svc.id, resourceId })
   const days = useMemo(() => nextDays(HORIZON), [])
   const worker: Resource | undefined = typeof resource === 'number' ? workers.find((w) => w.id === resource) : undefined
   const workerName = resource === 'any' || resource == null ? 'Dowolny specjalista' : worker?.name ?? ''
@@ -190,11 +195,10 @@ export function BookingFlow({
   useEffect(() => {
     if (!service) return
     let cancelled = false
-    getCounts(cfg, {
+    getCartCounts(cfg, {
       startDate: days[0],
       endDate: days[days.length - 1],
-      businessServiceId: service.id,
-      resourceId,
+      item: buildCartItem(service),
       bookedById: auth?.userId,
     }).then((x) => {
       if (cancelled) return
@@ -208,12 +212,12 @@ export function BookingFlow({
 
   useEffect(() => {
     if (!service || !date) {
-      setSlots({})
+      setSlots([])
       return
     }
     let cancelled = false
     setLoadingSlots(true)
-    getAvailability(cfg, { date, businessServiceId: service.id, resourceId, bookedById: auth?.userId })
+    getCartSlots(cfg, { date, item: buildCartItem(service), bookedById: auth?.userId })
       .then((x) => {
         if (cancelled) return
         setSlots(x.slots)
@@ -284,9 +288,18 @@ export function BookingFlow({
     setPhase('confirming')
     const ctx = bookingCtx(key)
     emit('booking_submitted', { ...ctx, userId: a.userId })
+    const item = buildCartItem(service)
+    const startDate = slotStartDate(date, key)
+    const trimmedNotes = notes.trim() || undefined
     const r = await createAppointment(
       cfg,
-      { businessServiceId: service.id, startDate: slotStartDate(date, key), bookedById: a.userId, resourceId, notes: notes.trim() || undefined },
+      {
+        item,
+        startDate,
+        bookedById: a.userId,
+        notes: trimmedNotes,
+        idempotencyKey: bookingIdempotencyKey({ businessId: business.id, startDate, item, bookedById: a.userId, notes: trimmedNotes }),
+      },
       a.token,
     )
     booking.current = false
@@ -663,7 +676,7 @@ export function BookingFlow({
   }
   function recoverSlot() {
     setSlotKey('')
-    setSlots({})
+    setSlots([])
     setBookingErr('')
     setRefetch((x) => x + 1)
     setSelStep(2)
