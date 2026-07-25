@@ -171,7 +171,15 @@ export function BookingFlow({
   // With 0-1 providers, or providerSelection 'auto', there's no pick step: it is
   // skipped and the progress is a 3-step flow. "od" (from) pricing only applies
   // when a staff service's price can vary between workers.
-  const hasResourceStep = !providerAuto && selectableProviders.length > 1
+  // The step also has to exist when NOBODY covers the whole cart alone (0 shared
+  // workers) or exactly one person does: "Dowolny" is a real alternative there -
+  // splitting the visit usually opens up more hours than blocking the only person
+  // who does everything, and with 0 shared workers it is the ONLY way. Skipping
+  // the step hid that and made the "kto co wykona" explanation dead code.
+  const hasResourceStep = !providerAuto && (
+    selectableProviders.length > 1
+    || (lines.length > 1 && !isUnit && workers.length > 1)
+  )
   const providerStepName = isUnit ? 'WYBÓR ZASOBU' : 'WYBÓR SPECJALISTY'
   const stepNames = hasResourceStep
     ? ['WYBÓR USŁUGI', providerStepName, 'WYBÓR TERMINU', 'TWOJE DANE']
@@ -217,7 +225,9 @@ export function BookingFlow({
   const [chain, setChain] = useState<{ itemTimes: CartItemTime[]; totalMinutes: number; slotCandidates?: Record<string, number[][]> } | null>(null)
   const [loadingSlots, setLoadingSlots] = useState(false)
   // Transient one-liner under the service list (pin dropped, cart cap reached).
-  const [cartNotice, setCartNotice] = useState('')
+  // { title, text } - a cap refusal and a dropped pin are different events and
+  // must not share a heading. Cleared by the next composition change.
+  const [cartNotice, setCartNotice] = useState<{ title: string; text: string } | null>(null)
   // "Najbliższy wolny termin": in flight + a latch once a sweep came back empty,
   // so we stop offering a search that already failed for this cart.
   const [findingNext, setFindingNext] = useState(false)
@@ -318,6 +328,10 @@ export function BookingFlow({
 
   // Stable dep for availability effects: composition, variants and add-ons all
   // change the chain length, so counts/slots must refetch when any of them move.
+  // What the availability payload actually carries: in "Dowolny" mode the pin is
+  // erased before sending, so refining WHO takes a slot must not refetch the
+  // exact same body (it blanked the grid and lost focus).
+  const availabilityResourceKey = anyChosen ? 'any' : String(resourceId ?? 'none')
   const cartKey = lines
     .map((l) => `${l.service.id}:${l.variantDuration ?? ''}:${l.addonIds.slice().sort((a, b) => a - b).join('.')}`)
     .join('|')
@@ -354,10 +368,10 @@ export function BookingFlow({
     return () => {
       cancelled = true
     }
-  }, [cartKey, resourceId, refetch, auth?.userId])
+  }, [cartKey, availabilityResourceKey, refetch, auth?.userId])
 
   // A different cart may well have free days - forget the previous verdict.
-  useEffect(() => { setNoneAhead(false) }, [cartKey, resourceId])
+  useEffect(() => { setNoneAhead(false) }, [cartKey, availabilityResourceKey])
 
   useEffect(() => {
     if (!lines.length || !date) {
@@ -381,7 +395,7 @@ export function BookingFlow({
     return () => {
       cancelled = true
     }
-  }, [cartKey, resourceId, date, refetch, auth?.userId])
+  }, [cartKey, availabilityResourceKey, date, refetch, auth?.userId])
 
   useEffect(() => {
     if (phase !== 'otp') return
@@ -502,14 +516,25 @@ export function BookingFlow({
     }
   }, [lines, anyChosen, resource, isUnit, providerAuto, slotKey, chain, workers])
 
+  /** Drop a slot-scoped specialist pick, back to cart-wide "Dowolny". */
+  function clearSlotPin() {
+    if (anyChosen && typeof resource === 'number') setResource('any')
+  }
+
   async function findNextFree() {
     if (!lines.length || findingNext) return
     setFindingNext(true)
+    // The sweep is slow (60 days server-side); if the cart changed meanwhile, the
+    // answer describes a visit that no longer exists - drop it.
+    const forCart = cartKey
     const hit = await getCartFirstFree(cfg, { items: buildCartItems({ forAvailability: true }), from: date || undefined, bookedById: auth?.userId })
     setFindingNext(false)
+    if (forCart !== cartKey) return
+    if (hit === 'error') return
     if (hit) {
       setDate(hit.date)
       setSlotKey('')
+      clearSlotPin()
     } else {
       setNoneAhead(true)
     }
@@ -705,7 +730,9 @@ export function BookingFlow({
     const dateTo = addDays(dateFrom, prefs.rangeDays - 1)
     const r = await joinWaitlist(
       cfg,
-      { businessServiceId: service.id, resourceId: resourceId ?? null, dateFrom, dateTo, timeFrom: prefs.timeFrom, timeTo: prefs.timeTo, bookedById: a.userId },
+      // "Dowolny" signs up for ANY specialist - a pin made for one hour must not
+      // narrow a sign-up that is about the service being free at all.
+      { businessServiceId: service.id, resourceId: anyChosen ? null : resourceId ?? null, dateFrom, dateTo, timeFrom: prefs.timeFrom, timeTo: prefs.timeTo, bookedById: a.userId },
       a.token,
     )
     setWlBusy(false)
@@ -775,6 +802,7 @@ export function BookingFlow({
    * is dropped, because the chain would dead-end at the time step.
    */
   function toggleService(s: Service) {
+    setCartNotice(null)
     const existing = lineOf(s.id)
     if (existing) {
       const next = lines.filter((l) => l.service.id !== s.id)
@@ -786,7 +814,7 @@ export function BookingFlow({
       return
     }
     if (lines.length >= MAX_CART_ITEMS) {
-      setCartNotice(`Możesz wybrać maksymalnie ${MAX_CART_ITEMS} usług.`)
+      setCartNotice({ title: 'Limit koszyka', text: `W jednej wizycie możesz połączyć maksymalnie ${MAX_CART_ITEMS} usług.` })
       return
     }
     const next = [...lines, newLine(s)]
@@ -794,13 +822,24 @@ export function BookingFlow({
     // Drop a pinned worker who cannot take the new composition, and say why.
     if (typeof resource === 'number') {
       const picked = business.resources.find((r) => r.id === resource)
-      const stillValid = picked?.type === 'worker'
-        && next.every((l) => l.service.fulfillmentMode !== 'unit' && workerOffersService(l.service, resource))
+      const poolTag = ((picked?.categoryTag ?? '') as string).trim() || null
+      const stillValid = picked?.type === 'object'
+        // A pool object stays valid while EVERY position is a unit service of the
+        // same pool - adding a second loża must not discard the picked loża.
+        ? next.every((l) => l.service.fulfillmentMode === 'unit'
+            && (((l.service.primaryObjectCategoryTag ?? '') as string).trim() || null) === poolTag)
+        : picked?.type === 'worker'
+          && next.every((l) => l.service.fulfillmentMode !== 'unit' && workerOffersService(l.service, resource))
       if (!stillValid) {
         setResource(null)
-        setCartNotice(picked?.name
-          ? `${picked.name} nie wykonuje usługi ${s.name}. Wybierz specjalistę ponownie.`
-          : 'Wybierz specjalistę ponownie - zmienił się skład wizyty.')
+        setCartNotice({
+          title: 'Zmienił się skład wizyty',
+          // Nazwa usługi po dwukropku - wstawiona w zdanie nie da się odmienić
+          // ("nie wykonuje usługi Strzyżenie" zgrzyta po polsku).
+          text: picked?.name
+            ? `${picked.name} nie wykonuje usługi: ${s.name}. Wybierz specjalistę ponownie.`
+            : 'Wybierz specjalistę ponownie - zmienił się skład wizyty.',
+        })
       }
     }
     setDate('')
@@ -819,6 +858,7 @@ export function BookingFlow({
     if (r !== resource) {
       setResource(r)
       setAnyChosen(r === 'any')
+      setCartNotice(null)
       setDate('')
       setSlotKey('')
       emit('specialist_selected', resourceEvent(r))
@@ -1062,6 +1102,7 @@ export function BookingFlow({
     setPhase('identify')
   }
   function recoverSlot() {
+    clearSlotPin()
     setSlotKey('')
     setSlots([])
     setBookingErr('')
@@ -1074,7 +1115,7 @@ export function BookingFlow({
     setResource(null)
     setAnyChosen(false)
     setConfiguringId(null)
-    setCartNotice('')
+    setCartNotice(null)
     setDate('')
     setSlotKey('')
     setSelStep(0)
@@ -1180,7 +1221,7 @@ export function BookingFlow({
         )}
         {phase === 'select' && !configuring && selStep === 0 && (
           <>
-            {cartNotice && <Notice title="Zmienił się skład wizyty">{cartNotice}</Notice>}
+            {cartNotice && <Notice title={cartNotice.title}>{cartNotice.text}</Notice>}
             <StepService
               services={services}
               workers={workers}
@@ -1227,8 +1268,13 @@ export function BookingFlow({
             loading={loadingSlots}
             timezone={business.timezone}
             selectedSlot={slotKey}
-            onPickDate={(d) => { setDate(d); setSlotKey('') }}
+            onPickDate={(d) => { setDate(d); setSlotKey(''); clearSlotPin() }}
             onPickSlot={(key) => {
+              // A refinement belongs to the hour it was made at: the pinned person
+              // may simply be busy at the new one, while availability stayed
+              // union-wide. Keeping it would send create after someone the slot
+              // list never claimed was free.
+              clearSlotPin()
               setSlotKey(key)
               emit('datetime_selected', { ...bookingCtx(key), slotKey: key })
             }}
@@ -1256,7 +1302,7 @@ export function BookingFlow({
               setPhase('select')
             }}
             check={(win) =>
-              checkWaitlistWindow(cfg, { businessServiceId: waitlistLine.service.id, resourceId: resourceId ?? null, ...win })
+              checkWaitlistWindow(cfg, { businessServiceId: waitlistLine.service.id, resourceId: anyChosen ? null : resourceId ?? null, ...win })
             }
             busy={wlBusy}
             error={wlErr}

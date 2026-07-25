@@ -81,15 +81,15 @@ Widget korzysta z (wszystkie pod `/api/public`, nagłówek `x-vizyto-site-key`,
 zapisy dodatkowo `Authorization: Bearer <token>`):
 
 - `GET  /businesses/:id` — dane biznesu (usługi, zasoby).
-- `GET  /businesses/:id/service-categories` — grupowanie usług w zakładki.
-- `POST /businesses/:id/appointments/availability/cart` — wolne początki łańcucha
+- `GET  /businesses/:id/service-categories` - grupowanie usług w zakładki.
+- `POST /businesses/:id/appointments/availability/cart` - wolne początki łańcucha
   dla koszyka (`items[]`); zwraca `slots`, `itemTimes` (rozpiska pozycji) i
   `totalMinutes`. Z `includeCandidates: true` dokłada `slotCandidates` — kto jest
   wolny w danym slocie (wybór specjalisty po wybraniu godziny).
-- `POST /businesses/:id/appointments/availability/cart/counts` — pigułki dni.
-- `POST /businesses/:id/appointments/availability/cart/first-free` — najbliższy
+- `POST /businesses/:id/appointments/availability/cart/counts` - pigułki dni.
+- `POST /businesses/:id/appointments/availability/cart/first-free` - najbliższy
   wolny termin (serwer przeczesuje 60 dni).
-- `POST /businesses/:id/waitlist` i `GET .../waitlist/check` — lista oczekujących.
+- `POST /businesses/:id/waitlist` i `GET .../waitlist/check` - lista oczekujących.
 - `POST /guest/otp/send` `{businessId,phone}` → `{expiresIn,maskedPhone}` — wysyła kod SMS.
 - `POST /guest/otp/verify` `{businessId,firstName,lastName,email,phone,otp}` → `{userId,token}` (gość z `phoneVerified`), `409 EMAIL_IN_USE`, `400` przy złym/wygasłym kodzie.
 - `POST /guest/login` `{businessId,email,password}` → `{userId,token}` (token w body — cookies są blokowane cross-origin).

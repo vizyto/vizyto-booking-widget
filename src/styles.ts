@@ -231,6 +231,9 @@ export const css = `
 .vz-chain-time { font-variant-numeric: tabular-nums; font-weight: 600; flex: 0 0 auto; }
 .vz-chain-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vz-chain-dur { flex: 0 0 auto; font-size: 12px; color: var(--vz-text-muted); }
+/* A card with a recap glued to it must not scale away from it while pressed. */
+.vz-cart-row:has(.vz-cart-recap) .vz-card:active { transform: none; }
+
 .vz-slotpick { display: flex; flex-wrap: wrap; gap: 8px; }
 .vz-slotpick-b {
   padding: 8px 12px; border-radius: var(--vz-r-pill); border: 1.5px solid var(--vz-border);

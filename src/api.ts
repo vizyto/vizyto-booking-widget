@@ -272,7 +272,9 @@ export async function getCartSlots(
 export async function getCartFirstFree(
   cfg: Cfg,
   p: { items: CartItem[]; from?: string; bookedById?: number },
-): Promise<{ date: string; time: string } | null> {
+): Promise<{ date: string; time: string } | null | 'error'> {
+  // 'error' (not null) on transport trouble: null means "nothing free in 60 days"
+  // and the UI latches on it, so a failed request must not claim that.
   if (cfg.mock) return mock.getFirstFree({ from: p.from })
   try {
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability/cart/first-free`, {
@@ -280,11 +282,11 @@ export async function getCartFirstFree(
       headers: headers(cfg),
       body: JSON.stringify({ from: p.from, items: p.items, bookedById: p.bookedById || undefined }),
     })
-    if (!r.ok) return null
+    if (!r.ok) return 'error'
     const data = await r.json()
     return data && data.date && data.time ? { date: data.date, time: data.time } : null
   } catch {
-    return null
+    return 'error'
   }
 }
 

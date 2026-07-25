@@ -81,7 +81,9 @@ export function StepService({
       )}
 
       {shown.length === 0 && (
-        <p class="vz-muted" style="padding:12px 2px;">Brak usług pasujących do wyszukiwania.</p>
+        <p class="vz-muted" style="padding:12px 2px;">
+          {q ? 'Brak usług pasujących do wyszukiwania.' : 'Ten salon nie ma jeszcze usług dostępnych online.'}
+        </p>
       )}
 
       {/* Multi-select: one visit can chain several services, so this is a group
@@ -92,7 +94,7 @@ export function StepService({
           const desc = richTextToPlain(s.description)
           const entry = entryOf(s.id)
           return (
-            <div class="vz-cart-row">
+            <div class="vz-cart-row" key={s.id}>
               <SelectCard
                 multi
                 thumb={anyImage ? (s.image ?? null) : undefined}
