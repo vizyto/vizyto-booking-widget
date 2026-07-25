@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import type { Business, CartItem, Cfg, DayCounts, OAuthProvider, OtpMode, Resource, Service, ServiceCategory, Slots } from './api'
+import type { Business, CartItem, CartItemTime, Cfg, DayCounts, OAuthProvider, OtpMode, Resource, Service, ServiceCategory, Slots } from './api'
 import {
   addonNames,
   addonTotals,
@@ -13,6 +13,7 @@ import {
   formatDuration,
   formatPrice2,
   getCartCounts,
+  getCartFirstFree,
   getCartSlots,
   getServiceCategories,
   joinWaitlist,
@@ -59,6 +60,27 @@ const addDays = (ymd: string, n: number) => {
 }
 
 type ResChoice = number | 'any'
+
+// One cart position as the widget holds it: the service plus ITS OWN variant and
+// add-ons. Keeping the configuration on the line (instead of in flow-level state)
+// is what makes a second service possible without the two overwriting each other.
+type CartLine = {
+  service: Service
+  /** Chosen length preset; null = the service's default (shortest) variant. */
+  variantDuration: number | null
+  addonIds: number[]
+}
+
+// A fresh line defaults to the variant the API would pick on its own, so the
+// price shown before any configuring matches what gets booked.
+const newLine = (service: Service): CartLine => ({
+  service,
+  variantDuration: resolveVariant(service, null)?.durationMinutes ?? null,
+  addonIds: [],
+})
+
+/** Hard cap mirroring the API's MAX_CART_ITEMS - refuse the 9th politely. */
+const MAX_CART_ITEMS = 8
 type Phase = 'select' | 'identify' | 'login' | 'otp' | 'confirming' | 'done' | 'slotLost' | 'waitlist' | 'waitlistDone' | 'restricted'
 // Whether the identify/auth path finishes by booking a slot or joining a waitlist.
 type Intent = 'book' | 'waitlist'
@@ -86,31 +108,54 @@ export function BookingFlow({
   const services = useMemo(() => business.services.filter((s) => s.bookingType !== 'group'), [business])
   const workers = useMemo(() => business.resources.filter((r) => r.type === 'worker'), [business])
 
-  // selection (declared here because offeringWorkers below depends on the picked
-  // service; the rest of the selection state follows further down).
+  // selection (declared here because offeringWorkers below depends on the cart;
+  // the rest of the selection state follows further down).
   const initialServiceRef = useMemo(() => services.find((s) => s.id === prefill?.serviceId) ?? null, [services, prefill?.serviceId])
-  const [service, setService] = useState<Service | null>(initialServiceRef)
+  // The CART: array order = chain order (the engine books positions back to back).
+  // Variant + add-ons live PER LINE, so configuring one service never touches
+  // another. v1 keeps ONE provider for the whole cart (parytet z kreatorem WEB).
+  const [lines, setLines] = useState<CartLine[]>(
+    initialServiceRef ? [newLine(initialServiceRef)] : [],
+  )
+  const lineOf = (serviceId: number) => lines.find((l) => l.service.id === serviceId)
+  const cartServices = useMemo(() => lines.map((l) => l.service), [lines])
 
   // A service can be offered by only a subset of workers, each possibly with an
-  // overridden price/duration. Once a service is picked we work with just the
-  // workers who actually offer it; before that, the whole team drives structure.
+  // overridden price/duration. The candidate list is the INTERSECTION: only
+  // workers who perform EVERY position can take the whole cart alone. With an
+  // empty cart the whole team drives structure.
   const offeringWorkers = useMemo(
-    () => (service ? workers.filter((w) => workerOffersService(service, w.id)) : workers),
-    [workers, service],
+    () => (lines.length
+      ? workers.filter((w) => cartServices.every((svc) => workerOffersService(svc, w.id)))
+      : workers),
+    [workers, cartServices, lines.length],
   )
 
   // Offerings-pool F2/F3: a service is either staff-realized (customer picks a
   // worker) or unit-realized (customer picks an object from the primary pool, or
   // "Dowolny"). providerSelection 'auto' means the server assigns and there is no
   // pick step at all.
-  const isUnit = service?.fulfillmentMode === 'unit'
-  const providerAuto = service?.providerSelection === 'auto'
+  // Cart-wide, jak w kreatorze WEB (computeIsUnitBooking / computeAllProvidersAuto
+  // / computeUnitPickTag): a MIXED cart falls back to the staff path, and the
+  // per-position guard in buildCartItems keeps a worker id off the pool lines.
+  const isUnit = lines.length > 0 && cartServices.every((s) => s.fulfillmentMode === 'unit')
+  const providerAuto = lines.length > 0 && cartServices.every((s) => s.providerSelection === 'auto')
   // Trim both sides of the pool match (web computeUnitPickTag/getSelectableUnits
-  // trim too): a whitespace-bearing tag must not silently empty the pool.
-  const unitTag = ((service?.primaryObjectCategoryTag ?? '') as string).trim() || null
-  // Bookable, customer-selectable objects of the service's primary pool.
+  // trim too): a whitespace-bearing tag must not silently empty the pool. One
+  // shared tag only - two different pools have no single "Dowolny" to offer.
+  const unitTag = useMemo(() => {
+    if (!isUnit) return null
+    let tag: string | null = null
+    for (const svc of cartServices) {
+      const t = ((svc.primaryObjectCategoryTag ?? '') as string).trim() || null
+      if (!t || (tag && tag !== t)) return null
+      tag = t
+    }
+    return tag
+  }, [isUnit, cartServices])
+  // Bookable, customer-selectable objects of the cart's primary pool.
   const poolUnits = useMemo(() => {
-    if (!service || !isUnit || !unitTag) return []
+    if (!lines.length || !isUnit || !unitTag) return []
     return business.resources.filter(
       (r) =>
         r.type === 'object' &&
@@ -118,7 +163,7 @@ export function BookingFlow({
         r.isCustomerSelectable !== false &&
         (((r.categoryTag ?? '') as string).trim() || null) === unitTag,
     )
-  }, [business, service, isUnit, unitTag])
+  }, [business, lines.length, isUnit, unitTag])
   // Whoever the customer chooses among for this service (memoized for stable
   // effect/memo deps).
   const selectableProviders = useMemo(() => (isUnit ? poolUnits : offeringWorkers), [isUnit, poolUnits, offeringWorkers])
@@ -136,28 +181,42 @@ export function BookingFlow({
   // Seed the provider from prefill (a tapped barber CTA), or auto-pick when the
   // chosen service has 0-1 selectable providers or assigns automatically.
   const initialResource = useMemo<ResChoice | null>(() => {
+    // 'auto' wins over the prefill: the business decided the server assigns, so a
+    // pinned worker from open({resourceId}) must never reach the payload. Checking
+    // the prefill first also skipped the step (initialResource != null -> selStep 2),
+    // so dalej()'s normalizer never ran and the pin shipped to counts/slots/create.
+    if (lines.length && providerAuto) return 'any'
     if (prefill?.resourceId && selectableProviders.some((w) => w.id === prefill.resourceId)) return prefill.resourceId
-    if (service && providerAuto) return 'any'
-    if (service && selectableProviders.length === 0) return 'any'
-    if (service && selectableProviders.length === 1) return selectableProviders[0].id
+    if (lines.length && selectableProviders.length === 0) return 'any'
+    if (lines.length && selectableProviders.length === 1) return selectableProviders[0].id
     return null
-  }, [selectableProviders, providerAuto, prefill?.resourceId, service])
+  }, [selectableProviders, providerAuto, prefill?.resourceId, lines.length])
 
   // selection
   const [resource, setResource] = useState<ResChoice | null>(initialResource)
   // configure sub-step (variants + add-ons) for the picked service. Auto-opens
   // when the service offers choices; hidden otherwise. variantDuration = chosen
   // length preset (null = default shortest); addonIds = selected add-ons.
-  const [configuring, setConfiguring] = useState<boolean>(!!initialServiceRef && serviceHasOptions(initialServiceRef))
-  const [variantDuration, setVariantDuration] = useState<number | null>(
-    initialServiceRef ? resolveVariant(initialServiceRef, null)?.durationMinutes ?? null : null,
+  // Which cart line is open in the configure sub-step (null = none). Per line,
+  // so configuring the 2nd service never disturbs the 1st.
+  const [configuringId, setConfiguringId] = useState<number | null>(
+    initialServiceRef && serviceHasOptions(initialServiceRef) ? initialServiceRef.id : null,
   )
-  const [addonIds, setAddonIds] = useState<number[]>([])
+  const configuring = configuringId != null
+  const configuringLine = configuringId != null ? lineOf(configuringId) : undefined
   const [date, setDate] = useState('')
   const [slotKey, setSlotKey] = useState('')
   const [counts, setCounts] = useState<DayCounts>({})
   const [slots, setSlots] = useState<Slots>([])
+  // Chain geometry + per-slot candidates from the last availability answer.
+  const [chain, setChain] = useState<{ itemTimes: CartItemTime[]; totalMinutes: number; slotCandidates?: Record<string, number[][]> } | null>(null)
   const [loadingSlots, setLoadingSlots] = useState(false)
+  // Transient one-liner under the service list (pin dropped, cart cap reached).
+  const [cartNotice, setCartNotice] = useState('')
+  // "Najbliższy wolny termin": in flight + a latch once a sweep came back empty,
+  // so we stop offering a search that already failed for this cart.
+  const [findingNext, setFindingNext] = useState(false)
+  const [noneAhead, setNoneAhead] = useState(false)
   const [refetch, setRefetch] = useState(0)
   // 0 service, 1 specialist, 2 termin - skip ahead when prefilled. A prefilled
   // service that offers variants/add-ons stays on step 0 so the customer
@@ -224,19 +283,37 @@ export function BookingFlow({
   const bodyRef = useRef<HTMLDivElement>(null)
 
   const resourceId = resource === 'any' || resource == null ? undefined : resource
-  // The cart position for the current selection. A single service is a 1-item
-  // cart; the chosen variant length + add-ons are folded in so availability and
-  // create always agree on the chain shape. addonIds/variantDuration always
-  // belong to the currently selected `service`.
-  const buildCartItem = (svc: Service): CartItem => ({
-    businessServiceId: svc.id,
-    resourceId,
-    addonIds: addonIds.length ? addonIds : undefined,
-    durationMinutes: variantDuration ?? undefined,
-  })
-  // Stable dep for availability effects: the chosen add-ons change the chain
-  // length, so counts/slots must refetch when they do.
-  const addonKey = addonIds.join(',')
+
+  // Which resourceId ONE position may carry. The cart-wide pick is a WORKER, so
+  // it must not land on a pool position ('unit' - the engine wants an object
+  // there and answers with zero slots for the whole day) nor on a position the
+  // business assigns itself ('auto'). Same rule as WEB's resolveItemResourceId.
+  const itemResourceId = (svc: Service): number | null => {
+    if (svc.providerSelection === 'auto') return null
+    if (svc.fulfillmentMode === 'unit') {
+      const picked = typeof resource === 'number'
+        ? business.resources.find((r) => r.id === resource)
+        : undefined
+      return picked?.type === 'object' ? picked.id : null
+    }
+    return resourceId ?? null
+  }
+
+  // The cart as the API wants it: array order = chain order, each position with
+  // its OWN variant length and add-ons, so availability and create always agree
+  // on the chain shape.
+  const buildCartItems = (): CartItem[] => lines.map((l) => ({
+    businessServiceId: l.service.id,
+    resourceId: itemResourceId(l.service),
+    addonIds: l.addonIds.length ? l.addonIds : undefined,
+    durationMinutes: l.variantDuration ?? undefined,
+  }))
+
+  // Stable dep for availability effects: composition, variants and add-ons all
+  // change the chain length, so counts/slots must refetch when any of them move.
+  const cartKey = lines
+    .map((l) => `${l.service.id}:${l.variantDuration ?? ''}:${l.addonIds.slice().sort((a, b) => a - b).join('.')}`)
+    .join('|')
   const days = useMemo(() => nextDays(HORIZON), [])
   // The pinned provider (worker or pool unit); undefined for "Dowolny"/auto.
   const pinnedResource: Resource | undefined = typeof resource === 'number' ? business.resources.find((r) => r.id === resource) : undefined
@@ -255,12 +332,12 @@ export function BookingFlow({
   // bookedById resolves the whitelist gate for the logged-in user (anonymously
   // a restricted business 403s), so both queries re-run after authentication.
   useEffect(() => {
-    if (!service) return
+    if (!lines.length) return
     let cancelled = false
     getCartCounts(cfg, {
       startDate: days[0],
       endDate: days[days.length - 1],
-      item: buildCartItem(service),
+      items: buildCartItems(),
       bookedById: auth?.userId,
     }).then((x) => {
       if (cancelled) return
@@ -270,26 +347,34 @@ export function BookingFlow({
     return () => {
       cancelled = true
     }
-  }, [service?.id, resourceId, variantDuration, addonKey, refetch, auth?.userId])
+  }, [cartKey, resourceId, refetch, auth?.userId])
+
+  // A different cart may well have free days - forget the previous verdict.
+  useEffect(() => { setNoneAhead(false) }, [cartKey, resourceId])
 
   useEffect(() => {
-    if (!service || !date) {
+    if (!lines.length || !date) {
       setSlots([])
+      setChain(null)
       return
     }
     let cancelled = false
     setLoadingSlots(true)
-    getCartSlots(cfg, { date, item: buildCartItem(service), bookedById: auth?.userId })
+    // Ask for per-slot candidates only when they can drive a real choice: one
+    // position, "Dowolny", staff-realized (a pool has its own pick step).
+    const wantsCandidates = lines.length === 1 && resource === 'any' && !isUnit && !providerAuto
+    getCartSlots(cfg, { date, items: buildCartItems(), bookedById: auth?.userId, includeCandidates: wantsCandidates })
       .then((x) => {
         if (cancelled) return
         setSlots(x.slots)
+        setChain({ itemTimes: x.itemTimes, totalMinutes: x.totalMinutes, slotCandidates: x.slotCandidates })
         if (x.restricted) setCalRestricted(true)
       })
       .finally(() => !cancelled && setLoadingSlots(false))
     return () => {
       cancelled = true
     }
-  }, [service?.id, resourceId, variantDuration, addonKey, date, refetch, auth?.userId])
+  }, [cartKey, resourceId, date, refetch, auth?.userId])
 
   useEffect(() => {
     if (phase !== 'otp') return
@@ -308,41 +393,67 @@ export function BookingFlow({
   // the price yet (no worker, no variant), fall back to the "od {min}" range
   // across the offering workers.
   const chosenWorker = typeof resource === 'number' ? resource : undefined
-  const hasVariants = (service?.durationOptions?.length ?? 0) > 0
-  const workerRange = service ? priceRange(service, offeringWorkers) : { min: 0, max: 0 }
-  const priceVaries = workerRange.min !== workerRange.max
-  const cfgTotals = service ? configuredTotals(service, variantDuration, addonIds, chosenWorker) : { price: 0, duration: 0 }
-  // "od" only when the price is still a range: no worker pinned, no variant (a
-  // variant is always concretely chosen), and the workers' prices differ.
-  const showFrom = !!service && !chosenWorker && !hasVariants && priceVaries
-  const addonExtra = service ? addonTotals(service, addonIds).price : 0
-  const shownPrice = showFrom ? workerRange.min + addonExtra : cfgTotals.price
-  const shownDuration = cfgTotals.duration
+  // Cart totals: every position priced at the pinned worker's rate (or its base),
+  // summed. One position still priced as a range makes the whole total a range,
+  // so "od" propagates up - jak w kreatorze WEB.
+  const cartTotals = lines.reduce(
+    (acc, l) => {
+      const t = configuredTotals(l.service, l.variantDuration, l.addonIds, chosenWorker)
+      return { price: acc.price + t.price, duration: acc.duration + t.duration }
+    },
+    { price: 0, duration: 0 },
+  )
+  const lineIsRange = (l: CartLine) => {
+    if (chosenWorker) return false
+    if ((l.service.durationOptions?.length ?? 0) > 0) return false
+    const r = priceRange(l.service, workers.filter((w) => workerOffersService(l.service, w.id)))
+    return r.min !== r.max
+  }
+  const showFrom = lines.length > 0 && lines.some(lineIsRange)
+  // Lower bound when at least one position is a range: cheapest performer per
+  // position + that position's add-ons.
+  const cartFromPrice = lines.reduce((sum, l) => {
+    const performers = workers.filter((w) => workerOffersService(l.service, w.id))
+    const r = priceRange(l.service, performers)
+    const variant = resolveVariant(l.service, l.variantDuration)
+    const base = variant?.priceCents ?? (lineIsRange(l) ? r.min : configuredTotals(l.service, l.variantDuration, [], chosenWorker).price)
+    return sum + base + addonTotals(l.service, l.addonIds).price
+  }, 0)
+  const shownPrice = showFrom ? cartFromPrice : cartTotals.price
+  const shownDuration = cartTotals.duration
   // Price used for analytics/booking value: exact configured totals (the backend
   // assigns the final price for "Dowolny"; base + add-ons is our best estimate).
-  const selectedPrice = cfgTotals.price
-  // Recap bits for summaries: chosen variant label + add-on names.
-  const chosenVariant = service ? resolveVariant(service, variantDuration) : null
-  const chosenAddonNames = service ? addonNames(service, addonIds) : []
+  const selectedPrice = cartTotals.price
 
-  const summaryRows: SummaryRow[] = service
+  // One row per position (with its variant + add-ons folded into the label), then
+  // the shared provider, the time and the total. A 1-item cart reads exactly like
+  // before; a chain shows what it is made of.
+  const summaryRows: SummaryRow[] = lines.length
     ? [
-        { label: 'Usługa', value: service.name },
-        ...(chosenVariant && hasVariants
-          ? [{ label: 'Wariant', value: chosenVariant.label || formatDuration(chosenVariant.durationMinutes) }]
-          : []),
+        ...lines.map((l) => {
+          const variant = resolveVariant(l.service, l.variantDuration)
+          const hasVariantChoice = (l.service.durationOptions?.length ?? 0) > 0
+          const names = addonNames(l.service, l.addonIds)
+          const extras = [
+            ...(hasVariantChoice && variant ? [variant.label || formatDuration(variant.durationMinutes)] : []),
+            ...names,
+          ]
+          return {
+            label: l.service.name,
+            value: extras.length ? extras.join(' · ') : formatDuration(configuredTotals(l.service, l.variantDuration, l.addonIds, chosenWorker).duration),
+          }
+        }),
         { label: providerRowLabel, value: providerName },
         { label: 'Termin', value: `${dayMonth(date)}, ${slotLabel(date, slotKey, business.timezone)}` },
-        ...(chosenAddonNames.length ? [{ label: 'Dodatki', value: chosenAddonNames.join(', ') }] : []),
         { label: 'Cena', value: `${showFrom ? 'od ' : ''}${formatPrice2(shownPrice)}`, total: true },
       ]
     : []
 
   // Summary shown on the identify step when the intent is a waitlist sign-up
   // (no fixed time/price yet - just the service, specialist and date range).
-  const waitlistSummary: SummaryRow[] = service
+  const waitlistSummary: SummaryRow[] = lines.length === 1
     ? [
-        { label: 'Usługa', value: service.name },
+        { label: 'Usługa', value: lines[0]!.service.name },
         { label: providerRowLabel, value: providerName },
         {
           label: 'Zakres',
@@ -353,27 +464,97 @@ export function BookingFlow({
       ]
     : []
 
-  // Waitlist sign-up is offered when the business allows it and a service is chosen.
-  const canWaitlist = business.waitlistEnabled !== false && !!service
+  async function findNextFree() {
+    if (!lines.length || findingNext) return
+    setFindingNext(true)
+    const hit = await getCartFirstFree(cfg, { items: buildCartItems(), from: date || undefined, bookedById: auth?.userId })
+    setFindingNext(false)
+    if (hit) {
+      setDate(hit.date)
+      setSlotKey('')
+    } else {
+      setNoneAhead(true)
+    }
+  }
+
+  // The picked start turned into a per-position plan. itemTimes comes from the
+  // server (the widget never computes the chain itself), so what we show is what
+  // the engine planned.
+  const chainPlan = useMemo(() => {
+    if (!chain || !slotKey || !date || lines.length < 2) return null
+    // Offsets are minutes from the chain start; shifting the UTC slot key by them
+    // and formatting through the shared helper keeps one timezone code path.
+    const [hh, mm] = slotKey.split(':').map(Number)
+    const shifted = (mins: number) => {
+      const total = (hh ?? 0) * 60 + (mm ?? 0) + mins
+      return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+    }
+    return {
+      rows: chain.itemTimes.map((it) => ({
+        time: slotLabel(date, shifted(it.startOffsetMinutes), business.timezone),
+        name: lines[it.itemIndex]?.service.name ?? '',
+        duration: formatDuration(it.durationMinutes),
+      })),
+      total: formatDuration(chain.totalMinutes),
+    }
+  }, [chain, slotKey, date, lines, business.timezone])
+
+  /** Short "wariant · dodatki" recap under a cart row (empty when nothing chosen). */
+  const lineRecap = (l: CartLine): string => {
+    const variant = resolveVariant(l.service, l.variantDuration)
+    const hasVariantChoice = (l.service.durationOptions?.length ?? 0) > 0
+    const bits = [
+      ...(hasVariantChoice && variant ? [variant.label || formatDuration(variant.durationMinutes)] : []),
+      ...addonNames(l.service, l.addonIds),
+    ]
+    return bits.join(' · ')
+  }
+
+  // Nobody performs the whole cart alone: the step says so and names who does
+  // what, instead of leaving "Dowolny" as an unexplained only option (parytet z WEB).
+  const noSoloCandidate = lines.length > 1 && !isUnit && offeringWorkers.length === 0
+  const performersByService = useMemo(
+    () => lines.map((l) => ({
+      serviceName: l.service.name,
+      // The ENGINE's candidates (every worker performing it), not just the
+      // customer-selectable ones - the server is what assigns here.
+      names: workers.filter((w) => workerOffersService(l.service, w.id)).map((w) => w.name),
+    })),
+    [lines, workers],
+  )
+
+  // Waitlist v1 is keyed on ONE businessServiceId and carries no duration, so a
+  // chain, an add-on or a longer variant would make us notify about a slot the
+  // visit does not fit (ta sama brama co w WEB i CLIENT).
+  const waitlistLine = lines.length === 1 ? lines[0]! : null
+  const canWaitlist = business.waitlistEnabled !== false
+    && !!waitlistLine
+    && waitlistLine.addonIds.length === 0
+    && !isUnit
+    && (() => {
+      const def = resolveVariant(waitlistLine.service, null)
+      const cur = resolveVariant(waitlistLine.service, waitlistLine.variantDuration)
+      return !cur || !def || cur.durationMinutes === def.durationMinutes
+    })()
 
   async function book(a: Auth, key = slotKey) {
-    if (!service || !date || !key || booking.current) return
+    if (!lines.length || !date || !key || booking.current) return
     booking.current = true
     setBookingErr('')
     setPhase('confirming')
     const ctx = bookingCtx(key)
     emit('booking_submitted', { ...ctx, userId: a.userId })
-    const item = buildCartItem(service)
+    const items = buildCartItems()
     const startDate = slotStartDate(date, key)
     const trimmedNotes = notes.trim() || undefined
     const r = await createAppointment(
       cfg,
       {
-        item,
+        items,
         startDate,
         bookedById: a.userId,
         notes: trimmedNotes,
-        idempotencyKey: bookingIdempotencyKey({ businessId: business.id, startDate, item, bookedById: a.userId, notes: trimmedNotes }),
+        idempotencyKey: bookingIdempotencyKey({ businessId: business.id, startDate, items, bookedById: a.userId, notes: trimmedNotes }),
       },
       a.token,
     )
@@ -404,7 +585,7 @@ export function BookingFlow({
       // Backstop: the server-side whitelist gate refused the write (the probe
       // failed open or access changed mid-flow). Same screen as the soft check.
       setPhase('restricted')
-      emit('booking_access_denied', { userId: a.userId, serviceId: service.id, stage: 'create' })
+      emit('booking_access_denied', { userId: a.userId, serviceId: lines[0]?.service.id ?? null, stage: 'create' })
       emit('booking_failed', { ...ctx, code: r.code, reason: 'access_restricted' })
       return
     }
@@ -424,16 +605,31 @@ export function BookingFlow({
   // selected service; anything but 'bookable' stops before the booking step.
   // Runs while the caller's busy flag is still up, so the button keeps spinning.
   async function ensureBookingAccess(a: Auth): Promise<boolean> {
-    const needsCheck = business.bookingAccess?.policy === 'restricted' || service?.viewerAccess === 'locked' || calRestricted
+    const anyLocked = cartServices.some((s) => s.viewerAccess === 'locked')
+    const needsCheck = business.bookingAccess?.policy === 'restricted' || anyLocked || calRestricted
     if (!needsCheck) return true
-    const r = await checkBookingAccess(cfg, { bookedById: a.userId, businessServiceId: service?.id })
-    const allowed = service ? r.serviceAccess === 'bookable' : r.viewerCanBook !== false
-    if (!allowed) {
-      setPhase('restricted')
-      emit('booking_access_denied', { userId: a.userId, serviceId: service?.id ?? null, stage: 'check' })
-      return false
+    // EVERY position has to clear the whitelist - one locked service in a chain
+    // would otherwise be caught only by the create backstop, after the OTP.
+    if (!cartServices.length) {
+      const r = await checkBookingAccess(cfg, { bookedById: a.userId })
+      if (r.viewerCanBook === false) {
+        setPhase('restricted')
+        emit('booking_access_denied', { userId: a.userId, serviceId: null, stage: 'check' })
+        return false
+      }
+      if (r.viewerCanBook === true) setAccessOk(true)
+      setCalRestricted(false)
+      return true
     }
-    if (r.viewerCanBook === true) setAccessOk(true)
+    for (const svc of cartServices) {
+      const r = await checkBookingAccess(cfg, { bookedById: a.userId, businessServiceId: svc.id })
+      if (r.serviceAccess !== 'bookable') {
+        setPhase('restricted')
+        emit('booking_access_denied', { userId: a.userId, serviceId: svc.id, stage: 'check' })
+        return false
+      }
+      if (r.viewerCanBook === true) setAccessOk(true)
+    }
     setCalRestricted(false)
     return true
   }
@@ -443,7 +639,7 @@ export function BookingFlow({
   // viewer is confirmed - just resume selection where they left off.
   function complete(a: Auth) {
     if (intent === 'waitlist') void submitWaitlist(a)
-    else if (service && date && slotKey) void book(a)
+    else if (lines.length && date && slotKey) void book(a)
     else setPhase('select')
   }
 
@@ -463,6 +659,7 @@ export function BookingFlow({
               : 'Nie udało się zapisać na listę. Spróbuj ponownie.'
 
   async function submitWaitlist(a: Auth, prefs = wlPrefs) {
+    const service = waitlistLine?.service
     if (!service || !date || !prefs || wlBusy) return
     setWlBusy(true)
     setWlErr('')
@@ -497,7 +694,7 @@ export function BookingFlow({
   function startWaitlist() {
     setIntent('waitlist')
     setWlErr('')
-    emit('waitlist_started', { serviceId: service?.id, ...resourceEvent(resource ?? 'any'), date })
+    emit('waitlist_started', { serviceId: waitlistLine?.service.id, ...resourceEvent(resource ?? 'any'), date })
     setPhase('waitlist')
   }
 
@@ -505,7 +702,7 @@ export function BookingFlow({
     setWlPrefs(prefs)
     if (auth) void submitWaitlist(auth, prefs)
     else {
-      emit('details_started', { serviceId: service?.id, waitlist: true })
+      emit('details_started', { serviceId: waitlistLine?.service.id, waitlist: true })
       setPhase('identify')
     }
   }
@@ -517,10 +714,16 @@ export function BookingFlow({
       : { resourceId: r, resourceName: business.resources.find((x) => x.id === r)?.name ?? '' }
 
   // The full booking context shared by every funnel event past slot selection.
+  // Funnel payloads keep the legacy scalar fields (serviceId/serviceName point at
+  // the FIRST position, so existing GA4/GTM setups keep working) and gain the
+  // cart shape next to them. No PII, jak dotąd.
   const bookingCtx = (key = slotKey) => ({
-    serviceId: service?.id,
-    serviceName: service?.name,
-    price: service ? selectedPrice : undefined,
+    serviceId: lines[0]?.service.id,
+    serviceName: lines[0]?.service.name,
+    serviceIds: lines.map((l) => l.service.id),
+    serviceNames: lines.map((l) => l.service.name),
+    itemCount: lines.length,
+    price: lines.length ? selectedPrice : undefined,
     ...resourceEvent(resource ?? 'any'),
     date,
     time: key ? slotLabel(date, key, business.timezone) : '',
@@ -528,34 +731,52 @@ export function BookingFlow({
   })
 
   // ---- selection (select-then-Dalej) ----
-  function pickService(s: Service) {
-    if (s.id !== service?.id) {
-      setService(s)
-      // Keep a preselected specialist only for a staff service they still offer;
-      // drop it otherwise. A pinned number must be an actual worker offering the
-      // new staff service - a pool object id (type !== 'worker') is never valid
-      // and, because a no-rows service treats every id as offered, would
-      // otherwise leak through into the booking. Unit services always reset.
-      if (
-        s.fulfillmentMode === 'unit' ||
-        (typeof resource === 'number' &&
-          (business.resources.find((r) => r.id === resource)?.type !== 'worker' || !workerOffersService(s, resource)))
-      )
-        setResource(null)
-      // Availability is per service, so the chosen day/slot no longer applies.
+  /**
+   * Toggle a service in the cart. Adding keeps the cart-wide specialist only when
+   * they perform EVERY position (jak applyToggleService w WEB) - otherwise the pin
+   * is dropped, because the chain would dead-end at the time step.
+   */
+  function toggleService(s: Service) {
+    const existing = lineOf(s.id)
+    if (existing) {
+      const next = lines.filter((l) => l.service.id !== s.id)
+      setLines(next)
+      if (configuringId === s.id) setConfiguringId(null)
       setDate('')
       setSlotKey('')
-      // Reset the configuration to the new service's defaults (shortest variant,
-      // no add-ons) and auto-open configure when it offers choices.
-      setVariantDuration(resolveVariant(s, null)?.durationMinutes ?? null)
-      setAddonIds([])
-      setConfiguring(serviceHasOptions(s))
-      emit('service_selected', { serviceId: s.id, serviceName: s.name, price: s.price, durationMin: s.duration })
-    } else if (serviceHasOptions(s)) {
-      // Re-tapping the already-selected service reopens its configuration.
-      setConfiguring(true)
+      emit('service_removed', { serviceId: s.id, serviceName: s.name, itemCount: next.length })
+      return
     }
+    if (lines.length >= MAX_CART_ITEMS) {
+      setCartNotice(`Możesz wybrać maksymalnie ${MAX_CART_ITEMS} usług.`)
+      return
+    }
+    const next = [...lines, newLine(s)]
+    setLines(next)
+    // Drop a pinned worker who cannot take the new composition, and say why.
+    if (typeof resource === 'number') {
+      const picked = business.resources.find((r) => r.id === resource)
+      const stillValid = picked?.type === 'worker'
+        && next.every((l) => l.service.fulfillmentMode !== 'unit' && workerOffersService(l.service, resource))
+      if (!stillValid) {
+        setResource(null)
+        setCartNotice(picked?.name
+          ? `${picked.name} nie wykonuje usługi ${s.name}. Wybierz specjalistę ponownie.`
+          : 'Wybierz specjalistę ponownie - zmienił się skład wizyty.')
+      }
+    }
+    setDate('')
+    setSlotKey('')
+    // A service with variants/add-ons opens its configuration right away.
+    if (serviceHasOptions(s)) setConfiguringId(s.id)
+    emit('service_selected', { serviceId: s.id, serviceName: s.name, price: s.price, durationMin: s.duration, itemCount: next.length })
   }
+
+  /** Reopen the configuration of a cart position (variant + add-ons). */
+  function editLine(serviceId: number) {
+    if (lineOf(serviceId)) setConfiguringId(serviceId)
+  }
+
   function pickResource(r: ResChoice) {
     if (r !== resource) {
       setResource(r)
@@ -565,29 +786,38 @@ export function BookingFlow({
     }
   }
   function pickVariant(durationMinutes: number) {
-    setVariantDuration(durationMinutes)
+    if (configuringId == null) return
+    setLines((prev) => prev.map((l) => (l.service.id === configuringId ? { ...l, variantDuration: durationMinutes } : l)))
     // The chain length changed - the chosen day/slot may no longer fit.
     setDate('')
     setSlotKey('')
   }
   function toggleAddon(id: number) {
-    setAddonIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+    if (configuringId == null) return
+    setLines((prev) => prev.map((l) => (
+      l.service.id === configuringId
+        ? { ...l, addonIds: l.addonIds.includes(id) ? l.addonIds.filter((x) => x !== id) : [...l.addonIds, id] }
+        : l
+    )))
     setDate('')
     setSlotKey('')
   }
   function confirmConfigure() {
-    if (service && !addonsValid(service, addonIds)) return
-    setConfiguring(false)
-    emit('addons_selected', {
-      serviceId: service?.id,
-      variantDurationMin: variantDuration ?? undefined,
-      addonIds,
-      addonCount: addonIds.length,
-    })
+    const line = configuringLine
+    if (line && !addonsValid(line.service, line.addonIds)) return
+    setConfiguringId(null)
+    if (line) {
+      emit('addons_selected', {
+        serviceId: line.service.id,
+        variantDurationMin: line.variantDuration ?? undefined,
+        addonIds: line.addonIds,
+        addonCount: line.addonIds.length,
+      })
+    }
   }
   function dalej() {
     if (selStep === 0) {
-      if (!service || configuring || !addonsValid(service, addonIds)) return
+      if (!cartValid) return
       if (!hasResourceStep) {
         // No pick step: providerSelection 'auto', or 0-1 selectable providers.
         const r: ResChoice = !providerAuto && selectableProviders.length === 1 ? selectableProviders[0].id : 'any'
@@ -620,7 +850,7 @@ export function BookingFlow({
     if (phase === 'restricted') return () => { setSelStep(0); setPhase('select') }
     if (phase === 'select') {
       // Configuring overlays the selection - back just closes it, keeping choices.
-      if (configuring) return () => setConfiguring(false)
+      if (configuring) return () => setConfiguringId(null)
       if (selStep === 2) return () => setSelStep(hasResourceStep ? 1 : 0)
       if (selStep === 1) return () => setSelStep(0)
       return onClose ?? null // first step: back closes (launcher)
@@ -788,7 +1018,7 @@ export function BookingFlow({
   function goAccessLogin() {
     setIntent('book')
     setIdentifyErr('')
-    emit('details_started', { serviceId: service?.id ?? null, accessCheck: true })
+    emit('details_started', { serviceId: lines[0]?.service.id ?? null, accessCheck: true })
     setPhase('identify')
   }
   function recoverSlot() {
@@ -800,11 +1030,10 @@ export function BookingFlow({
     setPhase('select')
   }
   function restart() {
-    setService(null)
+    setLines([])
     setResource(null)
-    setConfiguring(false)
-    setVariantDuration(null)
-    setAddonIds([])
+    setConfiguringId(null)
+    setCartNotice('')
     setDate('')
     setSlotKey('')
     setSelStep(0)
@@ -857,9 +1086,10 @@ export function BookingFlow({
   // "any" (Dowolny/auto) is always valid. Guards a stale id from a previous
   // service from surviving into an enabled "Dalej".
   const resourceValid = resource === 'any' || (typeof resource === 'number' && selectableProviders.some((p) => p.id === resource))
-  const canAdvance =
-    selStep === 0 ? !!service && !configuring && addonsValid(service, addonIds) : selStep === 1 ? resourceValid : !!slotKey
-  const ctaPrice = service ? `${showFrom ? 'od ' : ''}${formatPrice2(shownPrice)}` : ''
+  // Every position must satisfy its own add-on groups before the cart can move on.
+  const cartValid = lines.length > 0 && !configuring && lines.every((l) => addonsValid(l.service, l.addonIds))
+  const canAdvance = selStep === 0 ? cartValid : selStep === 1 ? resourceValid : !!slotKey
+  const ctaPrice = lines.length ? `${showFrom ? 'od ' : ''}${formatPrice2(shownPrice)}` : ''
 
   return (
     <div class="vz-panel" role="dialog" aria-modal={onClose ? 'true' : undefined} aria-label="Zarezerwuj wizytę">
@@ -896,11 +1126,11 @@ export function BookingFlow({
           </Notice>
         )}
 
-        {phase === 'select' && configuring && service && (
+        {phase === 'select' && configuringLine && (
           <StepConfigure
-            service={service}
-            variantDuration={variantDuration}
-            addonIds={addonIds}
+            service={configuringLine.service}
+            variantDuration={configuringLine.variantDuration}
+            addonIds={configuringLine.addonIds}
             workerId={chosenWorker}
             onPickVariant={pickVariant}
             onToggleAddon={toggleAddon}
@@ -908,19 +1138,34 @@ export function BookingFlow({
           />
         )}
         {phase === 'select' && !configuring && selStep === 0 && (
-          <StepService services={services} workers={workers} categories={categories} selectedId={service?.id} onPick={pickService} />
+          <>
+            {cartNotice && <Notice title="Zmienił się skład wizyty">{cartNotice}</Notice>}
+            <StepService
+              services={services}
+              workers={workers}
+              categories={categories}
+              cart={lines.map((l) => ({
+                serviceId: l.service.id,
+                recap: lineRecap(l),
+                editable: serviceHasOptions(l.service),
+              }))}
+              onToggle={toggleService}
+              onEdit={editLine}
+            />
+          </>
         )}
-        {phase === 'select' && !configuring && selStep === 1 && service && (
+        {phase === 'select' && !configuring && selStep === 1 && lines.length > 0 && (
           <StepResource
             providers={selectableProviders}
-            service={service}
+            items={lines}
             mode={isUnit ? 'unit' : 'staff'}
             anyLabel={anyProviderLabel}
             selected={resource}
             onPick={pickResource}
+            performers={noSoloCandidate ? performersByService : undefined}
           />
         )}
-        {phase === 'select' && !configuring && selStep === 2 && service && calRestricted && (
+        {phase === 'select' && !configuring && selStep === 2 && lines.length > 0 && calRestricted && (
           // Availability answered BOOKING_ACCESS_RESTRICTED for this (anonymous)
           // viewer - invite a login instead of rendering an empty calendar.
           <div class="vz-fade-in" style="text-align:center;padding:8px 0;">
@@ -932,7 +1177,7 @@ export function BookingFlow({
             <button class="vz-btn mt" onClick={goAccessLogin} type="button">Zaloguj się</button>
           </div>
         )}
-        {phase === 'select' && !configuring && selStep === 2 && service && !calRestricted && (
+        {phase === 'select' && !configuring && selStep === 2 && lines.length > 0 && !calRestricted && (
           <StepDateTime
             days={days}
             counts={counts}
@@ -948,12 +1193,16 @@ export function BookingFlow({
             }}
             canWaitlist={canWaitlist}
             onJoinWaitlist={startWaitlist}
+            onFindNext={findNextFree}
+            findingNext={findingNext}
+            noneAhead={noneAhead}
+            chain={chainPlan}
           />
         )}
 
-        {phase === 'waitlist' && service && (
+        {phase === 'waitlist' && waitlistLine && (
           <StepWaitlist
-            serviceName={service.name}
+            serviceName={waitlistLine.service.name}
             workerName={providerName}
             date={date}
             onSubmit={onWaitlistFormSubmit}
@@ -965,7 +1214,7 @@ export function BookingFlow({
               setPhase('select')
             }}
             check={(win) =>
-              checkWaitlistWindow(cfg, { businessServiceId: service.id, resourceId: resourceId ?? null, ...win })
+              checkWaitlistWindow(cfg, { businessServiceId: waitlistLine.service.id, resourceId: resourceId ?? null, ...win })
             }
             busy={wlBusy}
             error={wlErr}
@@ -1069,7 +1318,7 @@ export function BookingFlow({
             <div class="vz-check"><Bell size={28} /></div>
             <div class="vz-done-title">Jesteś na liście!</div>
             <div class="vz-done-sub">
-              Damy Ci znać SMS-em{contact.email ? ' i e-mailem' : ''}, gdy tylko zwolni się pasujący termin usługi <b style="color:var(--vz-text)">{service?.name}</b>.
+              Damy Ci znać SMS-em{contact.email ? ' i e-mailem' : ''}, gdy tylko zwolni się pasujący termin usługi <b style="color:var(--vz-text)">{waitlistLine?.service.name}</b>.
             </div>
             <div style="margin-top:18px;text-align:left;"><SummaryCard rows={waitlistSummary} /></div>
             {onClose ? <Button onClick={onClose}>Gotowe</Button> : <Button variant="ghost" onClick={restart}>Nowa rezerwacja</Button>}
@@ -1081,13 +1330,17 @@ export function BookingFlow({
         <div class="vz-cta">
           <div class="vz-cta-summary">
             <div class="vz-cta-left">
-              {service ? (
+              {lines.length ? (
                 <>
-                  <div class="vz-cta-svc">{service.name}</div>
+                  <div class="vz-cta-svc">
+                    {lines.length === 1
+                      ? lines[0]!.service.name
+                      : `${lines.length} ${lines.length < 5 ? 'usługi' : 'usług'}`}
+                  </div>
                   <div class="vz-cta-meta"><b>{ctaPrice}</b> · {formatDuration(shownDuration)}</div>
-                  {serviceHasOptions(service) && (
+                  {lines.length === 1 && serviceHasOptions(lines[0]!.service) && (
                     <div class="vz-cta-cfg">
-                      <button class="vz-link" onClick={() => setConfiguring(true)} type="button">Zmień wariant / dodatki</button>
+                      <button class="vz-link" onClick={() => setConfiguringId(lines[0]!.service.id)} type="button">Zmień wariant / dodatki</button>
                     </div>
                   )}
                 </>

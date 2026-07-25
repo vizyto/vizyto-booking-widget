@@ -14,6 +14,7 @@ export function SelectCard({
   meta,
   selected,
   onSelect,
+  multi,
 }: {
   // Circular avatar (workers / "Dowolny"). Mutually exclusive with `thumb`.
   avatar?: VNode | string
@@ -27,6 +28,8 @@ export function SelectCard({
   meta?: ComponentChildren
   selected: boolean
   onSelect: () => void
+  /** Multi-select semantics (cart): checkbox + square tick instead of a radio. */
+  multi?: boolean
 }) {
   // A broken/unreachable photo degrades to the same letter placeholder as null.
   const [imgOk, setImgOk] = useState(true)
@@ -34,7 +37,7 @@ export function SelectCard({
     <button
       type="button"
       class={`vz-card${selected ? ' selected' : ''}`}
-      role="radio"
+      role={multi ? 'checkbox' : 'radio'}
       aria-checked={selected}
       onClick={onSelect}
     >
@@ -50,7 +53,7 @@ export function SelectCard({
         {desc && <span class="vz-card-desc">{desc}</span>}
         {meta && <span class="vz-card-meta">{meta}</span>}
       </span>
-      <span class={`vz-radio${selected ? ' on' : ''}`}>{selected && <Check size={15} />}</span>
+      <span class={`vz-radio${multi ? ' square' : ''}${selected ? ' on' : ''}`}>{selected && <Check size={15} />}</span>
     </button>
   )
 }

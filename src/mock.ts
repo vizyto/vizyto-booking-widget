@@ -8,6 +8,8 @@
 //   - token "stale" -> BOOKED_BY_MISMATCH
 import type {
   Business,
+  CartItem,
+  CartItemTime,
   CheckEmailResult,
   DayCounts,
   LoginResult,
@@ -137,28 +139,78 @@ function dayIsOpen(ymd: string): boolean {
   return idx % 4 !== 2
 }
 
-export async function getCounts(p: { startDate: string; endDate: string }): Promise<DayCounts> {
+// Chain geometry for a mock cart: each position runs its variant length (or the
+// service base) plus its add-ons, back to back. Without this the mock would make
+// a 3-service cart look exactly like a single service and the cart would go
+// untested in the offline flow.
+function chainOf(items?: CartItem[]): { times: CartItemTime[]; total: number } {
+  const times: CartItemTime[] = []
+  let offset = 0
+  for (const [i, it] of (items ?? []).entries()) {
+    const svc = BUSINESS.services.find((s) => s.id === it.businessServiceId)
+    const base = it.durationMinutes ?? svc?.duration ?? 30
+    const extra = (svc?.addonGroups ?? [])
+      .flatMap((g) => g.addons)
+      .filter((a) => (it.addonIds ?? []).includes(a.id))
+      .reduce((sum, a) => sum + (a.extraDurationMinutes || 0), 0)
+    const durationMinutes = base + extra
+    times.push({ itemIndex: i, startOffsetMinutes: offset, durationMinutes })
+    offset += durationMinutes
+  }
+  return { times, total: offset }
+}
+
+export async function getCounts(p: { startDate: string; endDate: string; items?: CartItem[] }): Promise<DayCounts> {
   await wait(200)
   const out: DayCounts = {}
   const start = new Date(p.startDate + 'T00:00:00')
   const end = new Date(p.endDate + 'T00:00:00')
+  // A longer chain fits fewer times into the same day - mirrors the real engine.
+  const slotsPerDay = Math.max(1, 7 - Math.floor(chainOf(p.items).total / 45))
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const ymd = d.toISOString().slice(0, 10)
-    out[ymd] = dayIsOpen(ymd) ? 7 : 0
+    out[ymd] = dayIsOpen(ymd) ? slotsPerDay : 0
   }
   return out
 }
 
-export async function getAvailability(p: { date: string }): Promise<Slots> {
+export async function getAvailability(
+  p: { date: string; items?: CartItem[] },
+): Promise<{ slots: Slots; itemTimes: CartItemTime[]; totalMinutes: number; slotCandidates?: Record<string, number[][]> }> {
   await wait(320)
-  if (!dayIsOpen(p.date)) return []
+  const { times, total } = chainOf(p.items)
+  if (!dayIsOpen(p.date)) return { slots: [], itemTimes: times, totalMinutes: total }
   const slots: Slots = []
-  // UTC keys 08:00..13:30 render ~10:00..15:30 in Europe/Warsaw (summer).
-  for (let h = 8; h <= 13; h++) {
+  // UTC keys 08:00..13:30 render ~10:00..15:30 in Europe/Warsaw (summer). A chain
+  // longer than an hour eats into the tail of the day, jak w silniku.
+  const lastHour = total > 60 ? 12 : 13
+  for (let h = 8; h <= lastHour; h++) {
     slots.push(`${String(h).padStart(2, '0')}:00`, `${String(h).padStart(2, '0')}:30`)
   }
   slots.push('13:55') // sentinel: picking this triggers a "slot gone" on book
-  return slots
+  // Per-slot candidates for the specialist picker: the mock's workers 11/12/13,
+  // thinned by hour so the list is not always identical.
+  const workerIds = BUSINESS.resources.filter((r) => r.type === 'worker').map((r) => r.id)
+  const slotCandidates: Record<string, number[][]> = {}
+  for (const s of slots) {
+    const h = Number(s.slice(0, 2))
+    const free = workerIds.filter((_, i) => (h + i) % 3 !== 0)
+    slotCandidates[s] = (p.items ?? [{}]).map(() => (free.length ? free : workerIds))
+  }
+  return { slots, itemTimes: times, totalMinutes: total, slotCandidates }
+}
+
+// First open day at/after `from` with a slot - drives "najbliższy wolny termin".
+export async function getFirstFree(p: { from?: string }): Promise<{ date: string; time: string } | null> {
+  await wait(400)
+  const start = p.from ? new Date(p.from + 'T00:00:00') : new Date()
+  for (let i = 0; i < 60; i++) {
+    const d = new Date(start)
+    d.setDate(d.getDate() + i)
+    const ymd = d.toISOString().slice(0, 10)
+    if (dayIsOpen(ymd)) return { date: ymd, time: '08:00' }
+  }
+  return null
 }
 
 let lastOtpAt = 0

@@ -187,7 +187,20 @@ export async function getServiceCategories(cfg: Cfg): Promise<ServiceCategory[]>
 // the viewer may not book the service (whitelist gate). Surfaced as a flag so
 // the calendar can invite a login instead of showing a silently empty grid.
 export type CountsResult = { counts: DayCounts; restricted: boolean }
-export type SlotsResult = { slots: Slots; restricted: boolean }
+
+// Chain geometry for the picked cart: where each position starts relative to the
+// chain start, and how long it runs. Constant per request - it does not depend on
+// which slot the customer ends up choosing.
+export type CartItemTime = { itemIndex: number; startOffsetMinutes: number; durationMinutes: number }
+
+export type SlotsResult = {
+  slots: Slots
+  itemTimes: CartItemTime[]
+  totalMinutes: number
+  /** Only when asked with includeCandidates: per slot, per position, who is free. */
+  slotCandidates?: Record<string, number[][]>
+  restricted: boolean
+}
 
 async function isAccessRestricted(r: Response): Promise<boolean> {
   if (r.status !== 403) return false
@@ -202,14 +215,14 @@ async function isAccessRestricted(r: Response): Promise<boolean> {
 // the slots call + the create backstop still guard access).
 export async function getCartCounts(
   cfg: Cfg,
-  p: { startDate: string; endDate: string; item: CartItem; bookedById?: number },
+  p: { startDate: string; endDate: string; items: CartItem[]; bookedById?: number },
 ): Promise<CountsResult> {
-  if (cfg.mock) return { counts: await mock.getCounts({ startDate: p.startDate, endDate: p.endDate }), restricted: false }
+  if (cfg.mock) return { counts: await mock.getCounts({ startDate: p.startDate, endDate: p.endDate, items: p.items }), restricted: false }
   try {
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability/cart/counts`, {
       method: 'POST',
       headers: headers(cfg),
-      body: JSON.stringify({ from: p.startDate, to: p.endDate, items: [p.item], bookedById: p.bookedById || undefined }),
+      body: JSON.stringify({ from: p.startDate, to: p.endDate, items: p.items, bookedById: p.bookedById || undefined }),
     })
     if (r.ok) return { counts: (await r.json()) as DayCounts, restricted: false }
     return { counts: {}, restricted: await isAccessRestricted(r) }
@@ -223,22 +236,55 @@ export async function getCartCounts(
 // into the chain the engine plans.
 export async function getCartSlots(
   cfg: Cfg,
-  p: { date: string; item: CartItem; bookedById?: number },
+  p: { date: string; items: CartItem[]; bookedById?: number; includeCandidates?: boolean },
 ): Promise<SlotsResult> {
-  if (cfg.mock) return { slots: await mock.getAvailability({ date: p.date }), restricted: false }
+  if (cfg.mock) return { ...(await mock.getAvailability({ date: p.date, items: p.items })), restricted: false }
   try {
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability/cart`, {
       method: 'POST',
       headers: headers(cfg),
-      body: JSON.stringify({ date: p.date, items: [p.item], bookedById: p.bookedById || undefined }),
+      body: JSON.stringify({
+        date: p.date,
+        items: p.items,
+        bookedById: p.bookedById || undefined,
+        ...(p.includeCandidates ? { includeCandidates: true } : {}),
+      }),
     })
     if (r.ok) {
-      const data = (await r.json()) as { slots?: Slots }
-      return { slots: Array.isArray(data.slots) ? data.slots : [], restricted: false }
+      const data = (await r.json()) as { slots?: Slots; itemTimes?: CartItemTime[]; totalMinutes?: number; slotCandidates?: Record<string, number[][]> }
+      return {
+        slots: Array.isArray(data.slots) ? data.slots : [],
+        itemTimes: Array.isArray(data.itemTimes) ? data.itemTimes : [],
+        totalMinutes: data.totalMinutes ?? 0,
+        slotCandidates: data.slotCandidates,
+        restricted: false,
+      }
     }
-    return { slots: [], restricted: await isAccessRestricted(r) }
+    return { slots: [], itemTimes: [], totalMinutes: 0, restricted: await isAccessRestricted(r) }
   } catch {
-    return { slots: [], restricted: false }
+    return { slots: [], itemTimes: [], totalMinutes: 0, restricted: false }
+  }
+}
+
+// The first day+time with a free chain start, scanning forward from today (the
+// server sweeps 60 days). Lets an empty day offer "najbliższy wolny termin"
+// instead of a dead end - parytet z kreatorem WEB.
+export async function getCartFirstFree(
+  cfg: Cfg,
+  p: { items: CartItem[]; from?: string; bookedById?: number },
+): Promise<{ date: string; time: string } | null> {
+  if (cfg.mock) return mock.getFirstFree({ from: p.from })
+  try {
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability/cart/first-free`, {
+      method: 'POST',
+      headers: headers(cfg),
+      body: JSON.stringify({ from: p.from, items: p.items, bookedById: p.bookedById || undefined }),
+    })
+    if (!r.ok) return null
+    const data = await r.json()
+    return data && data.date && data.time ? { date: data.date, time: data.time } : null
+  } catch {
+    return null
   }
 }
 
@@ -465,7 +511,7 @@ export async function joinWaitlist(cfg: Cfg, p: WaitlistParams, token: string | 
 
 export async function createAppointment(
   cfg: Cfg,
-  p: { item: CartItem; startDate: string; bookedById: number; notes?: string; idempotencyKey: string },
+  p: { items: CartItem[]; startDate: string; bookedById: number; notes?: string; idempotencyKey: string },
   token: string | null,
 ): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
   if (cfg.mock) return mock.createAppointment({ startDate: p.startDate }, token)
@@ -475,9 +521,9 @@ export async function createAppointment(
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments`, {
       method: 'POST',
       headers: headers(cfg, extra),
-      // Cart contract: a single service is a 1-item cart. Each item carries its
-      // own resourceId (null = Dowolny), add-ons and chosen variant length.
-      body: JSON.stringify({ bookedById: p.bookedById, items: [p.item], startDate: p.startDate, notes: p.notes }),
+      // Cart contract: array order = chain order. Each item carries its own
+      // resourceId (null = Dowolny), add-ons and chosen variant length.
+      body: JSON.stringify({ bookedById: p.bookedById, items: p.items, startDate: p.startDate, notes: p.notes }),
     })
     const data = await r.json().catch(() => ({}))
     if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}` }
@@ -651,16 +697,20 @@ export function richTextToPlain(html: string | null | undefined): string {
 export function bookingIdempotencyKey(p: {
   businessId: number
   startDate: string
-  item: CartItem
+  items: CartItem[]
   bookedById: number
   notes?: string
 }): string {
-  const sig = [
-    p.item.businessServiceId,
-    p.item.resourceId ?? 'any',
-    (p.item.addonIds ?? []).slice().sort((a, b) => a - b).join('.'),
-    p.item.durationMinutes ?? 'base',
-  ].join('-')
+  // Order matters: the array order IS the chain order, so two carts with the same
+  // services in a different sequence are different bookings.
+  const sig = p.items
+    .map((it) => [
+      it.businessServiceId,
+      it.resourceId ?? 'any',
+      (it.addonIds ?? []).slice().sort((a, b) => a - b).join('.'),
+      it.durationMinutes ?? 'base',
+    ].join('-'))
+    .join('|')
   return `vzw-${p.businessId}-${p.startDate}-${sig}-${p.bookedById}-${(p.notes ?? '').length}`
 }
 
