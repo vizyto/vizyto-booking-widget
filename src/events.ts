@@ -17,6 +17,8 @@ export type VizytoEventType =
   | 'open' // modal opened (launcher) - carries { source }
   | 'close' // modal closed
   | 'service_selected'
+  | 'service_removed' // pozycja usunięta z koszyka
+  | 'addons_selected' // variant/add-ons chosen in the configure sub-step
   | 'specialist_selected'
   | 'datetime_selected'
   | 'details_started' // reached the contact-details step

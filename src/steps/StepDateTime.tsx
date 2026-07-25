@@ -24,6 +24,11 @@ export function StepDateTime({
   onPickSlot,
   canWaitlist = false,
   onJoinWaitlist,
+  onFindNext,
+  findingNext = false,
+  noneAhead = false,
+  chain,
+  slotPicker,
 }: {
   days: string[]
   counts: DayCounts
@@ -37,8 +42,23 @@ export function StepDateTime({
   // When a selected day has no free slots, offer to join the waitlist.
   canWaitlist?: boolean
   onJoinWaitlist?: () => void
+  /** Jump to the first day that has a free chain start (server sweeps 60 days). */
+  onFindNext?: () => void
+  findingNext?: boolean
+  /** Set once a search came back empty, so we stop offering it. */
+  noneAhead?: boolean
+  /** Chain plan for the picked slot - only meaningful for a multi-position cart. */
+  chain?: { rows: { time: string; name: string; duration: string }[]; total: string } | null
+  /** Who is free at the picked slot, when refining "Dowolny" makes sense. */
+  slotPicker?: {
+    candidates: { id: number; name: string; price: string }[]
+    selectedId: number | null
+    onPick: (id: number | null) => void
+  } | null
 }) {
   const [view, setView] = useState<'week' | 'month'>('week')
+  // A date set from OUTSIDE (first-free jump) must bring its page into view -
+  // otherwise the customer is told "znaleziono termin" and sees the same week.
   const [perPage, setPerPage] = useState(7)
   const [page, setPage] = useState(0)
   const stripRef = useRef<HTMLDivElement | null>(null)
@@ -69,6 +89,7 @@ export function StepDateTime({
     setPage((p) => Math.min(p, maxPage))
   }, [maxPage])
 
+
   // distinct months covered by the horizon, for month-view navigation
   const months = useMemo(() => {
     const seen: string[] = []
@@ -84,6 +105,20 @@ export function StepDateTime({
     return out
   }, [days])
   const [mIdx, setMIdx] = useState(0)
+
+  // Follow a date set from OUTSIDE the strip (the "najbliższy wolny termin"
+  // jump): without this the customer is told a date was found and keeps looking
+  // at the same week, with no tile marked active. Also switch the month view to
+  // the month that actually holds it.
+  useEffect(() => {
+    if (!date) return
+    const idx = days.indexOf(date)
+    if (idx < 0) return
+    setPage(Math.floor(idx / perPage))
+    const m = monthOf(date)
+    const mi = months.findIndex((x) => x.year === m.year && x.month === m.month)
+    if (mi >= 0) setMIdx(mi)
+  }, [date, days, perPage, months])
 
   const free = (d: string) => (counts[d] ?? 0) > 0
 
@@ -122,9 +157,7 @@ export function StepDateTime({
   }
 
   const groups = useMemo(() => {
-    const keys = Object.keys(slots)
-      .filter((k) => (slots[k] ?? []).length > 0)
-      .sort()
+    const keys = slots.slice().sort()
     const g: { label: string; Icon: typeof Sun; items: { k: string; lab: string }[] }[] = [
       { label: 'Rano', Icon: Sunrise, items: [] },
       { label: 'Południe', Icon: Sun, items: [] },
@@ -183,12 +216,32 @@ export function StepDateTime({
       )}
 
       {!date ? (
-        <div class="vz-muted" style="margin-top:20px;text-align:center;">Wybierz dzień, aby zobaczyć wolne godziny.</div>
+        <div style="margin-top:20px;text-align:center;">
+          <div class="vz-muted">Wybierz dzień, aby zobaczyć wolne godziny.</div>
+          {/* Whole horizon without a free day: the strip has nothing selectable,
+              so the way out has to live here too. */}
+          {onFindNext && !noneAhead && !Object.values(counts).some((n) => n > 0) && (
+            <button class="vz-btn ghost mt" onClick={onFindNext} disabled={findingNext} type="button">
+              {findingNext ? <><Spinner /> Szukam najbliższego terminu…</> : 'Znajdź najbliższy dostępny termin'}
+            </button>
+          )}
+        </div>
       ) : loading ? (
         <div class="vz-center"><Spinner /> Szukam wolnych godzin…</div>
       ) : groups.length === 0 ? (
         <div style="margin-top:20px;text-align:center;">
-          <div class="vz-muted">Brak dostępnych terminów tego dnia. Wybierz inny.</div>
+          <div class="vz-muted">
+            {noneAhead
+              ? 'Brak wolnych terminów w najbliższym czasie.'
+              : 'Brak dostępnych terminów tego dnia. Wybierz inny.'}
+          </div>
+          {/* Finding the next free day beats making the customer click through
+              the calendar - the server already sweeps 60 days for us. */}
+          {onFindNext && !noneAhead && (
+            <button class="vz-btn ghost mt" onClick={onFindNext} disabled={findingNext} type="button">
+              {findingNext ? <><Spinner /> Szukam najbliższego terminu…</> : 'Znajdź najbliższy dostępny termin'}
+            </button>
+          )}
           {canWaitlist && onJoinWaitlist && (
             <button class="vz-btn ghost mt" onClick={onJoinWaitlist} type="button">
               <Bell size={17} /> Powiadom mnie, gdy się zwolni
@@ -207,6 +260,50 @@ export function StepDateTime({
               </div>
             </div>
           ))}
+          {/* "Dowolny" + a picked hour: name the exact price by naming the person.
+              The list is who the ENGINE reported free at that slot. */}
+          {slotPicker && slotPicker.candidates.length > 1 && (
+            <div class="vz-chain">
+              <div class="vz-chain-h">Kto wykona usługę</div>
+              <div class="vz-slotpick" role="radiogroup" aria-label="Kto wykona usługę">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={slotPicker.selectedId == null}
+                  class={`vz-slotpick-b${slotPicker.selectedId == null ? ' on' : ''}`}
+                  onClick={() => slotPicker.onPick(null)}
+                >
+                  Dowolny
+                </button>
+                {slotPicker.candidates.map((c) => (
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={slotPicker.selectedId === c.id}
+                    class={`vz-slotpick-b${slotPicker.selectedId === c.id ? ' on' : ''}`}
+                    onClick={() => slotPicker.onPick(c.id)}
+                  >
+                    {c.name} <span class="vz-slotpick-p">{c.price}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* What the visit will actually look like, once a start is picked. */}
+          {chain && chain.rows.length > 1 && (
+            <div class="vz-chain">
+              <div class="vz-chain-h">Przebieg wizyty</div>
+              {chain.rows.map((r) => (
+                <div class="vz-chain-row">
+                  <span class="vz-chain-time">{r.time}</span>
+                  <span class="vz-chain-name">{r.name}</span>
+                  <span class="vz-chain-dur">{r.duration}</span>
+                </div>
+              ))}
+              <div class="vz-chain-total">Łącznie: {chain.total}</div>
+            </div>
+          )}
           {canWaitlist && onJoinWaitlist && (
             <button class="vz-wl-link" onClick={onJoinWaitlist} type="button">
               <Bell size={14} /> Nie pasuje żaden termin? Powiadom mnie, gdy się zwolni.

@@ -154,9 +154,19 @@ export const css = `
 }
 .vz-card-av img { width: 100%; height: 100%; object-fit: cover; }
 .vz-card.selected .vz-card-av { background: color-mix(in srgb, var(--vz-accent) 18%, var(--vz-surface)); color: var(--vz-accent); }
+/* Rounded-square service photo (or letter placeholder), aligned with avatars. */
+.vz-card-thumb {
+  width: 56px; height: 56px; flex: 0 0 auto; border-radius: var(--vz-r-md); overflow: hidden;
+  background: var(--vz-surface); display: flex; align-items: center; justify-content: center;
+  color: var(--vz-text-muted); font-weight: 600; font-size: 20px;
+}
+.vz-card-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.vz-card.selected .vz-card-thumb { background: color-mix(in srgb, var(--vz-accent) 18%, var(--vz-surface)); color: var(--vz-accent); }
 .vz-card-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.vz-card-title { font-size: 16px; font-weight: 600; line-height: 1.25; }
+.vz-card-title { font-size: 16px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
 .vz-card-sub { font-size: 13px; color: var(--vz-text-muted); }
+/* Plain, clamped service description (2 lines). */
+.vz-card-desc { font-size: 12.5px; color: var(--vz-text-muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .vz-card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; font-size: 13.5px; margin-top: 2px; }
 .vz-card-meta .vz-dur { color: var(--vz-text-muted); display: inline-flex; align-items: center; gap: 4px; }
 .vz-card-meta .vz-price { font-weight: 600; }
@@ -174,6 +184,99 @@ export const css = `
   transition: background var(--vz-dur-out), border-color var(--vz-dur-out);
 }
 .vz-radio.on { background: var(--vz-accent); border-color: var(--vz-accent); }
+
+.vz-radio.square { border-radius: 8px; }
+
+/* ---- CART (multi-service) ---------------------------------------------- */
+/* A cart row is the service card plus, when the position is configured, a small
+   recap line tucked under it - so the list stays scannable while still showing
+   what each position actually is. */
+.vz-cart-row { display: flex; flex-direction: column; }
+.vz-cart-recap {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+  margin: -2px 0 0; padding: 7px 14px 9px 14px;
+  border: 1.5px solid var(--vz-accent); border-top: 0;
+  border-radius: 0 0 var(--vz-r-md) var(--vz-r-md);
+  background: var(--vz-selected);
+  font-size: 12.5px; color: var(--vz-text-muted);
+}
+.vz-cart-recap-t { flex: 1 1 auto; min-width: 0; }
+/* The card above a recap must not keep its own rounded bottom. */
+.vz-cart-row:has(.vz-cart-recap) .vz-card { border-radius: var(--vz-r-md) var(--vz-r-md) 0 0; }
+
+/* Search over the offer - only rendered for longer service lists. */
+.vz-search {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 12px;
+  padding: 0 12px; border: 1.5px solid var(--vz-border); border-radius: var(--vz-r-md);
+  background: var(--vz-input-bg);
+}
+.vz-search:focus-within { border-color: var(--vz-accent); }
+.vz-search-ico { color: var(--vz-text-muted); display: flex; flex: 0 0 auto; }
+.vz-search-input {
+  flex: 1 1 auto; min-width: 0; padding: 11px 0; border: 0; background: none;
+  color: var(--vz-text); font-family: inherit; font-size: 14px;
+}
+.vz-search-input:focus { outline: none; }
+.vz-search-input::placeholder { color: var(--vz-text-muted); }
+.vz-search-input::-webkit-search-cancel-button { -webkit-appearance: none; }
+
+/* Who performs which position, when nobody covers the whole cart. */
+.vz-perf { margin: 8px 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; }
+.vz-perf li { font-size: 12px; line-height: 1.5; }
+
+/* Chain plan under the picked slot ("10:00 Strzyżenie, 10:45 Broda"). */
+.vz-chain { margin-top: 18px; padding: 12px 14px; border-radius: var(--vz-r-md); background: var(--vz-selected); border: 1px solid color-mix(in srgb, var(--vz-accent) 30%, var(--vz-border)); }
+.vz-chain-h { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--vz-text-muted); margin-bottom: 8px; }
+.vz-chain-row { display: flex; align-items: baseline; gap: 10px; font-size: 13.5px; padding: 2px 0; }
+.vz-chain-time { font-variant-numeric: tabular-nums; font-weight: 600; flex: 0 0 auto; }
+.vz-chain-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vz-chain-dur { flex: 0 0 auto; font-size: 12px; color: var(--vz-text-muted); }
+/* A card with a recap glued to it must not scale away from it while pressed. */
+.vz-cart-row:has(.vz-cart-recap) .vz-card:active { transform: none; }
+
+.vz-slotpick { display: flex; flex-wrap: wrap; gap: 8px; }
+.vz-slotpick-b {
+  padding: 8px 12px; border-radius: var(--vz-r-pill); border: 1.5px solid var(--vz-border);
+  background: var(--vz-surface); color: var(--vz-text); font-family: inherit; font-size: 13px;
+  font-weight: 600; cursor: pointer; transition: border-color var(--vz-dur-out), background var(--vz-dur-out);
+}
+.vz-slotpick-b:hover { border-color: var(--vz-accent); }
+.vz-slotpick-b.on { border-color: var(--vz-accent); background: var(--vz-selected); color: var(--vz-accent); }
+.vz-slotpick-p { font-weight: 500; opacity: .8; }
+.vz-chain-total { margin-top: 8px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--vz-accent) 22%, var(--vz-border)); font-size: 12px; color: var(--vz-text-muted); }
+
+/* ---- CONFIGURE (variants + add-ons) ------------------------------------ */
+.vz-cfg-section { margin-bottom: 20px; }
+.vz-cfg-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; font-size: 12.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--vz-text-muted); }
+.vz-cfg-hint { font-weight: 500; letter-spacing: 0; text-transform: none; font-size: 12px; }
+.vz-opt {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  padding: 13px 14px; border: 1.5px solid var(--vz-border); border-radius: var(--vz-r-md);
+  background: var(--vz-surface-2); color: var(--vz-text); cursor: pointer; font-family: var(--vz-font);
+  transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
+}
+.vz-opt + .vz-opt { margin-top: 8px; }
+.vz-opt:not([disabled]):not(.locked):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+.vz-opt:not([disabled]):not(.locked):active { transform: scale(.99); }
+.vz-opt.on { border-color: var(--vz-accent); background: var(--vz-selected); }
+.vz-opt[disabled], .vz-opt.locked { opacity: .45; cursor: default; }
+.vz-opt-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.vz-opt-name { font-size: 14.5px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
+.vz-opt-desc { font-size: 12px; color: var(--vz-text-muted); line-height: 1.4; }
+.vz-opt-price { font-size: 13.5px; font-weight: 600; white-space: nowrap; }
+.vz-opt-tick {
+  width: 24px; height: 24px; flex: 0 0 auto; border: 2px solid var(--vz-border);
+  display: flex; align-items: center; justify-content: center; color: var(--vz-on-accent);
+  transition: background var(--vz-dur-out), border-color var(--vz-dur-out);
+}
+.vz-opt-tick.round { border-radius: 50%; }
+.vz-opt-tick.square { border-radius: 7px; }
+.vz-opt-tick.on { background: var(--vz-accent); border-color: var(--vz-accent); }
+.vz-cfg-total { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 4px; font-size: 15px; font-weight: 600; }
+
+/* Configure recap chip on the selected service (in the CTA summary). */
+.vz-cta-cfg { display: inline-flex; align-items: center; gap: 6px; margin-top: 3px; }
+.vz-cta-cfg .vz-link { font-size: 12px; }
 
 /* ---- DATE: calendar head + days --------------------------------------- */
 .vz-cal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
