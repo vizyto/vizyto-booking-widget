@@ -194,6 +194,11 @@ export function BookingFlow({
 
   // selection
   const [resource, setResource] = useState<ResChoice | null>(initialResource)
+  // The customer chose "Dowolny" at the provider step. Refining WHO takes the
+  // picked hour keeps this true: availability must stay union-wide (or the day
+  // would shrink to that one person and the refinement would be a one-way door),
+  // and the picker must stay on screen so the choice can be changed.
+  const [anyChosen, setAnyChosen] = useState(initialResource === 'any')
   // configure sub-step (variants + add-ons) for the picked service. Auto-opens
   // when the service offers choices; hidden otherwise. variantDuration = chosen
   // length preset (null = default shortest); addonIds = selected add-ons.
@@ -302,9 +307,11 @@ export function BookingFlow({
   // The cart as the API wants it: array order = chain order, each position with
   // its OWN variant length and add-ons, so availability and create always agree
   // on the chain shape.
-  const buildCartItems = (): CartItem[] => lines.map((l) => ({
+  const buildCartItems = (opts?: { forAvailability?: boolean }): CartItem[] => lines.map((l) => ({
     businessServiceId: l.service.id,
-    resourceId: itemResourceId(l.service),
+    // Availability in "Dowolny" mode ignores a slot-level refinement on purpose
+    // (parytet z availabilityItems w WEB); create uses the concrete pick.
+    resourceId: opts?.forAvailability && anyChosen ? null : itemResourceId(l.service),
     addonIds: l.addonIds.length ? l.addonIds : undefined,
     durationMinutes: l.variantDuration ?? undefined,
   }))
@@ -337,7 +344,7 @@ export function BookingFlow({
     getCartCounts(cfg, {
       startDate: days[0],
       endDate: days[days.length - 1],
-      items: buildCartItems(),
+      items: buildCartItems({ forAvailability: true }),
       bookedById: auth?.userId,
     }).then((x) => {
       if (cancelled) return
@@ -362,8 +369,8 @@ export function BookingFlow({
     setLoadingSlots(true)
     // Ask for per-slot candidates only when they can drive a real choice: one
     // position, "Dowolny", staff-realized (a pool has its own pick step).
-    const wantsCandidates = lines.length === 1 && resource === 'any' && !isUnit && !providerAuto
-    getCartSlots(cfg, { date, items: buildCartItems(), bookedById: auth?.userId, includeCandidates: wantsCandidates })
+    const wantsCandidates = lines.length === 1 && anyChosen && !isUnit && !providerAuto
+    getCartSlots(cfg, { date, items: buildCartItems({ forAvailability: true }), bookedById: auth?.userId, includeCandidates: wantsCandidates })
       .then((x) => {
         if (cancelled) return
         setSlots(x.slots)
@@ -464,10 +471,41 @@ export function BookingFlow({
       ]
     : []
 
+  // Refining "Dowolny" to a person AFTER the hour is picked: no earlier, because
+  // only then do we know who is actually free. Gated to a single staff position -
+  // one pick cannot describe a chain, and a pool has its own step.
+  const slotPicker = useMemo(() => {
+    if (lines.length !== 1 || !anyChosen || isUnit || providerAuto) return null
+    if (!slotKey || !chain?.slotCandidates) return null
+    const ids = chain.slotCandidates[slotKey]?.[0] ?? []
+    const line = lines[0]!
+    const candidates = ids
+      .map((id) => workers.find((w) => w.id === id))
+      .filter((w): w is Resource => !!w && w.isCustomerSelectable !== false)
+      .map((w) => ({
+        id: w.id,
+        name: w.name,
+        price: formatPrice2(configuredTotals(line.service, line.variantDuration, line.addonIds, w.id).price),
+      }))
+    // Nothing to choose from when everyone charges the same - the pick would add
+    // a decision without adding information.
+    const prices = new Set(candidates.map((c) => c.price))
+    if (candidates.length < 2 || prices.size < 2) return null
+    return {
+      candidates,
+      selectedId: typeof resource === 'number' ? resource : null,
+      onPick: (id: number | null) => {
+        // Keep the slot: the person came FROM this slot's free list.
+        setResource(id ?? 'any')
+        if (id != null) emit('specialist_selected', { ...resourceEvent(id), atSlot: true })
+      },
+    }
+  }, [lines, anyChosen, resource, isUnit, providerAuto, slotKey, chain, workers])
+
   async function findNextFree() {
     if (!lines.length || findingNext) return
     setFindingNext(true)
-    const hit = await getCartFirstFree(cfg, { items: buildCartItems(), from: date || undefined, bookedById: auth?.userId })
+    const hit = await getCartFirstFree(cfg, { items: buildCartItems({ forAvailability: true }), from: date || undefined, bookedById: auth?.userId })
     setFindingNext(false)
     if (hit) {
       setDate(hit.date)
@@ -780,6 +818,7 @@ export function BookingFlow({
   function pickResource(r: ResChoice) {
     if (r !== resource) {
       setResource(r)
+      setAnyChosen(r === 'any')
       setDate('')
       setSlotKey('')
       emit('specialist_selected', resourceEvent(r))
@@ -822,6 +861,7 @@ export function BookingFlow({
         // No pick step: providerSelection 'auto', or 0-1 selectable providers.
         const r: ResChoice = !providerAuto && selectableProviders.length === 1 ? selectableProviders[0].id : 'any'
         setResource(r)
+        setAnyChosen(r === 'any')
         setSelStep(2)
         emit('specialist_selected', { ...resourceEvent(r), auto: true })
       } else setSelStep(1)
@@ -1032,6 +1072,7 @@ export function BookingFlow({
   function restart() {
     setLines([])
     setResource(null)
+    setAnyChosen(false)
     setConfiguringId(null)
     setCartNotice('')
     setDate('')
@@ -1197,6 +1238,7 @@ export function BookingFlow({
             findingNext={findingNext}
             noneAhead={noneAhead}
             chain={chainPlan}
+            slotPicker={slotPicker}
           />
         )}
 

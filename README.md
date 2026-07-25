@@ -81,7 +81,15 @@ Widget korzysta z (wszystkie pod `/api/public`, nagłówek `x-vizyto-site-key`,
 zapisy dodatkowo `Authorization: Bearer <token>`):
 
 - `GET  /businesses/:id` — dane biznesu (usługi, zasoby).
-- `GET  /businesses/:id/appointments/availability-counts` i `/availability`.
+- `GET  /businesses/:id/service-categories` — grupowanie usług w zakładki.
+- `POST /businesses/:id/appointments/availability/cart` — wolne początki łańcucha
+  dla koszyka (`items[]`); zwraca `slots`, `itemTimes` (rozpiska pozycji) i
+  `totalMinutes`. Z `includeCandidates: true` dokłada `slotCandidates` — kto jest
+  wolny w danym slocie (wybór specjalisty po wybraniu godziny).
+- `POST /businesses/:id/appointments/availability/cart/counts` — pigułki dni.
+- `POST /businesses/:id/appointments/availability/cart/first-free` — najbliższy
+  wolny termin (serwer przeczesuje 60 dni).
+- `POST /businesses/:id/waitlist` i `GET .../waitlist/check` — lista oczekujących.
 - `POST /guest/otp/send` `{businessId,phone}` → `{expiresIn,maskedPhone}` — wysyła kod SMS.
 - `POST /guest/otp/verify` `{businessId,firstName,lastName,email,phone,otp}` → `{userId,token}` (gość z `phoneVerified`), `409 EMAIL_IN_USE`, `400` przy złym/wygasłym kodzie.
 - `POST /guest/login` `{businessId,email,password}` → `{userId,token}` (token w body — cookies są blokowane cross-origin).
@@ -89,6 +97,9 @@ zapisy dodatkowo `Authorization: Bearer <token>`):
 - `GET  /auth/embed/start?provider&businessId&origin&key` — start OAuth w popupie (302 do dostawcy).
 - `GET  /auth/embed/callback` — po OAuth odsyła `{token,userId}` przez `postMessage` do dozwolonego originu.
 - `POST /businesses/:id/appointments` — tworzy wizytę (i wysyła SMS-potwierdzenie).
+  Kontrakt koszyka: `items[]` w kolejności wykonania, każda pozycja z własnym
+  `resourceId` (`null` = Dowolny), `addonIds` i `durationMinutes`. Nagłówek
+  `Idempotency-Key` chroni przed dublem przy ponowieniu.
 
 Backend tych endpointów żyje w monorepo Vizyto:
 `apps/api/src/modules/auth/routes/public-guest.ts` (reużywa istniejącej infry
@@ -173,7 +184,8 @@ kroku. Lejek:
 |---|---|---|
 | `ready` | biznes wczytany, widget gotowy | `mode` |
 | `open` / `close` | otwarcie/zamknięcie modala (launcher) | `source` (`launcher`/`api`) |
-| `service_selected` | wybór usługi | `serviceId`, `serviceName`, `price` (grosze), `durationMin` |
+| `service_selected` | dodanie usługi do koszyka | `serviceId`, `serviceName`, `price` (grosze), `durationMin`, `itemCount` |
+| `service_removed` | usunięcie usługi z koszyka | `serviceId`, `serviceName`, `itemCount` |
 | `specialist_selected` | wybór specjalisty | `resourceId` (`null` = dowolny), `resourceName` |
 | `datetime_selected` | wybór terminu | `date`, `time`, `slotKey`, `startDate` |
 | `details_started` | wejście w krok danych | kontekst rezerwacji |
@@ -187,6 +199,12 @@ kroku. Lejek:
 
 > Telefon i e-mail nie trafiają do eventów (tylko `maskedPhone`) — żadnego PII.
 
+**Koszyk a starsze integracje.** Wizyta może teraz łączyć kilka usług. Eventy od
+`details_started` w dół zachowują dotychczasowe pola `serviceId`/`serviceName`
+(wskazują PIERWSZĄ pozycję), więc istniejące konfiguracje GA4/GTM działają bez
+zmian, i dokładają obok `serviceIds`, `serviceNames` oraz `itemCount`. `value` w
+`booking_completed` to suma całego koszyka.
+
 ### Tryb testowy (bez backendu)
 
 Ustaw `data-vizyto-api="mock"` w `index.html`. Wbudowany mock obsługuje cały
@@ -195,6 +213,9 @@ przepływ offline:
 - kod SMS to zawsze **1234** (logowany też w konsoli),
 - e-mail **taken@example.com** → wymusza logowanie (`EMAIL_IN_USE`),
 - termin **15:55** → symuluje zajęty slot (recovery „wybierz inny termin”),
+- mock respektuje koszyk: dłuższy łańcuch skraca dzień, zwraca `itemTimes` i
+  `slotCandidates`, więc multi-usługę i wybór specjalisty do slotu da się
+  przeklikać offline,
 - logowanie: `taken@example.com` + dowolne hasło → sukces.
 
 ### Test na prawdziwym API

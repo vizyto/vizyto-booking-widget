@@ -28,6 +28,7 @@ export function StepDateTime({
   findingNext = false,
   noneAhead = false,
   chain,
+  slotPicker,
 }: {
   days: string[]
   counts: DayCounts
@@ -48,6 +49,12 @@ export function StepDateTime({
   noneAhead?: boolean
   /** Chain plan for the picked slot - only meaningful for a multi-position cart. */
   chain?: { rows: { time: string; name: string; duration: string }[]; total: string } | null
+  /** Who is free at the picked slot, when refining "Dowolny" makes sense. */
+  slotPicker?: {
+    candidates: { id: number; name: string; price: string }[]
+    selectedId: number | null
+    onPick: (id: number | null) => void
+  } | null
 }) {
   const [view, setView] = useState<'week' | 'month'>('week')
   const [perPage, setPerPage] = useState(7)
@@ -227,6 +234,32 @@ export function StepDateTime({
               </div>
             </div>
           ))}
+          {/* "Dowolny" + a picked hour: name the exact price by naming the person.
+              The list is who the ENGINE reported free at that slot. */}
+          {slotPicker && slotPicker.candidates.length > 1 && (
+            <div class="vz-chain">
+              <div class="vz-chain-h">Kto wykona usługę</div>
+              <div class="vz-slotpick">
+                <button
+                  type="button"
+                  class={`vz-slotpick-b${slotPicker.selectedId == null ? ' on' : ''}`}
+                  onClick={() => slotPicker.onPick(null)}
+                >
+                  Dowolny
+                </button>
+                {slotPicker.candidates.map((c) => (
+                  <button
+                    type="button"
+                    class={`vz-slotpick-b${slotPicker.selectedId === c.id ? ' on' : ''}`}
+                    onClick={() => slotPicker.onPick(c.id)}
+                  >
+                    {c.name} <span class="vz-slotpick-p">{c.price}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* What the visit will actually look like, once a start is picked. */}
           {chain && chain.rows.length > 1 && (
             <div class="vz-chain">

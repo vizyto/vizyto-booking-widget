@@ -231,6 +231,15 @@ export const css = `
 .vz-chain-time { font-variant-numeric: tabular-nums; font-weight: 600; flex: 0 0 auto; }
 .vz-chain-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vz-chain-dur { flex: 0 0 auto; font-size: 12px; color: var(--vz-text-muted); }
+.vz-slotpick { display: flex; flex-wrap: wrap; gap: 8px; }
+.vz-slotpick-b {
+  padding: 8px 12px; border-radius: var(--vz-r-pill); border: 1.5px solid var(--vz-border);
+  background: var(--vz-surface); color: var(--vz-text); font-family: inherit; font-size: 13px;
+  font-weight: 600; cursor: pointer; transition: border-color var(--vz-dur-out), background var(--vz-dur-out);
+}
+.vz-slotpick-b:hover { border-color: var(--vz-accent); }
+.vz-slotpick-b.on { border-color: var(--vz-accent); background: var(--vz-selected); color: var(--vz-accent); }
+.vz-slotpick-p { font-weight: 500; opacity: .8; }
 .vz-chain-total { margin-top: 8px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--vz-accent) 22%, var(--vz-border)); font-size: 12px; color: var(--vz-text-muted); }
 
 /* ---- CONFIGURE (variants + add-ons) ------------------------------------ */
