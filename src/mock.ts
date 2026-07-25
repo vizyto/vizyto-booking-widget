@@ -86,6 +86,28 @@ const BUSINESS: Business = {
       id: 4, name: 'Loża VIP', description: 'Prywatna loża z obsługą', price: 12000, duration: 60,
       bookingType: 'single', fulfillmentMode: 'unit', providerSelection: 'customer', primaryObjectCategoryTag: 'loza',
     },
+    // --- Services 5-8 exist so the offline harness can reach cases the first four
+    // cannot: a DISJOINT pair (5 + 6 share no performer -> "nikt nie wykonuje
+    // wszystkiego"), a second pool service (7, same 'loza' tag -> the object pick
+    // must survive adding it), and enough rows to render the service search.
+    {
+      id: 5, name: 'Golenie brzytwą', description: 'Tylko u Marka', price: 8000, duration: 30,
+      bookingType: 'single', fulfillmentMode: 'staff', providerSelection: 'customer',
+      resourceServices: [{ id: 501, resourceId: 11, businessServiceId: 5, effectivePrice: 8000, effectiveDuration: 30, isActive: true }],
+    },
+    {
+      id: 6, name: 'Koloryzacja', description: 'Tylko u Oli', price: 15000, duration: 90,
+      bookingType: 'single', fulfillmentMode: 'staff', providerSelection: 'customer',
+      resourceServices: [{ id: 601, resourceId: 13, businessServiceId: 6, effectivePrice: 15000, effectiveDuration: 90, isActive: true }],
+    },
+    {
+      id: 7, name: 'Loża - przedłużenie', description: 'Dodatkowa godzina w loży', price: 9000, duration: 60,
+      bookingType: 'single', fulfillmentMode: 'unit', providerSelection: 'customer', primaryObjectCategoryTag: 'loza',
+    },
+    {
+      id: 8, name: 'Mycie i stylizacja', description: 'Krótka wizyta', price: 4000, duration: 20,
+      bookingType: 'single', fulfillmentMode: 'staff', providerSelection: 'customer',
+    },
   ],
   resources: [
     { id: 11, type: 'worker', name: 'Marek', position: 'Barber', image: null, isBookable: true, isCustomerSelectable: true, categoryTag: null },
@@ -110,8 +132,8 @@ export async function fetchBusiness(): Promise<Business> {
 export async function getServiceCategories(): Promise<ServiceCategory[]> {
   await wait(120)
   return [
-    { id: 1, name: 'Włosy', serviceIds: [1] },
-    { id: 2, name: 'Broda i pakiety', serviceIds: [2, 3] },
+    { id: 1, name: 'Włosy', serviceIds: [1, 6, 8] },
+    { id: 2, name: 'Broda i pakiety', serviceIds: [2, 3, 5] },
   ]
 }
 
