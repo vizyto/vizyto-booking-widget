@@ -133,7 +133,14 @@ export function BookingFlow({
   emit?: EmitFn
 }) {
   const services = useMemo(() => business.services.filter((s) => s.bookingType !== 'group'), [business])
-  const workers = useMemo(() => business.resources.filter((r) => r.type === 'worker'), [business])
+  // isCustomerSelectable is what the business uses to keep somebody off the
+  // public picker. The per-service helpers honour it, so the cart-wide list has
+  // to as well - otherwise the same person is offered on one screen and hidden
+  // on the next.
+  const workers = useMemo(
+    () => business.resources.filter((r) => r.type === 'worker' && (r as any).isCustomerSelectable !== false),
+    [business],
+  )
 
   // selection (declared here because offeringWorkers below depends on the cart;
   // the rest of the selection state follows further down).
@@ -507,6 +514,10 @@ export function BookingFlow({
   useEffect(() => {
     if (!lines.length || !date || loadingSlots || slots.length > 0 || anyChosen || !anyPinned) {
       setEmptyProbe(null)
+      // Leaving the day drops its verdict, so the latch has to drop with it -
+      // otherwise coming back to the same empty day would show the neutral
+      // "no slots" state and never re-run the diagnosis.
+      probedFor.current = ''
       return
     }
     // The same day can report "empty" twice in a row (stale slots while the next
@@ -1043,6 +1054,11 @@ export function BookingFlow({
   function pickItemResource(serviceId: number, id: number | null) {
     const next = setItemResource(lines, serviceId, id)
     setLines(next)
+    // Answering per position IS the per-position mode. Editing from the chip on
+    // the time step used to leave eachMode off, so going back to the specialist
+    // step showed the cart-wide list with nothing selected and "Dalej" blocked -
+    // the mixed answers were silently unreachable.
+    if (getStaffItems(next).length >= 2) setEachMode(true)
     // Union-wide availability only survives while nothing at all is pinned -
     // otherwise the calendar would answer a question nobody asked.
     setAnyChosen(getStaffItems(next).every((l) => l.resourceId == null))
