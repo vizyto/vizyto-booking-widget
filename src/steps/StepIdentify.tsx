@@ -1,6 +1,8 @@
 import { useState } from 'preact/hooks'
+import type { BookingPolicy } from '../api'
 import { isLikelyPhone } from '../data/countries'
 import { StepHeader } from '../ui/StepHeader'
+import { Notice } from '../ui/Notice'
 import { SummaryCard, type SummaryRow } from '../ui/SummaryCard'
 import { Field } from '../ui/Field'
 import { PhoneField } from '../ui/PhoneField'
@@ -11,6 +13,32 @@ import { Shield, Check, ChevronRight, Mail, VizytoLogo } from '../ui/icons'
 export type Contact = { firstName: string; lastName: string; phone: string; email: string }
 
 const emailOk = (e: string) => /.+@.+\..+/.test(e)
+
+/**
+ * The cancellation window, said in one sentence the customer can act on.
+ *
+ * Word-for-word port of formatCancellationPolicy from
+ * packages/shared/src/utils/booking-provider.ts: the same business, read on the
+ * widget and in the app, must promise the same thing. The earlier wording here
+ * also said "bezpłatne", which the business never configured.
+ */
+function cancellationText(p: BookingPolicy): string {
+  if (!p.allowCancellation) {
+    return 'Rezerwacji nie można odwołać online. Skontaktuj się z nami, jeśli coś się zmieni.'
+  }
+  const hours = p.cancellationHoursBefore
+  if (!hours || hours <= 0) return 'Rezerwację możesz odwołać do początku wizyty.'
+  if (hours % 24 === 0) {
+    const days = hours / 24
+    return `Rezerwację możesz odwołać najpóźniej ${days} ${days === 1 ? 'dzień' : 'dni'} przed wizytą.`
+  }
+  const rest = hours % 10
+  const teens = hours % 100
+  const noun = hours === 1 ? 'godzinę'
+    : (rest >= 2 && rest <= 4 && !(teens >= 12 && teens <= 14)) ? 'godziny'
+      : 'godzin'
+  return `Rezerwację możesz odwołać najpóźniej ${hours} ${noun} przed wizytą.`
+}
 
 export function StepIdentify({
   summary,
@@ -24,6 +52,7 @@ export function StepIdentify({
   onGoLogin,
   sending,
   error,
+  policy,
   turnstileKey,
   turnstileToken,
   onTurnstile,
@@ -34,6 +63,8 @@ export function StepIdentify({
   // Optional appointment note ("Notatki") - only rendered when onNotes is passed.
   notes?: string
   onNotes?: (v: string) => void
+  /** Booking terms to read before confirming; omitted when there is nothing to confirm. */
+  policy?: BookingPolicy
   emailExists: boolean
   onCheckEmail: () => void
   onSendCode: (normalizedPhone: string) => void
@@ -117,6 +148,19 @@ export function StepIdentify({
             placeholder="Dodatkowe informacje dla specjalisty"
           />
         </label>
+      )}
+
+      {/* Terms right above the button that books - the last thing read before
+          the reservation is made, not something to hunt for afterwards. */}
+      {policy && (
+        <div class="vz-terms">
+          <Notice title="Warunki odwoływania rezerwacji" tone="plain">{cancellationText(policy)}</Notice>
+          {policy.importantInfo.trim() && (
+            <Notice title="Ważne informacje" tone="plain">
+              <span class="vz-notice-pre">{policy.importantInfo.trim()}</span>
+            </Notice>
+          )}
+        </div>
       )}
 
       {error && <div class="vz-err" role="alert">{error}</div>}

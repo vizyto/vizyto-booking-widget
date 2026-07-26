@@ -224,6 +224,57 @@ export const css = `
 .vz-perf { margin: 8px 0 0; padding-left: 16px; display: flex; flex-direction: column; gap: 3px; }
 .vz-perf li { font-size: 12px; line-height: 1.5; }
 
+/* ---- PROVIDER ASSIGNMENTS (kto wykona którą usługę) --------------------- */
+/* One row per cart position: the service, and a chip with its own answer that
+   opens the list scoped to that service. */
+.vz-assign { display: grid; gap: 10px; margin: 2px 0 2px; }
+.vz-assign-row { padding: 12px 14px; border: 1px solid var(--vz-border); border-radius: var(--vz-r-md); background: var(--vz-surface); }
+.vz-assign-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.vz-assign-name { font-size: 14px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.vz-assign-dur { flex: 0 0 auto; font-size: 12px; color: var(--vz-text-muted); }
+.vz-assign-opts { margin-top: 10px; }
+
+.vz-chip {
+  display: inline-flex; align-items: center; gap: 8px; margin-top: 10px;
+  padding: 5px 12px 5px 5px; border: 1.5px solid var(--vz-border); border-radius: var(--vz-r-pill);
+  background: var(--vz-surface); color: var(--vz-text); font-family: inherit; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
+}
+.vz-chip:not([disabled]):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+.vz-chip:not([disabled]):active { transform: scale(.98); }
+.vz-chip[disabled] { cursor: default; opacity: .7; }
+.vz-chip.on { border-color: var(--vz-accent); background: var(--vz-selected); }
+.vz-chip-av {
+  width: 28px; height: 28px; flex: 0 0 auto; border-radius: 50%; overflow: hidden;
+  background: var(--vz-surface-2); color: var(--vz-text-muted);
+  display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600;
+}
+.vz-chip-av img { width: 100%; height: 100%; object-fit: cover; }
+.vz-chip-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vz-chip-cv { flex: 0 0 auto; color: var(--vz-text-muted); transition: transform var(--vz-dur-out); }
+.vz-chip.on .vz-chip-cv, .vz-who-chip.on .vz-chip-cv { transform: rotate(180deg); }
+
+/* Overlapping avatars of everybody pinned across the cart. */
+.vz-avstack { display: inline-flex; align-items: center; flex: 0 0 auto; }
+.vz-avstack .vz-card-av {
+  width: 28px; height: 28px; font-size: 12px; border: 2px solid var(--vz-surface);
+}
+.vz-avstack .vz-card-av + .vz-card-av { margin-left: -10px; }
+
+/* Summary chip above the calendar - who the hours belong to. */
+.vz-who { margin-bottom: 14px; }
+.vz-who-chip {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 7px 12px 7px 7px; border: 1.5px solid var(--vz-border); border-radius: var(--vz-r-pill);
+  background: var(--vz-surface); color: var(--vz-text); font-family: inherit; font-size: 13.5px; font-weight: 500;
+  cursor: pointer; text-align: left; transition: border-color var(--vz-dur-out), background var(--vz-dur-out);
+}
+.vz-who-chip:not([disabled]):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+.vz-who-chip[disabled] { cursor: default; }
+.vz-who-chip.on { border-color: var(--vz-accent); background: var(--vz-selected); }
+.vz-who-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vz-who .vz-assign { margin-top: 10px; }
+
 /* Chain plan under the picked slot ("10:00 Strzyżenie, 10:45 Broda"). */
 .vz-chain { margin-top: 18px; padding: 12px 14px; border-radius: var(--vz-r-md); background: var(--vz-selected); border: 1px solid color-mix(in srgb, var(--vz-accent) 30%, var(--vz-border)); }
 .vz-chain-h { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--vz-text-muted); margin-bottom: 8px; }
@@ -524,6 +575,13 @@ a.vz-btn { text-decoration: none; }
 .vz-notice-ico { color: var(--vz-warning); flex: 0 0 auto; margin-top: 1px; display: flex; }
 .vz-notice-title { font-size: 13px; font-weight: 600; color: var(--vz-text); }
 .vz-notice-body { font-size: 12px; color: var(--vz-text-muted); margin-top: 3px; line-height: 1.5; }
+/* Neutral variant: booking terms are not a warning. */
+.vz-notice.plain { background: var(--vz-surface-2); border-color: var(--vz-border); }
+.vz-notice.plain .vz-notice-ico { color: var(--vz-text-muted); }
+/* Business-authored text: plain, so its own line breaks are all the formatting. */
+.vz-notice-pre { white-space: pre-line; overflow-wrap: anywhere; }
+.vz-terms { display: grid; gap: 10px; margin-top: 16px; }
+.vz-terms .vz-notice { margin: 0; }
 
 /* ---- NOTES TEXTAREA ---------------------------------------------------- */
 .vz-notes { display: block; margin-top: 14px; }

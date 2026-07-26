@@ -80,7 +80,9 @@ Klucz musi mieć scope `book`.
 Widget korzysta z (wszystkie pod `/api/public`, nagłówek `x-vizyto-site-key`,
 zapisy dodatkowo `Authorization: Bearer <token>`):
 
-- `GET  /businesses/:id` — dane biznesu (usługi, zasoby).
+- `GET  /businesses/:id` — dane biznesu (usługi, zasoby, `bookingPolicy`:
+  okno bezpłatnego odwołania + „Ważne informacje” pokazywane przed wysłaniem
+  formularza).
 - `GET  /businesses/:id/service-categories` - grupowanie usług w zakładki.
 - `POST /businesses/:id/appointments/availability/cart` - wolne początki łańcucha
   dla koszyka (`items[]`); zwraca `slots`, `itemTimes` (rozpiska pozycji) i
@@ -89,7 +91,8 @@ zapisy dodatkowo `Authorization: Bearer <token>`):
 - `POST /businesses/:id/appointments/availability/cart/counts` - pigułki dni.
 - `POST /businesses/:id/appointments/availability/cart/first-free` - najbliższy
   wolny termin (serwer przeczesuje 60 dni).
-- `POST /businesses/:id/waitlist` i `GET .../waitlist/check` - lista oczekujących.
+- `POST /businesses/:id/waitlist` i `GET .../waitlist/check` - lista oczekujących
+  (widget wysyła `source: 'web'`).
 - `POST /guest/otp/send` `{businessId,phone}` → `{expiresIn,maskedPhone}` — wysyła kod SMS.
 - `POST /guest/otp/verify` `{businessId,firstName,lastName,email,phone,otp}` → `{userId,token}` (gość z `phoneVerified`), `409 EMAIL_IN_USE`, `400` przy złym/wygasłym kodzie.
 - `POST /guest/login` `{businessId,email,password}` → `{userId,token}` (token w body — cookies są blokowane cross-origin).
@@ -186,7 +189,7 @@ kroku. Lejek:
 | `open` / `close` | otwarcie/zamknięcie modala (launcher) | `source` (`launcher`/`api`) |
 | `service_selected` | dodanie usługi do koszyka | `serviceId`, `serviceName`, `price` (grosze), `durationMin`, `itemCount` |
 | `service_removed` | usunięcie usługi z koszyka | `serviceId`, `serviceName`, `itemCount` |
-| `specialist_selected` | wybór specjalisty | `resourceId` (`null` = dowolny), `resourceName` |
+| `specialist_selected` | wybór specjalisty | `resourceId` (`null` = bez preferencji), `resourceName`; przy wyborze per usługa dodatkowo `serviceId` i `perService: true` |
 | `datetime_selected` | wybór terminu | `date`, `time`, `slotKey`, `startDate` |
 | `details_started` | wejście w krok danych | kontekst rezerwacji |
 | `otp_sent` | wysłany kod SMS | `maskedPhone`, `resend` |
@@ -216,6 +219,8 @@ przepływ offline:
 - mock respektuje koszyk: dłuższy łańcuch skraca dzień, zwraca `itemTimes` i
   `slotCandidates`, więc multi-usługę i wybór specjalisty do slotu da się
   przeklikać offline,
+- usługi **Golenie brzytwą** + **Koloryzacja** nie mają wspólnego wykonawcy —
+  para pokazuje tryb „wybierz specjalistę do każdej usługi”,
 - logowanie: `taken@example.com` + dowolne hasło → sukces.
 
 ### Test na prawdziwym API

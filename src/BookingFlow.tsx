@@ -30,17 +30,31 @@ import {
   workerOffersService,
 } from './api'
 import { dayMonth, nextDays } from './dates'
+import {
+  canPickPerItem,
+  clearStaffPins,
+  dropInvalidPins,
+  enterPerItemMode,
+  getItemProviderMode,
+  getPinnedResourceIds,
+  getResourcesForService,
+  getStaffItems,
+  setAllItemResources,
+  setItemResource,
+} from './providerMode'
 import { noopEmit, type EmitFn } from './events'
 import { ProgressBar } from './ui/ProgressBar'
 import { Spinner } from './ui/Spinner'
 import { Powered } from './ui/Powered'
 import { ArrowLeft, ArrowRight, Close } from './ui/icons'
 import { SummaryCard, type SummaryRow } from './ui/SummaryCard'
+import { AvatarStack } from './ui/AvatarStack'
 import { Button } from './ui/Button'
 import { StepService } from './steps/StepService'
 import { StepConfigure } from './steps/StepConfigure'
 import { StepResource } from './steps/StepResource'
 import { StepDateTime } from './steps/StepDateTime'
+import { ItemProviders } from './steps/ItemProviders'
 import { StepIdentify, type Contact } from './steps/StepIdentify'
 import { StepWaitlist, type WaitlistPrefs } from './steps/StepWaitlist'
 import { StepLogin } from './steps/StepLogin'
@@ -61,23 +75,36 @@ const addDays = (ymd: string, n: number) => {
 
 type ResChoice = number | 'any'
 
-// One cart position as the widget holds it: the service plus ITS OWN variant and
-// add-ons. Keeping the configuration on the line (instead of in flow-level state)
-// is what makes a second service possible without the two overwriting each other.
+// One cart position as the widget holds it: the service plus ITS OWN variant,
+// add-ons and provider. Keeping all of it on the line (instead of in flow-level
+// state) is what makes a second service possible without the two overwriting
+// each other - and what lets each service have its own specialist.
 type CartLine = {
   service: Service
   /** Chosen length preset; null = the service's default (shortest) variant. */
   variantDuration: number | null
   addonIds: number[]
+  /** undefined = nothing chosen yet, null = "bez preferencji", number = pinned. */
+  resourceId?: number | null
 }
 
 // A fresh line defaults to the variant the API would pick on its own, so the
 // price shown before any configuring matches what gets booked.
-const newLine = (service: Service): CartLine => ({
+const newLine = (service: Service, resourceId?: number | null): CartLine => ({
   service,
   variantDuration: resolveVariant(service, null)?.durationMinutes ?? null,
   addonIds: [],
+  resourceId,
 })
+
+/** "1 pozycja / 2 pozycje / 5 pozycji" - the sticky bar counts what is in the cart. */
+const positionsLabel = (n: number) => {
+  const last = n % 10
+  const teens = n % 100
+  if (n === 1) return '1 pozycja'
+  if (last >= 2 && last <= 4 && (teens < 12 || teens > 14)) return `${n} pozycje`
+  return `${n} pozycji`
+}
 
 /** Hard cap mirroring the API's MAX_CART_ITEMS - refuse the 9th politely. */
 const MAX_CART_ITEMS = 8
@@ -106,16 +133,56 @@ export function BookingFlow({
   emit?: EmitFn
 }) {
   const services = useMemo(() => business.services.filter((s) => s.bookingType !== 'group'), [business])
-  const workers = useMemo(() => business.resources.filter((r) => r.type === 'worker'), [business])
+  // isCustomerSelectable is what the business uses to keep somebody off the
+  // public picker. The per-service helpers honour it, so the cart-wide list has
+  // to as well - otherwise the same person is offered on one screen and hidden
+  // on the next.
+  const workers = useMemo(
+    () => business.resources.filter((r) => r.type === 'worker' && (r as any).isCustomerSelectable !== false),
+    [business],
+  )
 
   // selection (declared here because offeringWorkers below depends on the cart;
   // the rest of the selection state follows further down).
   const initialServiceRef = useMemo(() => services.find((s) => s.id === prefill?.serviceId) ?? null, [services, prefill?.serviceId])
+
+  // Seed the provider of a PREFILLED service (a tapped barber CTA), or settle it
+  // outright when there is nothing to ask: undefined = the question stands and
+  // the pick step has to be shown, null = "bez preferencji", number = pinned.
+  const initialPick = useMemo<number | null | undefined>(() => {
+    const svc = initialServiceRef
+    if (!svc) return undefined
+    // 'auto' wins over the prefill: the business decided the server assigns, so a
+    // pinned worker from open({resourceId}) must never reach the payload.
+    if (getItemProviderMode(svc) === 'auto') return null
+    if (getItemProviderMode(svc) === 'unit') {
+      const tag = ((svc.primaryObjectCategoryTag ?? '') as string).trim() || null
+      const units = tag
+        ? business.resources.filter(
+            (r) =>
+              r.type === 'object' &&
+              r.isBookable !== false &&
+              r.isCustomerSelectable !== false &&
+              (((r.categoryTag ?? '') as string).trim() || null) === tag,
+          )
+        : []
+      if (prefill?.resourceId && units.some((u) => u.id === prefill.resourceId)) return prefill.resourceId
+      if (units.length === 0) return null
+      if (units.length === 1) return units[0]!.id
+      return undefined
+    }
+    const candidates = getResourcesForService(workers, svc)
+    if (prefill?.resourceId && candidates.some((w) => w.id === prefill.resourceId)) return prefill.resourceId
+    if (candidates.length === 0) return null
+    if (candidates.length === 1) return candidates[0]!.id
+    return undefined
+  }, [initialServiceRef, workers, business, prefill?.resourceId])
+
   // The CART: array order = chain order (the engine books positions back to back).
-  // Variant + add-ons live PER LINE, so configuring one service never touches
-  // another. v1 keeps ONE provider for the whole cart (parytet z kreatorem WEB).
+  // Variant, add-ons AND the provider live PER LINE - that is the whole point of
+  // the per-service mode, and the API has always accepted resourceId per item.
   const [lines, setLines] = useState<CartLine[]>(
-    initialServiceRef ? [newLine(initialServiceRef)] : [],
+    initialServiceRef ? [newLine(initialServiceRef, initialPick)] : [],
   )
   const lineOf = (serviceId: number) => lines.find((l) => l.service.id === serviceId)
   const cartServices = useMemo(() => lines.map((l) => l.service), [lines])
@@ -176,8 +243,14 @@ export function BookingFlow({
   // splitting the visit usually opens up more hours than blocking the only person
   // who does everything, and with 0 shared workers it is the ONLY way. Skipping
   // the step hid that and made the "kto co wykona" explanation dead code.
+  // Per-position mode is worth offering only when it would give a different
+  // answer than "one person for everything" - at least two staff positions, at
+  // least one with a real choice.
+  const canPerItem = useMemo(() => !isUnit && canPickPerItem(lines, workers), [isUnit, lines, workers])
+
   const hasResourceStep = !providerAuto && (
     selectableProviders.length > 1
+    || canPerItem
     || (lines.length > 1 && !isUnit && workers.length > 1)
   )
   const providerStepName = isUnit ? 'WYBÓR ZASOBU' : 'WYBÓR SPECJALISTY'
@@ -186,27 +259,16 @@ export function BookingFlow({
     : ['WYBÓR USŁUGI', 'WYBÓR TERMINU', 'TWOJE DANE']
   const totalSteps = stepNames.length
 
-  // Seed the provider from prefill (a tapped barber CTA), or auto-pick when the
-  // chosen service has 0-1 selectable providers or assigns automatically.
-  const initialResource = useMemo<ResChoice | null>(() => {
-    // 'auto' wins over the prefill: the business decided the server assigns, so a
-    // pinned worker from open({resourceId}) must never reach the payload. Checking
-    // the prefill first also skipped the step (initialResource != null -> selStep 2),
-    // so dalej()'s normalizer never ran and the pin shipped to counts/slots/create.
-    if (lines.length && providerAuto) return 'any'
-    if (prefill?.resourceId && selectableProviders.some((w) => w.id === prefill.resourceId)) return prefill.resourceId
-    if (lines.length && selectableProviders.length === 0) return 'any'
-    if (lines.length && selectableProviders.length === 1) return selectableProviders[0].id
-    return null
-  }, [selectableProviders, providerAuto, prefill?.resourceId, lines.length])
-
   // selection
-  const [resource, setResource] = useState<ResChoice | null>(initialResource)
-  // The customer chose "Dowolny" at the provider step. Refining WHO takes the
-  // picked hour keeps this true: availability must stay union-wide (or the day
-  // would shrink to that one person and the refinement would be a one-way door),
-  // and the picker must stay on screen so the choice can be changed.
-  const [anyChosen, setAnyChosen] = useState(initialResource === 'any')
+  // Per-position mode CANNOT be derived from the cart: a cart where every
+  // position is still "bez preferencji" looks exactly like "Bez preferencji" for
+  // everything. So the mode the customer picked is carried explicitly.
+  const [eachMode, setEachMode] = useState(false)
+  // The customer chose "Bez preferencji" for the whole cart. Refining WHO takes
+  // the picked hour keeps this true: availability must stay union-wide (or the
+  // day would shrink to that one person and the refinement would be a one-way
+  // door), and the picker must stay on screen so the choice can be changed.
+  const [anyChosen, setAnyChosen] = useState(initialPick === null)
   // configure sub-step (variants + add-ons) for the picked service. Auto-opens
   // when the service offers choices; hidden otherwise. variantDuration = chosen
   // length preset (null = default shortest); addonIds = selected add-ons.
@@ -239,12 +301,16 @@ export function BookingFlow({
   const [selStep, setSelStep] = useState(
     initialServiceRef && serviceHasOptions(initialServiceRef)
       ? 0
-      : initialServiceRef && initialResource != null
+      : initialServiceRef && initialPick !== undefined
         ? 2
         : initialServiceRef
           ? 1
           : 0,
   )
+  // Second availability answer for an empty day, asked with every pin removed:
+  // 'others' = the chosen people are busy but somebody else is free, 'none' =
+  // the day itself is closed/full. Without it an empty day cannot say WHY.
+  const [emptyProbe, setEmptyProbe] = useState<'others' | 'none' | null>(null)
 
   // flow
   const [phase, setPhase] = useState<Phase>('select')
@@ -296,51 +362,89 @@ export function BookingFlow({
   const [bookingErr, setBookingErr] = useState('')
   const booking = useRef(false)
   const bodyRef = useRef<HTMLDivElement>(null)
+  const probedFor = useRef('')
 
-  const resourceId = resource === 'any' || resource == null ? undefined : resource
+  // The CART-WIDE answer, read back from the positions: 'any' when every one of
+  // them is explicitly "bez preferencji", an id when they all carry the SAME
+  // provider, null when the question is still open (or the answers differ, which
+  // only per-position mode can produce).
+  const cartResource: ResChoice | null = useMemo(() => {
+    if (!lines.length) return null
+    const first = lines[0]!.resourceId
+    if (first === undefined) return null
+    if (!lines.every((l) => l.resourceId === first)) return null
+    return first === null ? 'any' : first
+  }, [lines])
+  /** The worker pinned to ONE position - the price/duration this line is booked at. */
+  const lineWorker = (l: CartLine): number | undefined =>
+    getItemProviderMode(l.service) === 'staff' && typeof l.resourceId === 'number' ? l.resourceId : undefined
 
-  // Which resourceId ONE position may carry. The cart-wide pick is a WORKER, so
-  // it must not land on a pool position ('unit' - the engine wants an object
-  // there and answers with zero slots for the whole day) nor on a position the
-  // business assigns itself ('auto'). Same rule as WEB's resolveItemResourceId.
-  const itemResourceId = (svc: Service): number | null => {
-    if (svc.providerSelection === 'auto') return null
-    if (svc.fulfillmentMode === 'unit') {
-      const picked = typeof resource === 'number'
-        ? business.resources.find((r) => r.id === resource)
-        : undefined
+  // Which resourceId ONE position may carry. A cart-wide pick is a WORKER, so it
+  // must not land on a pool position ('unit' - the engine wants an object there
+  // and answers with zero slots for the whole day) nor on a position the business
+  // assigns itself ('auto'). Same rule as WEB's resolveItemResourceId.
+  const itemResourceId = (l: CartLine): number | null => {
+    const kind = getItemProviderMode(l.service)
+    if (kind === 'auto') return null
+    if (kind === 'unit') {
+      const picked = typeof l.resourceId === 'number' ? business.resources.find((r) => r.id === l.resourceId) : undefined
       return picked?.type === 'object' ? picked.id : null
     }
-    return resourceId ?? null
+    return typeof l.resourceId === 'number' ? l.resourceId : null
   }
 
   // The cart as the API wants it: array order = chain order, each position with
-  // its OWN variant length and add-ons, so availability and create always agree
-  // on the chain shape.
-  const buildCartItems = (opts?: { forAvailability?: boolean }): CartItem[] => lines.map((l) => ({
+  // its OWN variant length, add-ons and provider, so availability and create
+  // always agree on the chain shape.
+  const buildCartItems = (opts?: { forAvailability?: boolean; unpinned?: boolean }): CartItem[] => lines.map((l) => ({
     businessServiceId: l.service.id,
-    // Availability in "Dowolny" mode ignores a slot-level refinement on purpose
-    // (parytet z availabilityItems w WEB); create uses the concrete pick.
-    resourceId: opts?.forAvailability && anyChosen ? null : itemResourceId(l.service),
+    // Availability in "Bez preferencji" mode ignores a slot-level refinement on
+    // purpose (parytet z availabilityItems w WEB); create uses the concrete pick.
+    // `unpinned` is the diagnosis probe for an empty day - the same cart asked
+    // without anybody pinned. In per-position mode the pins ARE the question, so
+    // they are never widened silently.
+    resourceId: opts?.unpinned || (opts?.forAvailability && anyChosen) ? null : itemResourceId(l),
     addonIds: l.addonIds.length ? l.addonIds : undefined,
     durationMinutes: l.variantDuration ?? undefined,
   }))
 
   // Stable dep for availability effects: composition, variants and add-ons all
   // change the chain length, so counts/slots must refetch when any of them move.
-  // What the availability payload actually carries: in "Dowolny" mode the pin is
-  // erased before sending, so refining WHO takes a slot must not refetch the
-  // exact same body (it blanked the grid and lost focus).
-  const availabilityResourceKey = anyChosen ? 'any' : String(resourceId ?? 'none')
+  // What the availability payload actually carries: in "Bez preferencji" mode the
+  // pin is erased before sending, so refining WHO takes a slot must not refetch
+  // the exact same body (it blanked the grid and lost focus).
+  const availabilityResourceKey = anyChosen ? 'any' : lines.map((l) => itemResourceId(l) ?? 'any').join(',')
   const cartKey = lines
     .map((l) => `${l.service.id}:${l.variantDuration ?? ''}:${l.addonIds.slice().sort((a, b) => a - b).join('.')}`)
     .join('|')
   const days = useMemo(() => nextDays(HORIZON), [])
-  // The pinned provider (worker or pool unit); undefined for "Dowolny"/auto.
-  const pinnedResource: Resource | undefined = typeof resource === 'number' ? business.resources.find((r) => r.id === resource) : undefined
-  const anyProviderLabel = isUnit ? (unitTag ? `Dowolny: ${unitTag}` : 'Dowolny') : 'Dowolny specjalista'
-  const providerName = resource === 'any' || resource == null ? anyProviderLabel : pinnedResource?.name ?? ''
+  // The cart-wide provider (worker or pool unit); undefined for "Bez preferencji",
+  // per-position mode and auto.
+  const pinnedResource: Resource | undefined = typeof cartResource === 'number' ? business.resources.find((r) => r.id === cartResource) : undefined
+  const anyProviderLabel = isUnit ? (unitTag ? `Dowolny: ${unitTag}` : 'Dowolny') : 'Bez preferencji'
   const providerRowLabel = isUnit ? 'Zasób' : 'Specjalista'
+  // Distinct people pinned across the cart, in position order - drives the
+  // summary chip (one name vs an avatar stack).
+  const pinnedPeople = useMemo(
+    () =>
+      getPinnedResourceIds(lines)
+        .map((id) => business.resources.find((r) => r.id === id))
+        .filter((r): r is Resource => !!r),
+    [lines, business],
+  )
+  const someUnassigned = getStaffItems(lines).some((l) => l.resourceId == null)
+  // At least one position carries a chosen SPECIALIST - so a pin can be the reason
+  // a day is empty. A pool object is not a person, and "sprawdź wszystkich
+  // specjalistów" would be the wrong way out of a fully booked loża.
+  const anyPinned = getStaffItems(lines).some((l) => typeof l.resourceId === 'number')
+  // How the visit reads in one line. A mix keeps both halves of the truth: who is
+  // pinned, and that the rest is up to us.
+  const providerName = (() => {
+    if (!pinnedPeople.length) return anyProviderLabel
+    if (pinnedPeople.length === 1 && !someUnassigned) return pinnedPeople[0]!.name
+    if (pinnedPeople.length > 2) return 'Wielu specjalistów'
+    return `${pinnedPeople.map((p) => p.name).join(', ')}${someUnassigned ? ' + bez preferencji' : ''}`
+  })()
 
   useEffect(() => {
     let cancelled = false
@@ -373,6 +477,12 @@ export function BookingFlow({
   // A different cart may well have free days - forget the previous verdict.
   useEffect(() => { setNoneAhead(false) }, [cartKey, availabilityResourceKey])
 
+  // Per-position mode stops making sense once the cart drops below two staff
+  // positions: leaving it on would show a distribution with nothing to distribute.
+  useEffect(() => {
+    if (eachMode && !canPerItem) setEachMode(false)
+  }, [eachMode, canPerItem])
+
   useEffect(() => {
     if (!lines.length || !date) {
       setSlots([])
@@ -397,6 +507,33 @@ export function BookingFlow({
     }
   }, [cartKey, availabilityResourceKey, date, refetch, auth?.userId])
 
+  // An empty day with somebody pinned has TWO possible causes, and they lead to
+  // different ways out. The same cart asked once more with nobody pinned tells
+  // them apart: slots => the chosen people are busy, none => the day itself is
+  // shut. Skipped when nothing is pinned (the first answer already covered it).
+  useEffect(() => {
+    if (!lines.length || !date || loadingSlots || slots.length > 0 || anyChosen || !anyPinned) {
+      setEmptyProbe(null)
+      // Leaving the day drops its verdict, so the latch has to drop with it -
+      // otherwise coming back to the same empty day would show the neutral
+      // "no slots" state and never re-run the diagnosis.
+      probedFor.current = ''
+      return
+    }
+    // The same day can report "empty" twice in a row (stale slots while the next
+    // answer is in flight) - one probe per cart+day is enough.
+    const key = `${date}|${cartKey}|${availabilityResourceKey}|${refetch}`
+    if (probedFor.current === key) return
+    probedFor.current = key
+    let cancelled = false
+    getCartSlots(cfg, { date, items: buildCartItems({ unpinned: true }), bookedById: auth?.userId }).then((x) => {
+      if (!cancelled) setEmptyProbe(x.slots.length ? 'others' : 'none')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [cartKey, availabilityResourceKey, date, slots, loadingSlots, refetch, auth?.userId])
+
   useEffect(() => {
     if (phase !== 'otp') return
     setNow(Date.now())
@@ -410,22 +547,21 @@ export function BookingFlow({
   }, [phase, selStep])
 
   // Effective price/duration for the current configuration: chosen variant +
-  // add-ons + any per-employee override for a pinned worker. When nothing pins
-  // the price yet (no worker, no variant), fall back to the "od {min}" range
-  // across the offering workers.
-  const chosenWorker = typeof resource === 'number' ? resource : undefined
-  // Cart totals: every position priced at the pinned worker's rate (or its base),
-  // summed. One position still priced as a range makes the whole total a range,
-  // so "od" propagates up - jak w kreatorze WEB.
+  // add-ons + any per-employee override for the worker pinned to THAT position.
+  // When nothing pins the price yet (no worker, no variant), fall back to the
+  // "od {min}" range across the offering workers.
+  // Cart totals: every position priced at its own pinned worker's rate (or its
+  // base), summed. One position still priced as a range makes the whole total a
+  // range, so "od" propagates up - jak w kreatorze WEB.
   const cartTotals = lines.reduce(
     (acc, l) => {
-      const t = configuredTotals(l.service, l.variantDuration, l.addonIds, chosenWorker)
+      const t = configuredTotals(l.service, l.variantDuration, l.addonIds, lineWorker(l))
       return { price: acc.price + t.price, duration: acc.duration + t.duration }
     },
     { price: 0, duration: 0 },
   )
   const lineIsRange = (l: CartLine) => {
-    if (chosenWorker) return false
+    if (lineWorker(l)) return false
     if ((l.service.durationOptions?.length ?? 0) > 0) return false
     const r = priceRange(l.service, workers.filter((w) => workerOffersService(l.service, w.id)))
     return r.min !== r.max
@@ -437,7 +573,7 @@ export function BookingFlow({
     const performers = workers.filter((w) => workerOffersService(l.service, w.id))
     const r = priceRange(l.service, performers)
     const variant = resolveVariant(l.service, l.variantDuration)
-    const base = variant?.priceCents ?? (lineIsRange(l) ? r.min : configuredTotals(l.service, l.variantDuration, [], chosenWorker).price)
+    const base = variant?.priceCents ?? (lineIsRange(l) ? r.min : configuredTotals(l.service, l.variantDuration, [], lineWorker(l)).price)
     return sum + base + addonTotals(l.service, l.addonIds).price
   }, 0)
   const shownPrice = showFrom ? cartFromPrice : cartTotals.price
@@ -459,9 +595,17 @@ export function BookingFlow({
             ...(hasVariantChoice && variant ? [variant.label || formatDuration(variant.durationMinutes)] : []),
             ...names,
           ]
+          // Per-position mode: the row has to say who takes THIS service, or the
+          // summary would flatten a mixed cart back into one anonymous answer.
+          const who = eachMode && getItemProviderMode(l.service) === 'staff'
+            ? business.resources.find((r) => r.id === l.resourceId)?.name ?? 'bez preferencji'
+            : null
           return {
             label: l.service.name,
-            value: extras.length ? extras.join(' · ') : formatDuration(configuredTotals(l.service, l.variantDuration, l.addonIds, chosenWorker).duration),
+            value: [
+              ...(extras.length ? [extras.join(' · ')] : [formatDuration(configuredTotals(l.service, l.variantDuration, l.addonIds, lineWorker(l)).duration)]),
+              ...(who ? [`u: ${who}`] : []),
+            ].join(' · '),
           }
         }),
         { label: providerRowLabel, value: providerName },
@@ -507,18 +651,21 @@ export function BookingFlow({
     if (candidates.length < 2 || prices.size < 2) return null
     return {
       candidates,
-      selectedId: typeof resource === 'number' ? resource : null,
+      selectedId: typeof line.resourceId === 'number' ? line.resourceId : null,
       onPick: (id: number | null) => {
-        // Keep the slot: the person came FROM this slot's free list.
-        setResource(id ?? 'any')
+        // Keep the slot: the person came FROM this slot's free list, and
+        // anyChosen stays up so availability is not narrowed behind the choice.
+        setLines((prev) => setAllItemResources(prev, id))
         if (id != null) emit('specialist_selected', { ...resourceEvent(id), atSlot: true })
       },
     }
-  }, [lines, anyChosen, resource, isUnit, providerAuto, slotKey, chain, workers])
+  }, [lines, anyChosen, isUnit, providerAuto, slotKey, chain, workers])
 
-  /** Drop a slot-scoped specialist pick, back to cart-wide "Dowolny". */
+  /** Drop a slot-scoped specialist pick, back to cart-wide "Bez preferencji". */
   function clearSlotPin() {
-    if (anyChosen && typeof resource === 'number') setResource('any')
+    if (anyChosen && lines.some((l) => typeof l.resourceId === 'number')) {
+      setLines((prev) => setAllItemResources(prev, null))
+    }
   }
 
   async function findNextFree() {
@@ -730,9 +877,20 @@ export function BookingFlow({
     const dateTo = addDays(dateFrom, prefs.rangeDays - 1)
     const r = await joinWaitlist(
       cfg,
-      // "Dowolny" signs up for ANY specialist - a pin made for one hour must not
-      // narrow a sign-up that is about the service being free at all.
-      { businessServiceId: service.id, resourceId: anyChosen ? null : resourceId ?? null, dateFrom, dateTo, timeFrom: prefs.timeFrom, timeTo: prefs.timeTo, bookedById: a.userId },
+      {
+        businessServiceId: service.id,
+        // "Bez preferencji" signs up for ANY specialist - a pin made for one hour
+        // must not narrow a sign-up that is about the service being free at all.
+        resourceId: anyChosen ? null : lineWorker(waitlistLine!) ?? null,
+        dateFrom,
+        dateTo,
+        timeFrom: prefs.timeFrom,
+        timeTo: prefs.timeTo,
+        bookedById: a.userId,
+        // Without it the entry is attributed to the client app - the widget is a
+        // website sign-up.
+        source: 'web',
+      },
       a.token,
     )
     setWlBusy(false)
@@ -741,7 +899,7 @@ export function BookingFlow({
       emit('waitlist_joined', {
         serviceId: service.id,
         serviceName: service.name,
-        ...resourceEvent(resource ?? 'any'),
+        ...resourceEvent(cartResource ?? 'any'),
         dateFrom,
         dateTo,
         timeFrom: prefs.timeFrom,
@@ -759,7 +917,7 @@ export function BookingFlow({
   function startWaitlist() {
     setIntent('waitlist')
     setWlErr('')
-    emit('waitlist_started', { serviceId: waitlistLine?.service.id, ...resourceEvent(resource ?? 'any'), date })
+    emit('waitlist_started', { serviceId: waitlistLine?.service.id, ...resourceEvent(cartResource ?? 'any'), date })
     setPhase('waitlist')
   }
 
@@ -789,7 +947,7 @@ export function BookingFlow({
     serviceNames: lines.map((l) => l.service.name),
     itemCount: lines.length,
     price: lines.length ? selectedPrice : undefined,
-    ...resourceEvent(resource ?? 'any'),
+    ...resourceEvent(cartResource ?? 'any'),
     date,
     time: key ? slotLabel(date, key, business.timezone) : '',
     startDate: key ? slotStartDate(date, key) : '',
@@ -797,9 +955,9 @@ export function BookingFlow({
 
   // ---- selection (select-then-Dalej) ----
   /**
-   * Toggle a service in the cart. Adding keeps the cart-wide specialist only when
-   * they perform EVERY position (jak applyToggleService w WEB) - otherwise the pin
-   * is dropped, because the chain would dead-end at the time step.
+   * Toggle a service in the cart. A new position inherits the cart-wide answer,
+   * but a pinned person who does not perform it loses the pin (jak
+   * applyToggleService w WEB) - the chain would dead-end at the time step.
    */
   function toggleService(s: Service) {
     setCartNotice(null)
@@ -817,27 +975,41 @@ export function BookingFlow({
       setCartNotice({ title: 'Limit koszyka', text: `W jednej wizycie możesz połączyć maksymalnie ${MAX_CART_ITEMS} usług.` })
       return
     }
-    const next = [...lines, newLine(s)]
-    setLines(next)
-    // Drop a pinned worker who cannot take the new composition, and say why.
-    if (typeof resource === 'number') {
-      const picked = business.resources.find((r) => r.id === resource)
-      const poolTag = ((picked?.categoryTag ?? '') as string).trim() || null
-      const stillValid = picked?.type === 'object'
-        // A pool object stays valid while EVERY position is a unit service of the
-        // same pool - adding a second loża must not discard the picked loża.
-        ? next.every((l) => l.service.fulfillmentMode === 'unit'
-            && (((l.service.primaryObjectCategoryTag ?? '') as string).trim() || null) === poolTag)
-        : picked?.type === 'worker'
-          && next.every((l) => l.service.fulfillmentMode !== 'unit' && workerOffersService(l.service, resource))
+    // Per-position mode never inherits a person onto a service the customer has
+    // not looked at yet - "bez preferencji" is the honest default there.
+    const inherited = eachMode ? null : typeof cartResource === 'number' ? cartResource : cartResource === 'any' ? null : undefined
+    const next = [...lines, newLine(s, inherited)]
+    const pickedObject = typeof inherited === 'number'
+      ? business.resources.find((r) => r.id === inherited && r.type === 'object')
+      : undefined
+    if (pickedObject) {
+      // A pool object stays valid while EVERY position is a unit service of the
+      // same pool - adding a second loża must not discard the picked loża.
+      const poolTag = ((pickedObject.categoryTag ?? '') as string).trim() || null
+      const stillValid = next.every((l) => l.service.fulfillmentMode === 'unit'
+        && (((l.service.primaryObjectCategoryTag ?? '') as string).trim() || null) === poolTag)
+      setLines(stillValid ? next : next.map((l) => ({ ...l, resourceId: undefined })))
       if (!stillValid) {
-        setResource(null)
+        setAnyChosen(false)
+        setCartNotice({
+          title: 'Zmienił się skład wizyty',
+          text: `${pickedObject.name} nie obsługuje usługi: ${s.name}. Wybierz zasób ponownie.`,
+        })
+      }
+    } else {
+      const { items, droppedResourceIds } = dropInvalidPins(next, eachMode ? 'each' : 'single')
+      setLines(items)
+      if (droppedResourceIds.length) {
+        const dropped = droppedResourceIds
+          .map((id) => business.resources.find((r) => r.id === id)?.name)
+          .filter((n): n is string => !!n)
+        if (!eachMode) setAnyChosen(false)
         setCartNotice({
           title: 'Zmienił się skład wizyty',
           // Nazwa usługi po dwukropku - wstawiona w zdanie nie da się odmienić
           // ("nie wykonuje usługi Strzyżenie" zgrzyta po polsku).
-          text: picked?.name
-            ? `${picked.name} nie wykonuje usługi: ${s.name}. Wybierz specjalistę ponownie.`
+          text: dropped.length
+            ? `${dropped.join(', ')} nie wykonuje usługi: ${s.name}. Wybierz specjalistę ponownie.`
             : 'Wybierz specjalistę ponownie - zmienił się skład wizyty.',
         })
       }
@@ -854,15 +1026,54 @@ export function BookingFlow({
     if (lineOf(serviceId)) setConfiguringId(serviceId)
   }
 
+  /** One answer for the WHOLE cart: "Bez preferencji" or one person/object. */
   function pickResource(r: ResChoice) {
-    if (r !== resource) {
-      setResource(r)
-      setAnyChosen(r === 'any')
-      setCartNotice(null)
-      setDate('')
-      setSlotKey('')
-      emit('specialist_selected', resourceEvent(r))
-    }
+    if (r === cartResource && !eachMode) return
+    setLines((prev) => setAllItemResources(prev, r === 'any' ? null : r))
+    setEachMode(false)
+    setAnyChosen(r === 'any')
+    setCartNotice(null)
+    setDate('')
+    setSlotKey('')
+    emit('specialist_selected', resourceEvent(r))
+  }
+
+  /** Switch to one answer PER position; untouched ones default to "bez preferencji". */
+  function pickPerItemMode() {
+    setLines((prev) => enterPerItemMode(prev))
+    setEachMode(true)
+    // The pins are the question now, so availability must follow them (no union).
+    setAnyChosen(false)
+    setCartNotice(null)
+    setDate('')
+    setSlotKey('')
+    emit('specialist_selected', { resourceId: null, resourceName: 'Wybór per usługa', perService: true })
+  }
+
+  /** The answer for ONE position (per-position mode, or the chip on the time step). */
+  function pickItemResource(serviceId: number, id: number | null) {
+    const next = setItemResource(lines, serviceId, id)
+    setLines(next)
+    // Answering per position IS the per-position mode. Editing from the chip on
+    // the time step used to leave eachMode off, so going back to the specialist
+    // step showed the cart-wide list with nothing selected and "Dalej" blocked -
+    // the mixed answers were silently unreachable.
+    if (getStaffItems(next).length >= 2) setEachMode(true)
+    // Union-wide availability only survives while nothing at all is pinned -
+    // otherwise the calendar would answer a question nobody asked.
+    setAnyChosen(getStaffItems(next).every((l) => l.resourceId == null))
+    setCartNotice(null)
+    setSlotKey('')
+    emit('specialist_selected', { ...resourceEvent(id ?? 'any'), serviceId, perService: true })
+  }
+
+  /** "Sprawdź wszystkich specjalistów" - unpin everybody and ask the day again. */
+  function checkAllSpecialists() {
+    const next = clearStaffPins(lines)
+    setLines(next)
+    setAnyChosen(next.every((l) => itemResourceId(l) == null))
+    setSlotKey('')
+    setEmptyProbe(null)
   }
   function pickVariant(durationMinutes: number) {
     if (configuringId == null) return
@@ -899,8 +1110,9 @@ export function BookingFlow({
       if (!cartValid) return
       if (!hasResourceStep) {
         // No pick step: providerSelection 'auto', or 0-1 selectable providers.
-        const r: ResChoice = !providerAuto && selectableProviders.length === 1 ? selectableProviders[0].id : 'any'
-        setResource(r)
+        const r: ResChoice = !providerAuto && selectableProviders.length === 1 ? selectableProviders[0]!.id : 'any'
+        setLines((prev) => setAllItemResources(prev, r === 'any' ? null : r))
+        setEachMode(false)
         setAnyChosen(r === 'any')
         setSelStep(2)
         emit('specialist_selected', { ...resourceEvent(r), auto: true })
@@ -1112,8 +1324,9 @@ export function BookingFlow({
   }
   function restart() {
     setLines([])
-    setResource(null)
+    setEachMode(false)
     setAnyChosen(false)
+    setEmptyProbe(null)
     setConfiguringId(null)
     setCartNotice(null)
     setDate('')
@@ -1164,14 +1377,22 @@ export function BookingFlow({
     business.bookingAccess?.policy === 'restricted' && !accessOk && !auth && phase === 'select' && !(selStep === 2 && calRestricted)
   // tel: link for the restricted screen (spaces/dashes stripped).
   const businessPhone = business.phone?.trim() || ''
-  // A pinned provider must belong to the current service's selectable set;
-  // "any" (Dowolny/auto) is always valid. Guards a stale id from a previous
-  // service from surviving into an enabled "Dalej".
-  const resourceValid = resource === 'any' || (typeof resource === 'number' && selectableProviders.some((p) => p.id === resource))
+  // The provider question is answered when every position carries an answer: in
+  // per-position mode each staff line has one (a person or "bez preferencji"),
+  // otherwise the whole cart shares one - and a pinned provider must still belong
+  // to the current selectable set, or a stale id from a previous composition
+  // would enable "Dalej".
+  const resourceValid = eachMode
+    ? getStaffItems(lines).every((l) => l.resourceId !== undefined)
+    : cartResource === 'any' || (typeof cartResource === 'number' && selectableProviders.some((p) => p.id === cartResource))
   // Every position must satisfy its own add-on groups before the cart can move on.
   const cartValid = lines.length > 0 && !configuring && lines.every((l) => addonsValid(l.service, l.addonIds))
   const canAdvance = selStep === 0 ? cartValid : selStep === 1 ? resourceValid : !!slotKey
   const ctaPrice = lines.length ? `${showFrom ? 'od ' : ''}${formatPrice2(shownPrice)}` : ''
+  // The time step has to show who the hours belong to - and let it be changed
+  // without walking back a step. A pool cart keeps its own (single) answer.
+  const showProviderChip = lines.length > 0 && !isUnit && !providerAuto && (hasResourceStep || pinnedPeople.length > 0)
+  const canEditProviders = getStaffItems(lines).some((l) => getResourcesForService(workers, l.service).length > 0)
 
   return (
     <div class="vz-panel" role="dialog" aria-modal={onClose ? 'true' : undefined} aria-label="Zarezerwuj wizytę">
@@ -1213,7 +1434,7 @@ export function BookingFlow({
             service={configuringLine.service}
             variantDuration={configuringLine.variantDuration}
             addonIds={configuringLine.addonIds}
-            workerId={chosenWorker}
+            workerId={lineWorker(configuringLine)}
             onPickVariant={pickVariant}
             onToggleAddon={toggleAddon}
             onDone={confirmConfigure}
@@ -1240,10 +1461,15 @@ export function BookingFlow({
           <StepResource
             providers={selectableProviders}
             items={lines}
+            workers={workers}
             mode={isUnit ? 'unit' : 'staff'}
             anyLabel={anyProviderLabel}
-            selected={resource}
+            selected={cartResource}
+            perItem={eachMode}
+            canPerItem={canPerItem}
             onPick={pickResource}
+            onPickPerItem={pickPerItemMode}
+            onPickItemResource={pickItemResource}
             performers={noSoloCandidate ? performersByService : undefined}
           />
         )}
@@ -1285,6 +1511,15 @@ export function BookingFlow({
             noneAhead={noneAhead}
             chain={chainPlan}
             slotPicker={slotPicker}
+            providerChip={showProviderChip ? {
+              label: providerName,
+              people: pinnedPeople.map((p) => ({ name: p.name, image: p.image })),
+              editor: canEditProviders
+                ? <ItemProviders items={lines} workers={workers} onPick={pickItemResource} />
+                : undefined,
+            } : undefined}
+            emptyReason={emptyProbe === 'others' ? 'busy' : undefined}
+            onCheckAll={checkAllSpecialists}
           />
         )}
 
@@ -1302,7 +1537,7 @@ export function BookingFlow({
               setPhase('select')
             }}
             check={(win) =>
-              checkWaitlistWindow(cfg, { businessServiceId: waitlistLine.service.id, resourceId: anyChosen ? null : resourceId ?? null, ...win })
+              checkWaitlistWindow(cfg, { businessServiceId: waitlistLine.service.id, resourceId: anyChosen ? null : lineWorker(waitlistLine) ?? null, ...win })
             }
             busy={wlBusy}
             error={wlErr}
@@ -1318,6 +1553,9 @@ export function BookingFlow({
             onChange={onContactChange}
             notes={intent === 'waitlist' || !slotKey ? undefined : notes}
             onNotes={intent === 'waitlist' || !slotKey ? undefined : setNotes}
+            // Terms belong to a booking; a waitlist sign-up and an access-check
+            // login are not the moment to state a cancellation window.
+            policy={intent === 'book' && slotKey ? business.bookingPolicy : undefined}
             emailExists={emailExists}
             onCheckEmail={onCheckEmail}
             onSendCode={onSendCode}
@@ -1420,12 +1658,10 @@ export function BookingFlow({
             <div class="vz-cta-left">
               {lines.length ? (
                 <>
-                  <div class="vz-cta-svc">
-                    {lines.length === 1
-                      ? lines[0]!.service.name
-                      : `${lines.length} ${lines.length < 5 ? 'usługi' : 'usług'}`}
+                  <div class="vz-cta-svc">{lines.map((l) => l.service.name).join(', ')}</div>
+                  <div class="vz-cta-meta">
+                    <b>{ctaPrice}</b> · {positionsLabel(lines.length)} · {formatDuration(shownDuration)}
                   </div>
-                  <div class="vz-cta-meta"><b>{ctaPrice}</b> · {formatDuration(shownDuration)}</div>
                   {lines.length === 1 && serviceHasOptions(lines[0]!.service) && (
                     <div class="vz-cta-cfg">
                       <button class="vz-link" onClick={() => setConfiguringId(lines[0]!.service.id)} type="button">Zmień wariant / dodatki</button>
@@ -1436,10 +1672,14 @@ export function BookingFlow({
                 <div class="vz-cta-meta">Wybierz usługę, aby kontynuować</div>
               )}
             </div>
-            {selStep >= 1 && resource != null && (
+            {selStep >= 1 && (eachMode || cartResource != null) && (
               <div class="vz-cta-who">
-                <span class="vz-card-av">{pinnedResource?.image ? <img src={pinnedResource.image} alt="" /> : pinnedResource ? pinnedResource.name.charAt(0) : '✦'}</span>
-                <span>{resource === 'any' ? 'Dowolny' : pinnedResource?.name}</span>
+                {pinnedResource && !eachMode ? (
+                  <span class="vz-card-av">{pinnedResource.image ? <img src={pinnedResource.image} alt="" /> : pinnedResource.name.charAt(0)}</span>
+                ) : (
+                  <AvatarStack people={pinnedPeople.map((p) => ({ name: p.name, image: p.image }))} max={2} />
+                )}
+                <span>{providerName}</span>
               </div>
             )}
           </div>

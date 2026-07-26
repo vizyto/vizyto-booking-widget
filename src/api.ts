@@ -88,6 +88,9 @@ export type Resource = {
   categoryTag?: string | null
 }
 export type WorkingHour = { id: number; dayOfWeek: number; openTime: string; closeTime: string; isOpened: boolean }
+// Booking terms from business_settings (public snapshot). cancellationHoursBefore
+// is the free-cancellation window in hours; 0 = up to the appointment start.
+export type BookingPolicy = { allowCancellation: boolean; cancellationHoursBefore: number; importantInfo: string }
 export type Business = {
   id: number
   name: string
@@ -104,6 +107,10 @@ export type Business = {
   isTestMode?: boolean
   // Whether the business accepts waitlist sign-ups when a day has no free slots.
   waitlistEnabled?: boolean
+  // Terms the customer must see BEFORE confirming: the cancellation window and
+  // whatever the business wants to say up front. importantInfo is PLAIN text
+  // (not rich text), so it is rendered as text, never as HTML.
+  bookingPolicy?: BookingPolicy
   // Whitelist gate; absent (older API) = open to everyone.
   bookingAccess?: BookingAccess
 }
@@ -456,6 +463,9 @@ export type WaitlistParams = {
   timeFrom?: string | null // HH:mm (business local) or null = any
   timeTo?: string | null
   bookedById: number
+  // Where the sign-up came from. Omitted, the API attributes it to the client
+  // app; the widget is a website sign-up, so it says so.
+  source?: 'web' | 'client_app'
 }
 export type WaitlistResult = { ok: true; data: any } | { ok: false; code: string }
 

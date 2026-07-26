@@ -122,6 +122,11 @@ const BUSINESS: Business = {
   // both flows are reachable in the local configurator.
   isTestMode: true,
   waitlistEnabled: true,
+  bookingPolicy: {
+    allowCancellation: true,
+    cancellationHoursBefore: 24,
+    importantInfo: 'Prosimy o przyjście 5 minut przed wizytą.\nPłatność kartą lub gotówką na miejscu.',
+  },
 }
 
 export async function fetchBusiness(): Promise<Business> {
