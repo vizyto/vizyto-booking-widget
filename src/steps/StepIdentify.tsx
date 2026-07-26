@@ -1,6 +1,8 @@
 import { useState } from 'preact/hooks'
+import type { BookingPolicy } from '../api'
 import { isLikelyPhone } from '../data/countries'
 import { StepHeader } from '../ui/StepHeader'
+import { Notice } from '../ui/Notice'
 import { SummaryCard, type SummaryRow } from '../ui/SummaryCard'
 import { Field } from '../ui/Field'
 import { PhoneField } from '../ui/PhoneField'
@@ -11,6 +13,13 @@ import { Shield, Check, ChevronRight, Mail, VizytoLogo } from '../ui/icons'
 export type Contact = { firstName: string; lastName: string; phone: string; email: string }
 
 const emailOk = (e: string) => /.+@.+\..+/.test(e)
+
+/** The cancellation window, said in one sentence the customer can act on. */
+function cancellationText(p: BookingPolicy): string {
+  if (!p.allowCancellation) return 'Rezerwacji nie można odwołać online. Skontaktuj się z nami.'
+  if (p.cancellationHoursBefore > 0) return `Bezpłatne odwołanie do ${p.cancellationHoursBefore} godz. przed wizytą.`
+  return 'Rezerwację możesz odwołać do początku wizyty.'
+}
 
 export function StepIdentify({
   summary,
@@ -24,6 +33,7 @@ export function StepIdentify({
   onGoLogin,
   sending,
   error,
+  policy,
   turnstileKey,
   turnstileToken,
   onTurnstile,
@@ -34,6 +44,8 @@ export function StepIdentify({
   // Optional appointment note ("Notatki") - only rendered when onNotes is passed.
   notes?: string
   onNotes?: (v: string) => void
+  /** Booking terms to read before confirming; omitted when there is nothing to confirm. */
+  policy?: BookingPolicy
   emailExists: boolean
   onCheckEmail: () => void
   onSendCode: (normalizedPhone: string) => void
@@ -117,6 +129,19 @@ export function StepIdentify({
             placeholder="Dodatkowe informacje dla specjalisty"
           />
         </label>
+      )}
+
+      {/* Terms right above the button that books - the last thing read before
+          the reservation is made, not something to hunt for afterwards. */}
+      {policy && (
+        <div class="vz-terms">
+          <Notice title="Warunki odwoływania rezerwacji" tone="plain">{cancellationText(policy)}</Notice>
+          {policy.importantInfo.trim() && (
+            <Notice title="Ważne informacje" tone="plain">
+              <span class="vz-notice-pre">{policy.importantInfo.trim()}</span>
+            </Notice>
+          )}
+        </div>
       )}
 
       {error && <div class="vz-err" role="alert">{error}</div>}

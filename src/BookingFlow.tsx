@@ -1538,6 +1538,9 @@ export function BookingFlow({
             onChange={onContactChange}
             notes={intent === 'waitlist' || !slotKey ? undefined : notes}
             onNotes={intent === 'waitlist' || !slotKey ? undefined : setNotes}
+            // Terms belong to a booking; a waitlist sign-up and an access-check
+            // login are not the moment to state a cancellation window.
+            policy={intent === 'book' && slotKey ? business.bookingPolicy : undefined}
             emailExists={emailExists}
             onCheckEmail={onCheckEmail}
             onSendCode={onSendCode}

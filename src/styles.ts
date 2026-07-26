@@ -575,6 +575,13 @@ a.vz-btn { text-decoration: none; }
 .vz-notice-ico { color: var(--vz-warning); flex: 0 0 auto; margin-top: 1px; display: flex; }
 .vz-notice-title { font-size: 13px; font-weight: 600; color: var(--vz-text); }
 .vz-notice-body { font-size: 12px; color: var(--vz-text-muted); margin-top: 3px; line-height: 1.5; }
+/* Neutral variant: booking terms are not a warning. */
+.vz-notice.plain { background: var(--vz-surface-2); border-color: var(--vz-border); }
+.vz-notice.plain .vz-notice-ico { color: var(--vz-text-muted); }
+/* Business-authored text: plain, so its own line breaks are all the formatting. */
+.vz-notice-pre { white-space: pre-line; overflow-wrap: anywhere; }
+.vz-terms { display: grid; gap: 10px; margin-top: 16px; }
+.vz-terms .vz-notice { margin: 0; }
 
 /* ---- NOTES TEXTAREA ---------------------------------------------------- */
 .vz-notes { display: block; margin-top: 14px; }
