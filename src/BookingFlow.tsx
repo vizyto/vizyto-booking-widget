@@ -368,7 +368,6 @@ export function BookingFlow({
     if (!lines.every((l) => l.resourceId === first)) return null
     return first === null ? 'any' : first
   }, [lines])
-  const resourceId = typeof cartResource === 'number' ? cartResource : undefined
   /** The worker pinned to ONE position - the price/duration this line is booked at. */
   const lineWorker = (l: CartLine): number | undefined =>
     getItemProviderMode(l.service) === 'staff' && typeof l.resourceId === 'number' ? l.resourceId : undefined
