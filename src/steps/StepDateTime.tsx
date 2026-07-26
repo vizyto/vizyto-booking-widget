@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
+import type { VNode } from 'preact'
 import type { DayCounts, Slots } from '../api'
 import { slotLabel } from '../api'
 import { DOW, dayNum, monthMatrix, monthOf, monthTitle, spanLabel, weekday } from '../dates'
-import { ChevronLeft, ChevronRight, Calendar, Grid, Moon, Sun, Sunrise, Bell } from '../ui/icons'
+import { ChevronDown, ChevronLeft, ChevronRight, Calendar, Grid, Moon, Sun, Sunrise, Bell } from '../ui/icons'
+import { AvatarStack } from '../ui/AvatarStack'
 import { Spinner } from '../ui/Spinner'
 
 // Day tiles flow to fill the available width: we measure the strip and show as
@@ -29,6 +31,9 @@ export function StepDateTime({
   noneAhead = false,
   chain,
   slotPicker,
+  providerChip,
+  emptyReason,
+  onCheckAll,
 }: {
   days: string[]
   counts: DayCounts
@@ -55,8 +60,22 @@ export function StepDateTime({
     selectedId: number | null
     onPick: (id: number | null) => void
   } | null
+  /**
+   * Who the hours belong to, above the calendar. `editor` is the per-position
+   * assignment list - present when the choice can still be changed from here.
+   */
+  providerChip?: {
+    label: string
+    people: { name: string; image: string | null }[]
+    editor?: VNode | null
+  }
+  /** Why the day came back empty: 'busy' = these people are, others are not. */
+  emptyReason?: 'busy'
+  /** Drop every specialist pin and ask the day again. */
+  onCheckAll?: () => void
 }) {
   const [view, setView] = useState<'week' | 'month'>('week')
+  const [editingWho, setEditingWho] = useState(false)
   // A date set from OUTSIDE (first-free jump) must bring its page into view -
   // otherwise the customer is told "znaleziono termin" and sees the same week.
   const [perPage, setPerPage] = useState(7)
@@ -173,6 +192,23 @@ export function StepDateTime({
 
   return (
     <div class="vz-fade-in">
+      {providerChip && (
+        <div class="vz-who">
+          <button
+            type="button"
+            class={`vz-who-chip${editingWho ? ' on' : ''}`}
+            disabled={!providerChip.editor}
+            aria-expanded={providerChip.editor ? (editingWho ? 'true' : 'false') : undefined}
+            onClick={() => providerChip.editor && setEditingWho((v) => !v)}
+          >
+            <AvatarStack people={providerChip.people} max={3} />
+            <span class="vz-who-label">{providerChip.label}</span>
+            {providerChip.editor && <ChevronDown size={16} class="vz-chip-cv" />}
+          </button>
+          {editingWho && providerChip.editor}
+        </div>
+      )}
+
       <div class="vz-cal-head">
         <span class="vz-cal-month"><Calendar size={16} /> {label}</span>
         <button class="vz-cal-nav" onClick={goPrev} disabled={prevDisabled} aria-label="Poprzedni" type="button"><ChevronLeft size={18} /></button>
@@ -230,17 +266,33 @@ export function StepDateTime({
         <div class="vz-center"><Spinner /> Szukam wolnych godzin…</div>
       ) : groups.length === 0 ? (
         <div style="margin-top:20px;text-align:center;">
-          <div class="vz-muted">
-            {noneAhead
-              ? 'Brak wolnych terminów w najbliższym czasie.'
-              : 'Brak dostępnych terminów tego dnia. Wybierz inny.'}
-          </div>
-          {/* Finding the next free day beats making the customer click through
-              the calendar - the server already sweeps 60 days for us. */}
-          {onFindNext && !noneAhead && (
-            <button class="vz-btn ghost mt" onClick={onFindNext} disabled={findingNext} type="button">
-              {findingNext ? <><Spinner /> Szukam najbliższego terminu…</> : 'Znajdź najbliższy dostępny termin'}
-            </button>
+          {/* Two different empty days, two different ways out: the chosen people
+              being busy is not the same as the day being shut. */}
+          {emptyReason === 'busy' ? (
+            <>
+              <div class="vz-muted">Wybrani specjaliści mają tego dnia zajęte grafiki.</div>
+              <div class="vz-muted" style="margin-top:4px;">Dostępni są za to inni specjaliści.</div>
+              {onCheckAll && (
+                <button class="vz-btn ghost mt" onClick={onCheckAll} type="button">
+                  Sprawdź wszystkich specjalistów
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <div class="vz-muted">
+                {noneAhead
+                  ? 'Brak wolnych terminów w najbliższym czasie.'
+                  : 'Brak dostępnych terminów tego dnia. Wybierz inny.'}
+              </div>
+              {/* Finding the next free day beats making the customer click through
+                  the calendar - the server already sweeps 60 days for us. */}
+              {onFindNext && !noneAhead && (
+                <button class="vz-btn ghost mt" onClick={onFindNext} disabled={findingNext} type="button">
+                  {findingNext ? <><Spinner /> Szukam najbliższego terminu…</> : 'Znajdź najbliższy dostępny termin'}
+                </button>
+              )}
+            </>
           )}
           {canWaitlist && onJoinWaitlist && (
             <button class="vz-btn ghost mt" onClick={onJoinWaitlist} type="button">

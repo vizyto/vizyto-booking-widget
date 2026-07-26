@@ -456,6 +456,9 @@ export type WaitlistParams = {
   timeFrom?: string | null // HH:mm (business local) or null = any
   timeTo?: string | null
   bookedById: number
+  // Where the sign-up came from. Omitted, the API attributes it to the client
+  // app; the widget is a website sign-up, so it says so.
+  source?: 'web' | 'client_app'
 }
 export type WaitlistResult = { ok: true; data: any } | { ok: false; code: string }
 
