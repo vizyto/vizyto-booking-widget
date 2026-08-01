@@ -316,6 +316,10 @@ export function BookingFlow({
   const [phase, setPhase] = useState<Phase>('select')
   const [contact, setContact] = useState<Contact>(emptyContact)
   const [notes, setNotes] = useState('')
+  // Status the server ACTUALLY gave the booking - 'pending' when the business
+  // confirms manually (autoConfirmAppointments=false). The success screen must
+  // not announce "Zarezerwowane!" for a visit that still awaits approval.
+  const [bookedStatus, setBookedStatus] = useState<string | null>(null)
   const [emailExists, setEmailExists] = useState(false)
   const [auth, setAuth] = useState<Auth | null>(preAuth ?? null)
 
@@ -770,6 +774,7 @@ export function BookingFlow({
     )
     booking.current = false
     if (r.ok) {
+      setBookedStatus(r.data?.status ?? null)
       setPhase('done')
       emit('booking_completed', {
         ...ctx,
@@ -1416,7 +1421,10 @@ export function BookingFlow({
           <ProgressBar step={progStep} total={totalSteps} label={stepNames[progStep]} />
         )}
 
-        {business.isTestMode && (phase === 'select' || phase === 'identify' || phase === 'waitlist') && (
+        {/* 'done' included on purpose: the test-mode disclaimer must survive onto
+            the success screen - that's the moment the customer decides whether
+            the booking is real. */}
+        {business.isTestMode && (phase === 'select' || phase === 'identify' || phase === 'waitlist' || phase === 'done') && (
           <Notice title="Rezerwacja próbna">
             Ten salon dopiero uruchamia rezerwacje online. Złożona tu rezerwacja nie jest jeszcze wiążąca - potwierdź ją bezpośrednio z salonem.
           </Notice>
@@ -1637,7 +1645,7 @@ export function BookingFlow({
           </div>
         )}
         {phase === 'done' && (
-          <StepDone rows={summaryRows} phone={contact.phone} email={contact.email} onClose={onClose} onRestart={restart} />
+          <StepDone rows={summaryRows} status={bookedStatus} phone={contact.phone} email={contact.email} onClose={onClose} onRestart={restart} />
         )}
         {phase === 'waitlistDone' && (
           <div class="vz-done vz-fade-in">
