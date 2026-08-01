@@ -30,6 +30,7 @@ import {
   workerOffersService,
 } from './api'
 import { dayMonth, nextDays } from './dates'
+import { resolveCartPolicy } from './policy'
 import {
   canPickPerItem,
   clearStaffPins,
@@ -186,6 +187,13 @@ export function BookingFlow({
   )
   const lineOf = (serviceId: number) => lines.find((l) => l.service.id === serviceId)
   const cartServices = useMemo(() => lines.map((l) => l.service), [lines])
+  // Terms for THIS cart, not for the business: a position may impose a longer
+  // notice or block online cancelling outright, and the strictest one applies to
+  // the whole chain (see ./policy).
+  const cartPolicy = useMemo(
+    () => resolveCartPolicy(cartServices, business.bookingPolicy),
+    [cartServices, business.bookingPolicy],
+  )
 
   // A service can be offered by only a subset of workers, each possibly with an
   // overridden price/duration. The candidate list is the INTERSECTION: only
@@ -1563,7 +1571,7 @@ export function BookingFlow({
             onNotes={intent === 'waitlist' || !slotKey ? undefined : setNotes}
             // Terms belong to a booking; a waitlist sign-up and an access-check
             // login are not the moment to state a cancellation window.
-            policy={intent === 'book' && slotKey ? business.bookingPolicy : undefined}
+            policy={intent === 'book' && slotKey ? cartPolicy : undefined}
             emailExists={emailExists}
             onCheckEmail={onCheckEmail}
             onSendCode={onSendCode}

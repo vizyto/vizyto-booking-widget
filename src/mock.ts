@@ -81,10 +81,13 @@ const BUSINESS: Business = {
       ],
     },
     // 'unit' service: no worker, the customer picks a station from the 'loza' pool
-    // (or "Dowolny"). Exercises the unit-pick step.
+    // (or "Dowolny"). Exercises the unit-pick step. Also the "blocked" side of the
+    // cancellation rule: this one cannot be cancelled online at all, so any cart
+    // containing it says so (hours are then irrelevant, hence null).
     {
       id: 4, name: 'Loża VIP', description: 'Prywatna loża z obsługą', price: 12000, duration: 60,
       bookingType: 'single', fulfillmentMode: 'unit', providerSelection: 'customer', primaryObjectCategoryTag: 'loza',
+      cancellationPolicy: { allowCancellation: false, cancellationHoursBefore: null, overridesBusinessPolicy: true },
     },
     // --- Services 5-8 exist so the offline harness can reach cases the first four
     // cannot: a DISJOINT pair (5 + 6 share no performer -> "nikt nie wykonuje
@@ -95,10 +98,15 @@ const BUSINESS: Business = {
       bookingType: 'single', fulfillmentMode: 'staff', providerSelection: 'customer',
       resourceServices: [{ id: 501, resourceId: 11, businessServiceId: 5, effectivePrice: 8000, effectiveDuration: 30, isActive: true }],
     },
+    // Window-only override (48 h against the business 24 h): put it in a cart with
+    // any other service and the identify step must still promise 48 h - MAX wins.
+    // allowCancellation stays null: a service inherits the business "yes", it can
+    // never grant one.
     {
       id: 6, name: 'Koloryzacja', description: 'Tylko u Oli', price: 15000, duration: 90,
       bookingType: 'single', fulfillmentMode: 'staff', providerSelection: 'customer',
       resourceServices: [{ id: 601, resourceId: 13, businessServiceId: 6, effectivePrice: 15000, effectiveDuration: 90, isActive: true }],
+      cancellationPolicy: { allowCancellation: null, cancellationHoursBefore: 48, overridesBusinessPolicy: true },
     },
     {
       id: 7, name: 'Loża - przedłużenie', description: 'Dodatkowa godzina w loży', price: 9000, duration: 60,

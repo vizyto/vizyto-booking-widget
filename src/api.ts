@@ -48,6 +48,18 @@ export type ServiceAddon = { id: number; name: string; description: string | nul
 // Add-ons grouped for the booking UI. minSelect/maxSelect bound the group; loose
 // add-ons (no group) land in a pseudo-group { id: 0, minSelect: 0, maxSelect: null }.
 export type ServiceAddonGroup = { id: number; name: string; description: string | null; minSelect: number; maxSelect: number | null; addons: ServiceAddon[] }
+// Per-service override of the business cancellation terms. RAW override, not a
+// resolved policy: null on a field = "inherit that field from
+// business.bookingPolicy". A service may only TIGHTEN - allowCancellation is
+// never `true` from here (the business flag is the hard switch), so the widget
+// reads `allowCancellation === false` as "this service blocks online cancelling".
+// overridesBusinessPolicy is a display hint (something on this service differs).
+// See resolveCartPolicy in ./policy for the cart-wide AND/MAX rule.
+export type ServiceCancellationPolicy = {
+  allowCancellation: boolean | null
+  cancellationHoursBefore: number | null
+  overridesBusinessPolicy: boolean
+}
 export type Service = {
   id: number
   name: string
@@ -72,6 +84,9 @@ export type Service = {
   image?: string | null
   resourceServices?: ResourceService[]
   viewerAccess?: ServiceViewerAccess
+  // Cancellation terms this service imposes on top of the business ones. Absent
+  // (older API, or a payload that skipped the columns) = inherit everything.
+  cancellationPolicy?: ServiceCancellationPolicy
 }
 export type Resource = {
   id: number
@@ -118,6 +133,12 @@ export type Business = {
 // A named group of services (PRO -> kategorie usług). Fetched from a separate
 // public endpoint; the widget maps each category to the ids of the services it
 // contains and reuses the service objects already loaded on the business.
+// Deliberately ID-ONLY: the categories endpoint returns its own copy of each
+// service (`c.services[].businessService`), and keeping a second Service shape
+// alive would mean every new field (cancellationPolicy, viewerAccess, ...) has
+// to be added twice or half the catalogue silently loses it. StepService
+// resolves the ids against `business.services`, so there is exactly one source
+// of service data in the widget.
 export type ServiceCategory = { id: number; name: string; serviceIds: number[] }
 
 // Free chain-start times for a day, as UTC "HH:mm" keys. The cart engine resolves
