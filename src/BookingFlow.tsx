@@ -1645,7 +1645,7 @@ export function BookingFlow({
           </div>
         )}
         {phase === 'done' && (
-          <StepDone rows={summaryRows} status={bookedStatus} phone={contact.phone} email={contact.email} onClose={onClose} onRestart={restart} />
+          <StepDone rows={summaryRows} status={bookedStatus} email={contact.email} onClose={onClose} onRestart={restart} />
         )}
         {phase === 'waitlistDone' && (
           <div class="vz-done vz-fade-in">

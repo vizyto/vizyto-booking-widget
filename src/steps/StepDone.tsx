@@ -13,14 +13,12 @@ import { Check, Clock } from '../ui/icons'
 export function StepDone({
   rows,
   status,
-  phone,
   email,
   onClose,
   onRestart,
 }: {
   rows: SummaryRow[]
   status: string | null
-  phone: string
   email: string
   onClose?: () => void
   onRestart: () => void
@@ -34,11 +32,11 @@ export function StepDone({
         {pending ? (
           email
             ? <>Salon musi ją jeszcze potwierdzić. O potwierdzeniu poinformujemy Cię e-mailem na <b style="color:var(--vz-text)">{email}</b>.</>
-            : <>Salon musi ją jeszcze potwierdzić. Damy Ci znać, gdy to zrobi.</>
+            // No e-mail = no channel we can honestly promise (SMS confirmations
+            // are off by default) - point at the salon instead.
+            : <>Salon musi ją jeszcze potwierdzić. Status poznasz bezpośrednio w salonie.</>
         ) : email ? (
           <>Potwierdzenie wyślemy na <b style="color:var(--vz-text)">{email}</b>.</>
-        ) : phone ? (
-          <>Szczegóły rezerwacji znajdziesz poniżej.</>
         ) : (
           <>Szczegóły rezerwacji znajdziesz poniżej.</>
         )}
