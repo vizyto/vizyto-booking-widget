@@ -80,6 +80,15 @@ export const Bell = ({ size = 18, ...p }: P) => (
 export const Lock = ({ size = 18, ...p }: P) => (
   <svg {...base(size)} {...p}><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
 )
+export const Plus = ({ size = 18, ...p }: P) => (
+  <svg {...base(size)} {...p}><path d="M12 5v14M5 12h14" /></svg>
+)
+export const Pencil = ({ size = 18, ...p }: P) => (
+  <svg {...base(size)} {...p}><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+)
+export const Trash = ({ size = 18, ...p }: P) => (
+  <svg {...base(size)} {...p}><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" /></svg>
+)
 export const Info = ({ size = 18, ...p }: P) => (
   <svg {...base(size)} {...p}><circle cx="12" cy="12" r="9" /><path d="M12 16v-4M12 8h.01" /></svg>
 )

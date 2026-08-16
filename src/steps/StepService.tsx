@@ -2,7 +2,7 @@ import { useMemo, useState } from 'preact/hooks'
 import type { Resource, Service, ServiceCategory } from '../api'
 import { formatDuration, formatPrice2, richTextToPlain, serviceBaseRange } from '../api'
 import { SelectCard } from '../ui/SelectCard'
-import { Clock, Info, Lock, Search } from '../ui/icons'
+import { Clock, Info, Lock, Pencil, Plus, Search, Trash } from '../ui/icons'
 
 /** One position already in the cart, as the list needs to render it. */
 export type CartEntry = { serviceId: number; recap: string; editable: boolean }
@@ -89,8 +89,8 @@ export function StepService({
         </p>
       )}
 
-      {/* Multi-select: one visit can chain several services, so this is a group
-          of checkboxes, not a radio group. */}
+      {/* Jedna wizyta może łączyć kilka usług, więc to lista dodawania, nie wybór
+          jednej opcji: karta działa jak przycisk (dodaj / edytuj), a usuwa kosz. */}
       <div class="vz-list vz-stagger" role="group" aria-label="Usługi">
         {shown.map((s) => {
           const { min, from } = serviceBaseRange(s, workers)
@@ -104,15 +104,21 @@ export function StepService({
                 title={s.name}
                 desc={desc || undefined}
                 selected={!!entry}
-                onSelect={() => onToggle(s)}
-                /* Podgląd tylko wtedy, gdy jest co pokazać - pusty arkusz
-                   z samą ceną byłby obietnicą bez pokrycia. Jak na profilu
-                   w Vizyto: ikona "i" obok wyboru, klik nie zaznacza usługi. */
+                /*
+                 * Wybrana karta jest powierzchnią EDYCJI, nie przełącznikiem -
+                 * usuwa wyłącznie kosz. Wcześniej przypadkowe dotknięcie
+                 * wyrzucało usługę z wizyty bez ostrzeżenia. Tak samo działa
+                 * kreator na stronie.
+                 */
+                onSelect={() => (entry ? entry.editable && onEdit(s.id) : onToggle(s))}
+                /* Podgląd tylko przy niewybranej usłudze i tylko gdy jest co
+                   pokazać - po dodaniu do wizyty miejsce zajmują ołówek i kosz,
+                   a trzy ikony obok siebie nie mieszczą się na telefonie. */
                 action={
-                  desc || (s.images?.length ?? 0) > 0 ? (
+                  !entry && (desc || (s.images?.length ?? 0) > 0) ? (
                     <button
                       type="button"
-                      class="vz-card-info"
+                      class="vz-card-icon"
                       aria-label={`Szczegóły usługi: ${s.name}`}
                       onClick={(e) => {
                         e.stopPropagation()
@@ -122,6 +128,42 @@ export function StepService({
                       <Info size={16} />
                     </button>
                   ) : undefined
+                }
+                /* Sterowanie jak w kreatorze na stronie: plus dodaje, a na
+                   dodanej pozycji stoją ołówek (wariant i dodatki) oraz kosz. */
+                control={
+                  entry ? (
+                    <span class="vz-card-ctrls">
+                      {entry.editable && (
+                        <button
+                          type="button"
+                          class="vz-card-icon"
+                          aria-label={`Edytuj ${s.name}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onEdit(s.id)
+                          }}
+                        >
+                          <Pencil size={16} />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        class="vz-card-icon danger"
+                        aria-label={`Usuń ${s.name} z wizyty`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onToggle(s)
+                        }}
+                      >
+                        <Trash size={16} />
+                      </button>
+                    </span>
+                  ) : (
+                    <span class="vz-card-add" aria-hidden="true">
+                      <Plus size={18} />
+                    </span>
+                  )
                 }
                 meta={
                   <>
@@ -134,14 +176,11 @@ export function StepService({
                   </>
                 }
               />
-              {entry && (entry.recap || entry.editable) && (
+              {/* Sam opis pozycji - za edycję odpowiada teraz ołówek na karcie,
+                  więc drugi link do tego samego byłby szumem. */}
+              {entry?.recap && (
                 <div class="vz-cart-recap">
-                  {entry.recap && <span class="vz-cart-recap-t">{entry.recap}</span>}
-                  {entry.editable && (
-                    <button class="vz-link" type="button" onClick={() => onEdit(s.id)}>
-                      Zmień wariant / dodatki
-                    </button>
-                  )}
+                  <span class="vz-cart-recap-t">{entry.recap}</span>
                 </div>
               )}
             </div>

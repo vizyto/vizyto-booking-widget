@@ -21,6 +21,7 @@ export function SelectCard({
   onSelect,
   multi,
   action,
+  control,
 }: {
   // Circular avatar (workers / "Dowolny"). Mutually exclusive with `thumb`.
   avatar?: VNode | string
@@ -38,14 +39,27 @@ export function SelectCard({
   multi?: boolean
   /** Secondary control rendered before the tick (e.g. details). Must stop propagation. */
   action?: ComponentChildren
+  /**
+   * Zastępuje domyślny znacznik (radio/checkbox) własnym sterowaniem - lista
+   * usług używa tego na parę "dodaj / edytuj + usuń", tak jak kreator na
+   * stronie. Bez tego zostaje kółko lub kwadracik.
+   */
+  control?: ComponentChildren
 }) {
   // A broken/unreachable photo degrades to the same letter placeholder as null.
   const [imgOk, setImgOk] = useState(true)
   return (
     <div
       class={`vz-card${selected ? ' selected' : ''}`}
-      role={multi ? 'checkbox' : 'radio'}
-      aria-checked={selected}
+      /*
+       * Z własnym sterowaniem (lista usług) karta NIE jest przełącznikiem:
+       * dodaje albo otwiera edycję, a usuwa osobny kosz - więc rola "checkbox"
+       * kłamałaby czytnikowi ekranu. Wtedy zachowuje się jak przycisk
+       * z wciśnięciem, dokładnie jak ServiceCard w aplikacji webowej.
+       */
+      role={control ? 'button' : multi ? 'checkbox' : 'radio'}
+      aria-checked={control ? undefined : selected}
+      aria-pressed={control ? selected : undefined}
       tabIndex={0}
       onClick={onSelect}
       onKeyDown={(e) => {
@@ -70,7 +84,9 @@ export function SelectCard({
         {meta && <span class="vz-card-meta">{meta}</span>}
       </span>
       {action}
-      <span class={`vz-radio${multi ? ' square' : ''}${selected ? ' on' : ''}`}>{selected && <Check size={15} />}</span>
+      {control ?? (
+        <span class={`vz-radio${multi ? ' square' : ''}${selected ? ' on' : ''}`}>{selected && <Check size={15} />}</span>
+      )}
     </div>
   )
 }

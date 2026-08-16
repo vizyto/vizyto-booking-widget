@@ -171,16 +171,34 @@ export const css = `
 /* Plain, clamped service description (2 lines). */
 .vz-card-desc { font-size: 12.5px; color: var(--vz-text-muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
-/* "i" na karcie usługi - wejście w szczegóły (galeria + pełny opis). Dyskretne,
-   bo wybór usługi zostaje główną akcją karty. */
-.vz-card-info {
-  flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center;
+/* Sterowanie karty usługi - jak w kreatorze na stronie: okrągły plus dodaje,
+   a na dodanej pozycji stoją obrysowany ołówek i kosz. */
+.vz-card-ctrls { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.vz-card-add {
+  flex: 0 0 auto; width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: 50%; background: var(--vz-accent); color: var(--vz-on-accent);
+  transition: filter var(--vz-dur-out);
+}
+.vz-card:hover .vz-card-add { filter: brightness(1.06); }
+.vz-card-icon {
+  flex: 0 0 auto; width: 36px; height: 36px; display: grid; place-items: center;
   border: 1px solid var(--vz-border); border-radius: 50%; background: var(--vz-surface);
   color: var(--vz-text-muted); cursor: pointer; padding: 0;
-  transition: color var(--vz-dur-out), border-color var(--vz-dur-out);
+  transition: color var(--vz-dur-out), border-color var(--vz-dur-out), background var(--vz-dur-out);
 }
-.vz-card-info:hover { color: var(--vz-accent); border-color: var(--vz-accent); }
-.vz-card-info:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
+.vz-card-icon:hover { color: var(--vz-accent); border-color: var(--vz-accent); }
+.vz-card-icon:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
+/* Kosz zostaje wyciszony, dopóki nikt go nie dotknie - to akcja niszcząca,
+   ale nie ma krzyczeć na całą listę. */
+.vz-card-icon.danger:hover { color: var(--vz-error); border-color: var(--vz-error); }
+/* Wąskie telefony: para ołówek + kosz zjadała kolumnę tekstu (opis usługi
+   ucinał się po dwóch słowach), więc na tej szerokości karta oddycha mniej,
+   a przyciski są o krok mniejsze - wciąż powyżej progu dotyku. */
+@media (max-width: 400px) {
+  .vz-card { padding: 14px; gap: 11px; }
+  .vz-card-add, .vz-card-icon { width: 32px; height: 32px; }
+  .vz-card-ctrls { gap: 6px; }
+}
 
 /* ---- SZCZEGÓŁY USŁUGI (galeria + pełny opis) --------------------------- */
 .vz-det { display: flex; flex-direction: column; gap: 14px; }
