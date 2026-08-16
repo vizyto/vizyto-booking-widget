@@ -652,6 +652,16 @@ export function addonTotals(service: Service, addonIds: number[]): { price: numb
   return { price, extraMinutes }
 }
 
+// Selected add-ons with their price, in group order - for the chips under a cart
+// position. Summary rows want bare names, so both shapes live side by side.
+export function selectedAddons(service: Service, addonIds: number[]): Array<{ id: number; name: string; price: number }> {
+  if (addonIds.length === 0) return []
+  const chosen = new Set(addonIds)
+  const out: Array<{ id: number; name: string; price: number }> = []
+  for (const g of service.addonGroups ?? []) for (const a of g.addons) if (chosen.has(a.id)) out.push({ id: a.id, name: a.name, price: a.price })
+  return out
+}
+
 // Names of the selected add-ons, in group order, for summaries.
 export function addonNames(service: Service, addonIds: number[]): string[] {
   if (addonIds.length === 0) return []

@@ -139,17 +139,29 @@ export const css = `
 /* ---- SELECT CARDS (radio) ---------------------------------------------- */
 .vz-list { display: grid; gap: 10px; }
 .vz-card {
-  display: flex; align-items: center; gap: 14px; text-align: left; width: 100%;
+  display: flex; align-items: center; gap: 12px; text-align: left; width: 100%;
   padding: 16px; border: 1.5px solid transparent; border-radius: var(--vz-r-xl);
   background: var(--vz-surface-2); color: var(--vz-text); cursor: pointer;
   font-family: var(--vz-font); transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
 }
 .vz-card:hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
-/* Karta jest divem z rolą (nosi własny przycisk "Szczegóły"), więc obrys
-   fokusu trzeba narysować samemu - przeglądarka nie da go za darmo. */
+/* Karta jest divem z rolą (nosi własne przyciski), więc obrys fokusu trzeba
+   narysować samemu - przeglądarka nie da go za darmo. */
 .vz-card:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
 .vz-card:active { transform: scale(.99); }
 .vz-card.selected { background: var(--vz-selected); border-color: var(--vz-accent); }
+/* Karta usługi ma DWIE strefy: klikalną treść (szczegóły) i sterowanie obok.
+   Wciska się więc sama treść - gdyby skalowała się cała karta, plus uciekałby
+   spod palca w trakcie dotknięcia. */
+.vz-card.split { cursor: default; }
+.vz-card.split:active { transform: none; }
+.vz-card-hit {
+  display: flex; align-items: center; gap: 12px; flex: 1 1 auto; min-width: 0;
+  text-align: left; cursor: pointer; border-radius: var(--vz-r-lg);
+  transition: transform var(--vz-dur-out);
+}
+.vz-card-hit:active { transform: scale(.99); }
+.vz-card-hit:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 4px; }
 .vz-card-av {
   width: 56px; height: 56px; flex: 0 0 auto; border-radius: 50%; overflow: hidden;
   background: var(--vz-surface); display: flex; align-items: center; justify-content: center;
@@ -157,11 +169,12 @@ export const css = `
 }
 .vz-card-av img { width: 100%; height: 100%; object-fit: cover; }
 .vz-card.selected .vz-card-av { background: color-mix(in srgb, var(--vz-accent) 18%, var(--vz-surface)); color: var(--vz-accent); }
-/* Rounded-square service photo (or letter placeholder), aligned with avatars. */
+/* Kwadratowa miniatura usługi (albo litera zastępcza) - ten sam kadr 80 px co
+   karta usługi na stronie, żeby zdjęcie miało czym zagrać. */
 .vz-card-thumb {
-  width: 56px; height: 56px; flex: 0 0 auto; border-radius: var(--vz-r-md); overflow: hidden;
+  width: 80px; height: 80px; flex: 0 0 auto; border-radius: var(--vz-r-md); overflow: hidden;
   background: var(--vz-surface); display: flex; align-items: center; justify-content: center;
-  color: var(--vz-text-muted); font-weight: 600; font-size: 20px;
+  color: var(--vz-text-muted); font-weight: 600; font-size: 26px;
 }
 .vz-card-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .vz-card.selected .vz-card-thumb { background: color-mix(in srgb, var(--vz-accent) 18%, var(--vz-surface)); color: var(--vz-accent); }
@@ -169,58 +182,107 @@ export const css = `
 .vz-card-title { font-size: 16px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
 .vz-card-sub { font-size: 13px; color: var(--vz-text-muted); }
 /* Plain, clamped service description (2 lines). */
-.vz-card-desc { font-size: 12.5px; color: var(--vz-text-muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.vz-card-desc { font-size: 13.5px; color: var(--vz-text-muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* Sterowanie karty usługi - jak w kreatorze na stronie: okrągły plus dodaje,
-   a na dodanej pozycji stoją obrysowany ołówek i kosz. */
+   a na dodanej pozycji stoją obrysowany ołówek i kosz (40 px, tyle co przyciski
+   ikonowe w aplikacji). */
 .vz-card-ctrls { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .vz-card-add {
-  flex: 0 0 auto; width: 36px; height: 36px; display: grid; place-items: center;
-  border-radius: 50%; background: var(--vz-accent); color: var(--vz-on-accent);
-  transition: filter var(--vz-dur-out);
+  flex: 0 0 auto; width: 40px; height: 40px; display: grid; place-items: center;
+  border: 0; border-radius: 50%; background: var(--vz-accent); color: var(--vz-on-accent);
+  cursor: pointer; padding: 0; transition: filter var(--vz-dur-out), transform var(--vz-dur-out);
 }
-.vz-card:hover .vz-card-add { filter: brightness(1.06); }
+.vz-card-add:hover { filter: brightness(1.06); }
+.vz-card-add:active { transform: scale(.94); }
+.vz-card-add:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
 .vz-card-icon {
-  flex: 0 0 auto; width: 36px; height: 36px; display: grid; place-items: center;
+  flex: 0 0 auto; width: 40px; height: 40px; display: grid; place-items: center;
   border: 1px solid var(--vz-border); border-radius: 50%; background: var(--vz-surface);
   color: var(--vz-text-muted); cursor: pointer; padding: 0;
-  transition: color var(--vz-dur-out), border-color var(--vz-dur-out), background var(--vz-dur-out);
+  transition: color var(--vz-dur-out), border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
 }
 .vz-card-icon:hover { color: var(--vz-accent); border-color: var(--vz-accent); }
+.vz-card-icon:active { transform: scale(.94); }
 .vz-card-icon:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
-/* Kosz zostaje wyciszony, dopóki nikt go nie dotknie - to akcja niszcząca,
-   ale nie ma krzyczeć na całą listę. */
-.vz-card-icon.danger:hover { color: var(--vz-error); border-color: var(--vz-error); }
-/* Wąskie telefony: para ołówek + kosz zjadała kolumnę tekstu (opis usługi
-   ucinał się po dwóch słowach), więc na tej szerokości karta oddycha mniej,
-   a przyciski są o krok mniejsze - wciąż powyżej progu dotyku. */
+/* Kosz nosi swój kolor od razu (jak w kreatorze na stronie), ale w rozcieńczeniu
+   - ma się dać znaleźć wzrokiem, nie krzyczeć na całą listę. */
+.vz-card-icon.danger {
+  color: var(--vz-error);
+  border-color: color-mix(in srgb, var(--vz-error) 30%, transparent);
+  background: color-mix(in srgb, var(--vz-error) 7%, var(--vz-surface));
+}
+.vz-card-icon.danger:hover {
+  color: var(--vz-error);
+  border-color: color-mix(in srgb, var(--vz-error) 55%, transparent);
+  background: color-mix(in srgb, var(--vz-error) 14%, var(--vz-surface));
+}
+/* Wąskie telefony: miniatura i para ołówek + kosz zjadały kolumnę tekstu (opis
+   usługi ucinał się po dwóch słowach), więc na tej szerokości karta oddycha
+   mniej, a sterowanie schodzi o krok - wciąż powyżej progu dotyku. */
 @media (max-width: 400px) {
-  .vz-card { padding: 14px; gap: 11px; }
-  .vz-card-add, .vz-card-icon { width: 32px; height: 32px; }
+  .vz-card { padding: 13px; gap: 10px; }
+  .vz-card-hit { gap: 10px; }
+  .vz-card-thumb { width: 64px; height: 64px; font-size: 22px; }
+  .vz-card-add, .vz-card-icon { width: 36px; height: 36px; }
   .vz-card-ctrls { gap: 6px; }
 }
 
 /* ---- SZCZEGÓŁY USŁUGI (galeria + pełny opis) --------------------------- */
+/* Układ 1:1 z arkuszem "service/Details" na stronie: tytuł, poziomy pasek
+   kwadratowych zdjęć, pełny opis, a na dole cena z czasem i akcja. */
 .vz-det { display: flex; flex-direction: column; gap: 14px; }
-.vz-det-gallery { display: flex; flex-direction: column; gap: 8px; }
-.vz-det-photo {
-  width: 100%; aspect-ratio: 16 / 10; border-radius: var(--vz-r-xl); overflow: hidden;
-  background: var(--vz-surface-2);
+.vz-det-title { margin: 0; font-size: 20px; font-weight: 650; line-height: 1.25; overflow-wrap: anywhere; }
+.vz-det-gal { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+.vz-det-gal::-webkit-scrollbar { display: none; }
+.vz-det-shot {
+  flex: 0 0 auto; width: 112px; aspect-ratio: 1 / 1; padding: 0; overflow: hidden; cursor: pointer;
+  border: 1px solid var(--vz-border); border-radius: var(--vz-r-lg); background: var(--vz-surface-2);
+  transition: transform var(--vz-dur-out), border-color var(--vz-dur-out);
 }
-.vz-det-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.vz-det-thumbs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
-.vz-det-thumb {
-  flex: 0 0 auto; width: 56px; height: 56px; padding: 0; overflow: hidden; cursor: pointer;
-  border: 2px solid transparent; border-radius: var(--vz-r-md); background: var(--vz-surface-2);
-}
-.vz-det-thumb.on { border-color: var(--vz-accent); }
-.vz-det-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.vz-det-title { margin: 0; font-size: 19px; font-weight: 650; line-height: 1.25; }
-.vz-det-meta { display: flex; align-items: center; gap: 12px; font-size: 14px; margin-top: -6px; }
+.vz-det-shot:hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+.vz-det-shot:active { transform: scale(.98); }
+.vz-det-shot:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
+.vz-det-shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .vz-det-desc { margin: 0; font-size: 14px; line-height: 1.6; color: var(--vz-text-muted); overflow-wrap: anywhere; }
-.vz-det-cta { margin-top: 4px; }
-.vz-card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; font-size: 13.5px; margin-top: 2px; }
-.vz-card-meta .vz-dur { color: var(--vz-text-muted); display: inline-flex; align-items: center; gap: 4px; }
+.vz-det-foot {
+  display: flex; align-items: center; gap: 12px; margin-top: 2px;
+  padding-top: 14px; border-top: 1px solid var(--vz-border);
+}
+.vz-det-foot-t { flex: 1 1 auto; min-width: 0; }
+.vz-det-price { display: block; font-size: 18px; font-weight: 650; line-height: 1.2; }
+.vz-det-dur { display: inline-flex; align-items: center; gap: 5px; margin-top: 2px; font-size: 13px; color: var(--vz-text-muted); }
+/* Podwójna klasa nie z upodobania: .vz-btn stoi niżej w arkuszu i inaczej
+   wygrywa swoje width:100% oraz margin-top. */
+.vz-btn.vz-det-cta { flex: 0 1 auto; width: auto; margin-top: 0; padding: 13px 22px; white-space: nowrap; }
+
+/* Powiększone zdjęcie. Pozycja fixed wystarczy: nakładka panelu niesie
+   backdrop-filter, więc i tak jest blokiem zawierającym dla potomków fixed. */
+.vz-lightbox {
+  position: fixed; inset: 0; z-index: 2147483003;
+  display: flex; align-items: center; justify-content: center; padding: 28px 16px;
+  background: rgba(8,8,10,.94); animation: vz-fade var(--vz-dur-out) var(--vz-ease-out);
+}
+.vz-lb-img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--vz-r-md); }
+.vz-lb-btn {
+  position: absolute; width: 40px; height: 40px; display: grid; place-items: center;
+  border: 0; border-radius: 50%; background: rgba(255,255,255,.14); color: #fff;
+  cursor: pointer; padding: 0; transition: background var(--vz-dur-out);
+}
+.vz-lb-btn:hover { background: rgba(255,255,255,.26); }
+.vz-lb-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.vz-lb-btn.close { top: 12px; right: 12px; }
+.vz-lb-btn.prev { top: 50%; left: 10px; transform: translateY(-50%); }
+.vz-lb-btn.next { top: 50%; right: 10px; transform: translateY(-50%); }
+.vz-lb-count { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,.8); font-size: 13px; }
+
+.vz-card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; font-size: 13.5px; margin-top: 4px; }
+/* Czas trwania jako plakietka - dokładnie jak Badge na karcie usługi w WEB. */
+.vz-card-meta .vz-dur {
+  display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
+  border: 1px solid var(--vz-border); border-radius: var(--vz-r-pill);
+  background: var(--vz-surface); color: var(--vz-text-muted); font-size: 12.5px;
+}
 .vz-card-meta .vz-price { font-weight: 600; }
 /* Discreet "Dla stałych klientów" chip on whitelist-locked services. Not an
    error - logging in may unlock the service, so it stays calm and selectable. */
@@ -245,14 +307,37 @@ export const css = `
    what each position actually is. */
 .vz-cart-row { display: flex; flex-direction: column; }
 .vz-cart-recap {
-  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
-  margin: -2px 0 0; padding: 7px 14px 9px 14px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin: -2px 0 0; padding: 9px 14px 11px 14px;
   border: 1.5px solid var(--vz-accent); border-top: 0;
   border-radius: 0 0 var(--vz-r-md) var(--vz-r-md);
   background: var(--vz-selected);
   font-size: 12.5px; color: var(--vz-text-muted);
 }
-.vz-cart-recap-t { flex: 1 1 auto; min-width: 0; }
+/* Plakietka wariantu/dodatku. Tekst zostaje w kolorze treści, a marka gra tłem:
+   sam akcent bywa nadpisany przez osadzenie i na jasnym motywie potrafi zniknąć
+   na własnym rozcieńczeniu. */
+.vz-chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px;
+  border: 0; border-radius: var(--vz-r-pill); font-family: var(--vz-font);
+  background: color-mix(in srgb, var(--vz-accent) 20%, var(--vz-surface));
+  color: var(--vz-text); font-size: 12px; font-weight: 500;
+}
+.vz-chip-x { opacity: .7; font-variant-numeric: tabular-nums; }
+.vz-chip.err { background: color-mix(in srgb, var(--vz-error) 16%, var(--vz-surface)); color: var(--vz-error); cursor: pointer; }
+/* Nic jeszcze nie wybrano, choć jest z czego - zaproszenie zamiast pustki. */
+.vz-chip-add {
+  display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px 5px 5px;
+  border: 0; border-radius: var(--vz-r-lg); font-family: var(--vz-font);
+  background: color-mix(in srgb, var(--vz-accent) 16%, var(--vz-surface));
+  color: var(--vz-text); font-size: 12.5px; font-weight: 500; cursor: pointer;
+  transition: background var(--vz-dur-out), transform var(--vz-dur-out);
+}
+.vz-chip-add:hover { background: color-mix(in srgb, var(--vz-accent) 26%, var(--vz-surface)); }
+.vz-chip-add:active { transform: scale(.97); }
+.vz-chip-plus { display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--vz-r-sm); background: var(--vz-accent); color: var(--vz-on-accent); }
+.vz-chip-add.err { background: color-mix(in srgb, var(--vz-error) 14%, var(--vz-surface)); color: var(--vz-error); }
+.vz-chip-add.err .vz-chip-plus { background: var(--vz-error); color: #fff; }
 /* The card above a recap must not keep its own rounded bottom. */
 .vz-cart-row:has(.vz-cart-recap) .vz-card { border-radius: var(--vz-r-md) var(--vz-r-md) 0 0; }
 
@@ -335,7 +420,8 @@ export const css = `
 .vz-chain-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vz-chain-dur { flex: 0 0 auto; font-size: 12px; color: var(--vz-text-muted); }
 /* A card with a recap glued to it must not scale away from it while pressed. */
-.vz-cart-row:has(.vz-cart-recap) .vz-card:active { transform: none; }
+.vz-cart-row:has(.vz-cart-recap) .vz-card:active,
+.vz-cart-row:has(.vz-cart-recap) .vz-card-hit:active { transform: none; }
 
 .vz-slotpick { display: flex; flex-wrap: wrap; gap: 8px; }
 .vz-slotpick-b {

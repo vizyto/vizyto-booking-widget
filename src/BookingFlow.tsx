@@ -22,6 +22,7 @@ import {
   oauthLogin,
   priceRange,
   resolveVariant,
+  selectedAddons,
   sendGuestOtp,
   serviceHasOptions,
   slotLabel,
@@ -51,7 +52,7 @@ import { ArrowLeft, ArrowRight, Close } from './ui/icons'
 import { SummaryCard, type SummaryRow } from './ui/SummaryCard'
 import { AvatarStack } from './ui/AvatarStack'
 import { Button } from './ui/Button'
-import { StepService } from './steps/StepService'
+import { StepService, type CartChip } from './steps/StepService'
 import { StepConfigure } from './steps/StepConfigure'
 import { StepDetails } from './steps/StepDetails'
 import { StepResource } from './steps/StepResource'
@@ -727,15 +728,26 @@ export function BookingFlow({
     }
   }, [chain, slotKey, date, lines, business.timezone])
 
-  /** Short "wariant · dodatki" recap under a cart row (empty when nothing chosen). */
-  const lineRecap = (l: CartLine): string => {
+  /**
+   * Plakietki pod pozycją koszyka: najpierw wariant z własną ceną, potem każdy
+   * dodatek z dopłatą - dokładnie jak stopka wybranej karty w kreatorze WEB.
+   */
+  const lineChips = (l: CartLine): CartChip[] => {
     const variant = resolveVariant(l.service, l.variantDuration)
     const hasVariantChoice = (l.service.durationOptions?.length ?? 0) > 0
-    const bits = [
-      ...(hasVariantChoice && variant ? [variant.label || formatDuration(variant.durationMinutes)] : []),
-      ...addonNames(l.service, l.addonIds),
+    return [
+      ...(hasVariantChoice && variant
+        ? [{
+            label: variant.label || formatDuration(variant.durationMinutes),
+            extra: variant.priceCents != null ? formatPrice2(variant.priceCents) : undefined,
+            clock: true,
+          }]
+        : []),
+      ...selectedAddons(l.service, l.addonIds).map((a) => ({
+        label: a.name,
+        extra: a.price > 0 ? `+${formatPrice2(a.price)}` : undefined,
+      })),
     ]
-    return bits.join(' · ')
   }
 
   // Nobody performs the whole cart alone: the step says so and names who does
@@ -1484,8 +1496,10 @@ export function BookingFlow({
               categories={categories}
               cart={lines.map((l) => ({
                 serviceId: l.service.id,
-                recap: lineRecap(l),
+                chips: lineChips(l),
                 editable: serviceHasOptions(l.service),
+                hideMeta: (l.service.durationOptions?.length ?? 0) > 0 && !!resolveVariant(l.service, l.variantDuration),
+                issue: !addonsValid(l.service, l.addonIds),
               }))}
               onToggle={toggleService}
               onEdit={editLine}

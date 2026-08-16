@@ -2,14 +2,22 @@ import { useState } from 'preact/hooks'
 import type { ComponentChildren, VNode } from 'preact'
 import { Check } from './icons'
 
-// Full-width radio-style choice card (service, specialist) matching the app:
-// optional avatar/thumbnail, title + subtitle + description + meta, and a
-// check/empty radio on the right.
+// Full-width choice card (service, specialist) matching the app: optional
+// avatar/thumbnail, title + subtitle + description + meta, and a control on the
+// right.
 //
-// Deliberately a <div role="radio|checkbox"> and not a <button>: the card can
-// carry its own action (np. "Szczegóły usługi"), a button inside a button is
-// invalid HTML and swallows clicks. Web's ServiceCard does the same. Keyboard
-// support is therefore hand-rolled: Enter/Space on the card itself select it.
+// Two shapes, exactly like WEB:
+//  - without `control` - the WHOLE card is one radio/checkbox (specjalista,
+//    zasób): tapping it picks the option.
+//  - with `control` (lista usług) - the card splits into a clickable CONTENT
+//    region (opens the service details) and the control next to it (plus /
+//    ołówek + kosz). The control is a SIBLING of the region, never nested in it,
+//    so a tap on the plus can't also open the details and no interactive element
+//    lives inside another (jak OfferCard w WEB).
+//
+// Deliberately a <div role="..."> and not a <button>: a button inside a button
+// is invalid HTML and swallows clicks. Keyboard support is therefore
+// hand-rolled: Enter/Space on the region itself activates it.
 export function SelectCard({
   avatar,
   thumb,
@@ -20,7 +28,6 @@ export function SelectCard({
   selected,
   onSelect,
   multi,
-  action,
   control,
 }: {
   // Circular avatar (workers / "Dowolny"). Mutually exclusive with `thumb`.
@@ -34,43 +41,28 @@ export function SelectCard({
   desc?: string
   meta?: ComponentChildren
   selected: boolean
+  /** Karta bez `control`: wybór opcji. Z `control`: klik w treść (szczegóły). */
   onSelect: () => void
   /** Multi-select semantics (cart): checkbox + square tick instead of a radio. */
   multi?: boolean
-  /** Secondary control rendered before the tick (e.g. details). Must stop propagation. */
-  action?: ComponentChildren
   /**
-   * Zastępuje domyślny znacznik (radio/checkbox) własnym sterowaniem - lista
-   * usług używa tego na parę "dodaj / edytuj + usuń", tak jak kreator na
-   * stronie. Bez tego zostaje kółko lub kwadracik.
+   * Własne sterowanie po prawej (plus / ołówek + kosz). Obecność tego slotu
+   * przełącza kartę w układ dwustrefowy - bez niego zostaje kółko lub kwadracik.
    */
   control?: ComponentChildren
 }) {
   // A broken/unreachable photo degrades to the same letter placeholder as null.
   const [imgOk, setImgOk] = useState(true)
-  return (
-    <div
-      class={`vz-card${selected ? ' selected' : ''}`}
-      /*
-       * Z własnym sterowaniem (lista usług) karta NIE jest przełącznikiem:
-       * dodaje albo otwiera edycję, a usuwa osobny kosz - więc rola "checkbox"
-       * kłamałaby czytnikowi ekranu. Wtedy zachowuje się jak przycisk
-       * z wciśnięciem, dokładnie jak ServiceCard w aplikacji webowej.
-       */
-      role={control ? 'button' : multi ? 'checkbox' : 'radio'}
-      aria-checked={control ? undefined : selected}
-      aria-pressed={control ? selected : undefined}
-      tabIndex={0}
-      onClick={onSelect}
-      onKeyDown={(e) => {
-        // Only the card itself - a key pressed on the action button is its own.
-        if (e.target !== e.currentTarget) return
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
-          onSelect()
-        }
-      }}
-    >
+  const activate = (e: KeyboardEvent) => {
+    // Only the region itself - a key pressed inside is its own element's.
+    if (e.target !== e.currentTarget) return
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      onSelect()
+    }
+  }
+  const body = (
+    <>
       {thumb !== undefined && (
         <span class="vz-card-thumb">
           {thumb && imgOk ? <img src={thumb} alt="" loading="lazy" onError={() => setImgOk(false)} /> : title.charAt(0)}
@@ -83,10 +75,31 @@ export function SelectCard({
         {desc && <span class="vz-card-desc">{desc}</span>}
         {meta && <span class="vz-card-meta">{meta}</span>}
       </span>
-      {action}
-      {control ?? (
-        <span class={`vz-radio${multi ? ' square' : ''}${selected ? ' on' : ''}`}>{selected && <Check size={15} />}</span>
-      )}
+    </>
+  )
+
+  if (control !== undefined) {
+    return (
+      <div class={`vz-card split${selected ? ' selected' : ''}`}>
+        <div class="vz-card-hit" role="button" tabIndex={0} onClick={onSelect} onKeyDown={activate}>
+          {body}
+        </div>
+        {control}
+      </div>
+    )
+  }
+
+  return (
+    <div
+      class={`vz-card${selected ? ' selected' : ''}`}
+      role={multi ? 'checkbox' : 'radio'}
+      aria-checked={selected}
+      tabIndex={0}
+      onClick={onSelect}
+      onKeyDown={activate}
+    >
+      {body}
+      <span class={`vz-radio${multi ? ' square' : ''}${selected ? ' on' : ''}`}>{selected && <Check size={15} />}</span>
     </div>
   )
 }
