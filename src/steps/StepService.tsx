@@ -2,7 +2,7 @@ import { useMemo, useState } from 'preact/hooks'
 import type { Resource, Service, ServiceCategory } from '../api'
 import { formatDuration, formatPrice2, richTextToPlain, serviceBaseRange } from '../api'
 import { SelectCard } from '../ui/SelectCard'
-import { Clock, Lock, Search } from '../ui/icons'
+import { Clock, Info, Lock, Search } from '../ui/icons'
 
 /** One position already in the cart, as the list needs to render it. */
 export type CartEntry = { serviceId: number; recap: string; editable: boolean }
@@ -14,6 +14,7 @@ export function StepService({
   cart,
   onToggle,
   onEdit,
+  onDetails,
 }: {
   services: Service[]
   // The whole team; each service resolves its own offering workers to decide
@@ -26,6 +27,8 @@ export function StepService({
   onToggle: (s: Service) => void
   /** Reopen a position's variant + add-ons. */
   onEdit: (serviceId: number) => void
+  /** Otwiera szczegóły usługi (galeria + pełny opis). */
+  onDetails: (serviceId: number) => void
 }) {
   // Resolve each category to the service objects it actually contains (and that
   // are still bookable), dropping empty categories.
@@ -102,6 +105,24 @@ export function StepService({
                 desc={desc || undefined}
                 selected={!!entry}
                 onSelect={() => onToggle(s)}
+                /* Podgląd tylko wtedy, gdy jest co pokazać - pusty arkusz
+                   z samą ceną byłby obietnicą bez pokrycia. Jak na profilu
+                   w Vizyto: ikona "i" obok wyboru, klik nie zaznacza usługi. */
+                action={
+                  desc || (s.images?.length ?? 0) > 0 ? (
+                    <button
+                      type="button"
+                      class="vz-card-info"
+                      aria-label={`Szczegóły usługi: ${s.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onDetails(s.id)
+                      }}
+                    >
+                      <Info size={16} />
+                    </button>
+                  ) : undefined
+                }
                 meta={
                   <>
                     <span class="vz-dur"><Clock size={14} /> {formatDuration(s.duration)}</span>

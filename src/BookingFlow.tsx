@@ -53,6 +53,7 @@ import { AvatarStack } from './ui/AvatarStack'
 import { Button } from './ui/Button'
 import { StepService } from './steps/StepService'
 import { StepConfigure } from './steps/StepConfigure'
+import { StepDetails } from './steps/StepDetails'
 import { StepResource } from './steps/StepResource'
 import { StepDateTime } from './steps/StepDateTime'
 import { ItemProviders } from './steps/ItemProviders'
@@ -287,6 +288,11 @@ export function BookingFlow({
   )
   const configuring = configuringId != null
   const configuringLine = configuringId != null ? lineOf(configuringId) : undefined
+  // Podgląd szczegółów usługi (galeria + pełny opis) nakładany na listę - jak
+  // arkusz "service/Details" na profilu w Vizyto. Osobny od konfiguracji:
+  // szczegóły ogląda się PRZED wyborem, warianty konfiguruje po.
+  const [detailsId, setDetailsId] = useState<number | null>(null)
+  const detailsService = detailsId != null ? services.find((s) => s.id === detailsId) : undefined
   const [date, setDate] = useState('')
   const [slotKey, setSlotKey] = useState('')
   const [counts, setCounts] = useState<DayCounts>({})
@@ -1156,6 +1162,8 @@ export function BookingFlow({
     if (phase === 'select') {
       // Configuring overlays the selection - back just closes it, keeping choices.
       if (configuring) return () => setConfiguringId(null)
+      // Szczegóły usługi leżą na liście - wstecz wraca do listy, nie zamyka widgetu.
+      if (detailsService) return () => setDetailsId(null)
       if (selStep === 2) return () => setSelStep(hasResourceStep ? 1 : 0)
       if (selStep === 1) return () => setSelStep(0)
       return onClose ?? null // first step: back closes (launcher)
@@ -1383,7 +1391,7 @@ export function BookingFlow({
       : phase === 'slotLost' || phase === 'waitlist'
         ? termIdx
         : totalSteps - 1
-  const showCta = phase === 'select' && !configuring
+  const showCta = phase === 'select' && !configuring && !detailsService
   // Whitelist banner on the selection phases: only for an unconfirmed viewer,
   // and not while the calendar already shows its own dedicated login prompt.
   const showAccessBanner =
@@ -1456,7 +1464,18 @@ export function BookingFlow({
             onDone={confirmConfigure}
           />
         )}
-        {phase === 'select' && !configuring && selStep === 0 && (
+        {phase === 'select' && !configuring && selStep === 0 && detailsService && (
+          <StepDetails
+            service={detailsService}
+            workers={workers}
+            selected={lines.some((l) => l.service.id === detailsService.id)}
+            onToggle={() => {
+              toggleService(detailsService)
+              setDetailsId(null)
+            }}
+          />
+        )}
+        {phase === 'select' && !configuring && selStep === 0 && !detailsService && (
           <>
             {cartNotice && <Notice title={cartNotice.title}>{cartNotice.text}</Notice>}
             <StepService
@@ -1470,6 +1489,7 @@ export function BookingFlow({
               }))}
               onToggle={toggleService}
               onEdit={editLine}
+              onDetails={setDetailsId}
             />
           </>
         )}

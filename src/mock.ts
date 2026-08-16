@@ -30,6 +30,12 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const THUMB =
   "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%23fd9320'/><stop offset='1' stop-color='%23bf700f'/></linearGradient></defs><rect width='120' height='120' fill='url(%23g)'/></svg>"
 
+/** Druga i trzecia klatka galerii - żeby podgląd szczegółów miał czym przełączać. */
+const swatch = (a: string, b: string) =>
+  `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><defs><linearGradient id='g' x1='0' y1='1' x2='1' y2='0'><stop offset='0' stop-color='%23${a}'/><stop offset='1' stop-color='%23${b}'/></linearGradient></defs><rect width='120' height='120' fill='url(%23g)'/></svg>`
+const THUMB2 = swatch('4b5563', '111827')
+const THUMB3 = swatch('9ca3af', '4b5563')
+
 const BUSINESS: Business = {
   id: 24,
   name: 'Proper Barbershop',
@@ -41,7 +47,12 @@ const BUSINESS: Business = {
     {
       id: 1, name: 'Strzyżenie', description: '<p>Klasyczne strzyżenie nożyczkami i maszynką, z konsultacją.</p>', price: 6000, duration: 45,
       bookingType: 'single', fulfillmentMode: 'staff', providerSelection: 'customer',
-      image: THUMB, images: [{ id: 1, url: THUMB, orderIndex: 0 }],
+      image: THUMB,
+      images: [
+        { id: 1, url: THUMB, orderIndex: 0 },
+        { id: 2, url: THUMB2, orderIndex: 1 },
+        { id: 3, url: THUMB3, orderIndex: 2 },
+      ],
       durationOptions: [
         { label: 'Krótkie', durationMinutes: 30, priceCents: 5000 },
         { label: 'Klasyczne', durationMinutes: 45, priceCents: 6000 },

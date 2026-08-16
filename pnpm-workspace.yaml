@@ -1,4 +1,9 @@
 packages:
   - .
+# esbuild potrzebuje skryptu postinstall (pobiera binarkę) - bez jawnej zgody
+# pnpm 11 przerywa `pnpm build` błędem ERR_PNPM_IGNORED_BUILDS.
+allowBuilds:
+  esbuild: true
 onlyBuiltDependencies:
   - esbuild
+verifyDepsBeforeRun: false

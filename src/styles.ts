@@ -145,6 +145,9 @@ export const css = `
   font-family: var(--vz-font); transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
 }
 .vz-card:hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+/* Karta jest divem z rolą (nosi własny przycisk "Szczegóły"), więc obrys
+   fokusu trzeba narysować samemu - przeglądarka nie da go za darmo. */
+.vz-card:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
 .vz-card:active { transform: scale(.99); }
 .vz-card.selected { background: var(--vz-selected); border-color: var(--vz-accent); }
 .vz-card-av {
@@ -167,6 +170,37 @@ export const css = `
 .vz-card-sub { font-size: 13px; color: var(--vz-text-muted); }
 /* Plain, clamped service description (2 lines). */
 .vz-card-desc { font-size: 12.5px; color: var(--vz-text-muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* "i" na karcie usługi - wejście w szczegóły (galeria + pełny opis). Dyskretne,
+   bo wybór usługi zostaje główną akcją karty. */
+.vz-card-info {
+  flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center;
+  border: 1px solid var(--vz-border); border-radius: 50%; background: var(--vz-surface);
+  color: var(--vz-text-muted); cursor: pointer; padding: 0;
+  transition: color var(--vz-dur-out), border-color var(--vz-dur-out);
+}
+.vz-card-info:hover { color: var(--vz-accent); border-color: var(--vz-accent); }
+.vz-card-info:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
+
+/* ---- SZCZEGÓŁY USŁUGI (galeria + pełny opis) --------------------------- */
+.vz-det { display: flex; flex-direction: column; gap: 14px; }
+.vz-det-gallery { display: flex; flex-direction: column; gap: 8px; }
+.vz-det-photo {
+  width: 100%; aspect-ratio: 16 / 10; border-radius: var(--vz-r-xl); overflow: hidden;
+  background: var(--vz-surface-2);
+}
+.vz-det-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vz-det-thumbs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.vz-det-thumb {
+  flex: 0 0 auto; width: 56px; height: 56px; padding: 0; overflow: hidden; cursor: pointer;
+  border: 2px solid transparent; border-radius: var(--vz-r-md); background: var(--vz-surface-2);
+}
+.vz-det-thumb.on { border-color: var(--vz-accent); }
+.vz-det-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.vz-det-title { margin: 0; font-size: 19px; font-weight: 650; line-height: 1.25; }
+.vz-det-meta { display: flex; align-items: center; gap: 12px; font-size: 14px; margin-top: -6px; }
+.vz-det-desc { margin: 0; font-size: 14px; line-height: 1.6; color: var(--vz-text-muted); overflow-wrap: anywhere; }
+.vz-det-cta { margin-top: 4px; }
 .vz-card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; font-size: 13.5px; margin-top: 2px; }
 .vz-card-meta .vz-dur { color: var(--vz-text-muted); display: inline-flex; align-items: center; gap: 4px; }
 .vz-card-meta .vz-price { font-weight: 600; }
