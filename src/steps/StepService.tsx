@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'preact/hooks'
 import type { Resource, Service, ServiceCategory } from '../api'
-import { formatDuration, formatPrice2, richTextToPlain, serviceBaseRange } from '../api'
+import { formatDuration, priceLabel, richTextToPlain, serviceBaseRange } from '../api'
 import { SelectCard } from '../ui/SelectCard'
 import { Clock, Lock, Pencil, Plus, Search, Trash } from '../ui/icons'
 
@@ -166,7 +166,7 @@ export function StepService({
                   ) : (
                     <>
                       <span class="vz-dur"><Clock size={14} /> {formatDuration(s.duration)}</span>
-                      <span class="vz-price">{from ? 'od ' : ''}{formatPrice2(min)}</span>
+                      <span class="vz-price">{priceLabel(min, from)}</span>
                       {/* Whitelist-locked: still selectable - logging in may unlock it. */}
                       {s.viewerAccess === 'locked' && (
                         <span class="vz-lock-chip"><Lock size={11} /> Dla stałych klientów</span>

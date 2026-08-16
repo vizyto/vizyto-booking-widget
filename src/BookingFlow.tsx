@@ -12,6 +12,7 @@ import {
   createAppointment,
   formatDuration,
   formatPrice2,
+  priceLabel,
   getCartCounts,
   getCartFirstFree,
   getCartSlots,
@@ -629,7 +630,7 @@ export function BookingFlow({
         }),
         { label: providerRowLabel, value: providerName },
         { label: 'Termin', value: `${dayMonth(date)}, ${slotLabel(date, slotKey, business.timezone)}` },
-        { label: 'Cena', value: `${showFrom ? 'od ' : ''}${formatPrice2(shownPrice)}`, total: true },
+        { label: 'Cena', value: priceLabel(shownPrice, showFrom), total: true },
       ]
     : []
 
@@ -1421,7 +1422,7 @@ export function BookingFlow({
   // Every position must satisfy its own add-on groups before the cart can move on.
   const cartValid = lines.length > 0 && !configuring && lines.every((l) => addonsValid(l.service, l.addonIds))
   const canAdvance = selStep === 0 ? cartValid : selStep === 1 ? resourceValid : !!slotKey
-  const ctaPrice = lines.length ? `${showFrom ? 'od ' : ''}${formatPrice2(shownPrice)}` : ''
+  const ctaPrice = lines.length ? priceLabel(shownPrice, showFrom) : ''
   // The time step has to show who the hours belong to - and let it be changed
   // without walking back a step. A pool cart keeps its own (single) answer.
   const showProviderChip = lines.length > 0 && !isUnit && !providerAuto && (hasResourceStep || pinnedPeople.length > 0)

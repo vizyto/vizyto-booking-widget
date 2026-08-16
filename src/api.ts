@@ -778,6 +778,17 @@ export const formatPrice = (g: number) =>
 export const formatPrice2 = (g: number) =>
   (g / 100).toLocaleString('pl-PL', { style: 'currency', currency: 'PLN', minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
+/**
+ * Etykieta ceny pozycji. Zero znaczy "za darmo", a nie "0,00 zł" - klub sprzedaje
+ * pierwszy trening zapoznawczy właśnie w ten sposób i kwota z groszami czytała się
+ * jak niedokończony cennik. Platforma (packages/shared/utils/formatPrice) mówi
+ * dokładnie tak samo, więc widget nie wprowadza własnego słownictwa.
+ * Przy widełkach ("od ...") zostawiamy kwotę - dolny próg 0 nie znaczy, że pozycja
+ * jest bezpłatna.
+ */
+export const priceLabel = (g: number, from = false) =>
+  g === 0 && !from ? 'Bezpłatnie' : `${from ? 'od ' : ''}${formatPrice2(g)}`
+
 export const formatDuration = (m: number) =>
   m >= 60 ? `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60} min` : ''}` : `${m} min`
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks'
 import type { Service } from '../api'
-import { formatDuration, formatPrice2, richTextToPlain, serviceBaseRange } from '../api'
+import { formatDuration, priceLabel, richTextToPlain, serviceBaseRange } from '../api'
 import type { Resource } from '../api'
 import { ChevronLeft, ChevronRight, Clock, Close } from '../ui/icons'
 
@@ -86,7 +86,7 @@ export function StepDetails({
       {/* Stopka jak w arkuszu na stronie: cena i czas po lewej, akcja po prawej. */}
       <div class="vz-det-foot">
         <div class="vz-det-foot-t">
-          <span class="vz-det-price">{from ? 'od ' : ''}{formatPrice2(min)}</span>
+          <span class="vz-det-price">{priceLabel(min, from)}</span>
           <span class="vz-det-dur"><Clock size={13} /> {formatDuration(service.duration)}</span>
         </div>
         <button type="button" class={`vz-btn${selected ? ' ghost' : ''} vz-det-cta`} onClick={onToggle}>
