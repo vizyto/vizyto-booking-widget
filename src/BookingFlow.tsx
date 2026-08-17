@@ -113,6 +113,12 @@ const positionsLabel = (n: number) => {
 /** Hard cap mirroring the API's MAX_CART_ITEMS - refuse the 9th politely. */
 const MAX_CART_ITEMS = 8
 type Phase = 'select' | 'identify' | 'login' | 'otp' | 'confirming' | 'done' | 'slotLost' | 'waitlist' | 'waitlistDone' | 'restricted'
+/**
+ * The steps INSIDE the 'select' phase, addressed by name rather than by index.
+ * Which of them exist depends on the cart (the provider step disappears when
+ * there is nothing to choose), so an index alone cannot say which step it is.
+ */
+type SelStepId = 'service' | 'provider' | 'time'
 // Whether the identify/auth path finishes by booking a slot or joining a waitlist.
 type Intent = 'book' | 'waitlist'
 export type Auth = { userId: number; token: string | null }
@@ -265,9 +271,23 @@ export function BookingFlow({
     || (lines.length > 1 && !isUnit && workers.length > 1)
   )
   const providerStepName = isUnit ? 'WYBÓR ZASOBU' : 'WYBÓR SPECJALISTY'
-  const stepNames = hasResourceStep
-    ? ['WYBÓR USŁUGI', providerStepName, 'WYBÓR TERMINU', 'TWOJE DANE']
-    : ['WYBÓR USŁUGI', 'WYBÓR TERMINU', 'TWOJE DANE']
+  /**
+   * The selection steps that ACTUALLY exist for this cart, in order.
+   *
+   * Replaces the old `selStep: 0 | 1 | 2` plus a `hasResourceStep` boolean, where
+   * every consumer had to re-derive "is index 1 the provider or the time step?"
+   * on its own (`termIdx`, the progress mapping, the back handler, the CTA guard).
+   * Adding a fourth family of offering would have meant touching each of those
+   * again; with the list as the single source of truth they all read from it.
+   */
+  const selectSteps = useMemo<SelStepId[]>(
+    () => (hasResourceStep ? ['service', 'provider', 'time'] : ['service', 'time']),
+    [hasResourceStep],
+  )
+  const stepNames = [
+    ...selectSteps.map((id) => (id === 'service' ? 'WYBÓR USŁUGI' : id === 'provider' ? providerStepName : 'WYBÓR TERMINU')),
+    'TWOJE DANE',
+  ]
   const totalSteps = stepNames.length
 
   // selection
@@ -311,18 +331,28 @@ export function BookingFlow({
   const [findingNext, setFindingNext] = useState(false)
   const [noneAhead, setNoneAhead] = useState(false)
   const [refetch, setRefetch] = useState(0)
-  // 0 service, 1 specialist, 2 termin - skip ahead when prefilled. A prefilled
-  // service that offers variants/add-ons stays on step 0 so the customer
+  // Which selection step is on screen - skip ahead when prefilled. A prefilled
+  // service that offers variants/add-ons stays on the service step so the customer
   // configures it (auto-opened above) before advancing.
-  const [selStep, setSelStep] = useState(
+  const [stepId, setStepId] = useState<SelStepId>(
     initialServiceRef && serviceHasOptions(initialServiceRef)
-      ? 0
+      ? 'service'
       : initialServiceRef && initialPick !== undefined
-        ? 2
+        ? 'time'
         : initialServiceRef
-          ? 1
-          : 0,
+          ? 'provider'
+          : 'service',
   )
+  /**
+   * Index of the step on screen, or -1 when it is not in the list at all.
+   *
+   * -1 is reachable: a cart change can remove the provider step (dropping to one
+   * selectable person) while the customer is standing on it. The old numeric state
+   * kept rendering that step while the progress bar relabelled index 1 as
+   * "WYBÓR TERMINU" - the widget's own version of the "Krok 0 z 3" dead end the
+   * apps had. The effect below clamps it instead.
+   */
+  const stepIndex = selectSteps.indexOf(stepId)
   // Second availability answer for an empty day, asked with every pin removed:
   // 'others' = the chosen people are busy but somebody else is free, 'none' =
   // the day itself is closed/full. Without it an empty day cannot say WHY.
@@ -564,7 +594,20 @@ export function BookingFlow({
   // Scroll each step back to the top so long lists don't start mid-way.
   useEffect(() => {
     bodyRef.current?.scrollTo(0, 0)
-  }, [phase, selStep])
+  }, [phase, stepId])
+
+  /**
+   * Clamp when the step on screen stops existing.
+   *
+   * A cart edit can remove the provider step under the customer's feet (e.g. the
+   * second service narrows the shared staff down to one person). Falling back to
+   * the service step is the honest move: the provider answer that step collected
+   * no longer applies, and the time step would be reached without it.
+   */
+  useEffect(() => {
+    if (phase !== 'select') return
+    if (stepIndex === -1) setStepId('service')
+  }, [phase, stepIndex])
 
   // Effective price/duration for the current configuration: chosen variant +
   // add-ons + any per-employee override for the worker pinned to THAT position.
@@ -1138,7 +1181,7 @@ export function BookingFlow({
     }
   }
   function dalej() {
-    if (selStep === 0) {
+    if (stepId === 'service') {
       if (!cartValid) return
       if (!hasResourceStep) {
         // No pick step: providerSelection 'auto', or 0-1 selectable providers.
@@ -1146,12 +1189,12 @@ export function BookingFlow({
         setLines((prev) => setAllItemResources(prev, r === 'any' ? null : r))
         setEachMode(false)
         setAnyChosen(r === 'any')
-        setSelStep(2)
+        setStepId('time')
         emit('specialist_selected', { ...resourceEvent(r), auto: true })
-      } else setSelStep(1)
-    } else if (selStep === 1) {
+      } else setStepId('provider')
+    } else if (stepId === 'provider') {
       if (!resourceValid) return
-      setSelStep(2)
+      setStepId('time')
     } else {
       if (!slotKey) return
       setIntent('book')
@@ -1166,19 +1209,21 @@ export function BookingFlow({
   // ---- back (rendered in the panel header) ----
   const backFn: (() => void) | null = (() => {
     if (phase === 'identify') return () => setPhase(intent === 'waitlist' ? 'waitlist' : 'select')
-    if (phase === 'waitlist') return () => { setWlErr(''); setIntent('book'); setSelStep(2); setPhase('select') }
+    if (phase === 'waitlist') return () => { setWlErr(''); setIntent('book'); setStepId('time'); setPhase('select') }
     if (phase === 'login') return () => { setLoginErr(''); setPhase('identify') }
     if (phase === 'otp') return () => { setOtpErr(''); setPhase('identify') }
     if (phase === 'slotLost') return () => recoverSlot()
     // Back to the service list - other services may still be bookable for this viewer.
-    if (phase === 'restricted') return () => { setSelStep(0); setPhase('select') }
+    if (phase === 'restricted') return () => { setStepId('service'); setPhase('select') }
     if (phase === 'select') {
       // Configuring overlays the selection - back just closes it, keeping choices.
       if (configuring) return () => setConfiguringId(null)
       // Szczegóły usługi leżą na liście - wstecz wraca do listy, nie zamyka widgetu.
       if (detailsService) return () => setDetailsId(null)
-      if (selStep === 2) return () => setSelStep(hasResourceStep ? 1 : 0)
-      if (selStep === 1) return () => setSelStep(0)
+      // One step back through the list that actually exists - no more asking
+      // "was the previous step the provider one?" at every call site.
+      const prev = selectSteps[stepIndex - 1]
+      if (prev) return () => setStepId(prev)
       return onClose ?? null // first step: back closes (launcher)
     }
     return null // confirming / done
@@ -1353,7 +1398,7 @@ export function BookingFlow({
     setSlots([])
     setBookingErr('')
     setRefetch((x) => x + 1)
-    setSelStep(2)
+    setStepId('time')
     setPhase('select')
   }
   function restart() {
@@ -1365,7 +1410,21 @@ export function BookingFlow({
     setCartNotice(null)
     setDate('')
     setSlotKey('')
-    setSelStep(0)
+    setStepId('service')
+    // Availability left over from the FINISHED booking used to survive "Nowa
+    // rezerwacja" - most visible inline, where that button is the only way out:
+    // the day pills painted green for a cart that no longer existed. The details
+    // overlay, the confirmed status and the "nothing ahead" latch are the same
+    // class of leak.
+    setCounts({})
+    setSlots([])
+    setChain(null)
+    setLoadingSlots(false)
+    setFindingNext(false)
+    setNoneAhead(false)
+    setDetailsId(null)
+    setBookedStatus(null)
+    setLoginReason('')
     setContact(emptyContact)
     setNotes('')
     setIntent('book')
@@ -1391,16 +1450,12 @@ export function BookingFlow({
     setPhase('select')
   }
 
-  // Map internal selStep (0 service, 1 specialist, 2 termin) onto the visible
-  // step index, collapsing the specialist step when it doesn't exist.
-  const termIdx = hasResourceStep ? 2 : 1
+  // The visible step index IS the position in the list of existing steps, so the
+  // collapsing of an absent provider step needs no special case any more.
+  const termIdx = selectSteps.indexOf('time')
   const progStep =
     phase === 'select'
-      ? selStep === 0
-        ? 0
-        : selStep === 1
-          ? 1
-          : termIdx
+      ? Math.max(stepIndex, 0)
       : phase === 'slotLost' || phase === 'waitlist'
         ? termIdx
         : totalSteps - 1
@@ -1408,7 +1463,7 @@ export function BookingFlow({
   // Whitelist banner on the selection phases: only for an unconfirmed viewer,
   // and not while the calendar already shows its own dedicated login prompt.
   const showAccessBanner =
-    business.bookingAccess?.policy === 'restricted' && !accessOk && !auth && phase === 'select' && !(selStep === 2 && calRestricted)
+    business.bookingAccess?.policy === 'restricted' && !accessOk && !auth && phase === 'select' && !(stepId === 'time' && calRestricted)
   // tel: link for the restricted screen (spaces/dashes stripped).
   const businessPhone = business.phone?.trim() || ''
   // The provider question is answered when every position carries an answer: in
@@ -1421,7 +1476,7 @@ export function BookingFlow({
     : cartResource === 'any' || (typeof cartResource === 'number' && selectableProviders.some((p) => p.id === cartResource))
   // Every position must satisfy its own add-on groups before the cart can move on.
   const cartValid = lines.length > 0 && !configuring && lines.every((l) => addonsValid(l.service, l.addonIds))
-  const canAdvance = selStep === 0 ? cartValid : selStep === 1 ? resourceValid : !!slotKey
+  const canAdvance = stepId === 'service' ? cartValid : stepId === 'provider' ? resourceValid : !!slotKey
   const ctaPrice = lines.length ? priceLabel(shownPrice, showFrom) : ''
   // The time step has to show who the hours belong to - and let it be changed
   // without walking back a step. A pool cart keeps its own (single) answer.
@@ -1477,7 +1532,7 @@ export function BookingFlow({
             onDone={confirmConfigure}
           />
         )}
-        {phase === 'select' && !configuring && selStep === 0 && detailsService && (
+        {phase === 'select' && !configuring && stepId === 'service' && detailsService && (
           <StepDetails
             service={detailsService}
             workers={workers}
@@ -1488,7 +1543,7 @@ export function BookingFlow({
             }}
           />
         )}
-        {phase === 'select' && !configuring && selStep === 0 && !detailsService && (
+        {phase === 'select' && !configuring && stepId === 'service' && !detailsService && (
           <>
             {cartNotice && <Notice title={cartNotice.title}>{cartNotice.text}</Notice>}
             <StepService
@@ -1508,7 +1563,7 @@ export function BookingFlow({
             />
           </>
         )}
-        {phase === 'select' && !configuring && selStep === 1 && lines.length > 0 && (
+        {phase === 'select' && !configuring && stepId === 'provider' && lines.length > 0 && (
           <StepResource
             providers={selectableProviders}
             items={lines}
@@ -1524,7 +1579,7 @@ export function BookingFlow({
             performers={noSoloCandidate ? performersByService : undefined}
           />
         )}
-        {phase === 'select' && !configuring && selStep === 2 && lines.length > 0 && calRestricted && (
+        {phase === 'select' && !configuring && stepId === 'time' && lines.length > 0 && calRestricted && (
           // Availability answered BOOKING_ACCESS_RESTRICTED for this (anonymous)
           // viewer - invite a login instead of rendering an empty calendar.
           <div class="vz-fade-in" style="text-align:center;padding:8px 0;">
@@ -1536,7 +1591,7 @@ export function BookingFlow({
             <button class="vz-btn mt" onClick={goAccessLogin} type="button">Zaloguj się</button>
           </div>
         )}
-        {phase === 'select' && !configuring && selStep === 2 && lines.length > 0 && !calRestricted && (
+        {phase === 'select' && !configuring && stepId === 'time' && lines.length > 0 && !calRestricted && (
           <StepDateTime
             days={days}
             counts={counts}
@@ -1680,7 +1735,7 @@ export function BookingFlow({
             )}
             <button
               class={`vz-btn${businessPhone ? ' ghost' : ' mt'}`}
-              onClick={() => { setSelStep(0); setPhase('select') }}
+              onClick={() => { setStepId('service'); setPhase('select') }}
               type="button"
             >
               Wróć do usług
@@ -1723,7 +1778,7 @@ export function BookingFlow({
                 <div class="vz-cta-meta">Wybierz usługę, aby kontynuować</div>
               )}
             </div>
-            {selStep >= 1 && (eachMode || cartResource != null) && (
+            {stepId !== 'service' && (eachMode || cartResource != null) && (
               <div class="vz-cta-who">
                 {pinnedResource && !eachMode ? (
                   <span class="vz-card-av">{pinnedResource.image ? <img src={pinnedResource.image} alt="" /> : pinnedResource.name.charAt(0)}</span>
