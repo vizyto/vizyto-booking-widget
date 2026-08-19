@@ -228,6 +228,55 @@ s = await state()
 ok('prefill classId: wchodzi od razu na grafik', s.stepName === 'WYBÓR TERMINU', `${s.stepName}`)
 ok('prefill classId: bez widelca i bez ponownego wyboru klasy', /Prowadzi/.test(s.body), s.body.slice(0, 160))
 
+// ── 11. Rentals. Two time models in one mock: an HOURLY pool (slot grid, party
+//        size) and a DAILY single instance (range, tiers, deposit).
+await reload()
+s = await state()
+ok('widelec ma trzy rodziny', /Wynajem/.test(s.body), s.body.slice(0, 160))
+ok('wybór wynajmu na widelcu', await clickByText('Wynajem'))
+await page.waitForTimeout(500)
+s = await state()
+ok('wynajem: licznik 1 z 3', s.krok === 'KROK 1 Z 3', `${s.krok}`)
+ok('wynajem: etykieta WYBÓR PRZEDMIOTU', s.stepName === 'WYBÓR PRZEDMIOTU', `${s.stepName}`)
+// Two lanes of one type must be ONE card named by the type, not "Tor 1"/"Tor 2".
+ok('pula dwóch torów zwinięta w jedną kartę typu',
+   /Przydzielimy wolny egzemplarz \(2 szt\.\)/.test(s.body) && !/Tor bowlingowy 1/.test(s.body),
+   s.body.slice(0, 260))
+ok('egzemplarz eksponowany widoczny osobno', /Przyczepa Niewiadów/.test(s.body), s.body.slice(0, 260))
+
+// --- slot mode (hourly pool) ---
+ok('wybór puli torów', await clickByText('Przydzielimy wolny egzemplarz'))
+await page.waitForTimeout(700)
+s = await state()
+ok('wynajem: krok 2 = WYBÓR TERMINU', s.stepName === 'WYBÓR TERMINU', `${s.stepName}`)
+ok('godzinowy: pyta o liczbę osób', /Ile osób\?/.test(s.body), s.body.slice(0, 200))
+ok('godzinowy: pigułki długości z ceną', /1 godzina/.test(s.body) && /80,00/.test(s.body), s.body.slice(0, 300))
+ok('godzinowy: CTA zamknięte bez wybranej godziny', s.ctaDisabled, `${s.ctaText}`)
+await clickByText('11:00'); await page.waitForTimeout(300)
+s = await state()
+ok('godzinowy: wybór godziny odblokowuje CTA', !s.ctaDisabled, `${s.ctaText}`)
+
+// --- range mode (daily instance) ---
+await reload()
+await clickByText('Wynajem'); await page.waitForTimeout(500)
+ok('wybór przyczepy', await clickByText('Przyczepa Niewiadów'))
+await page.waitForTimeout(900)
+s = await state()
+ok('dobowy: BRAK siatki godzin', !/Godzina odbioru/.test(s.body), s.body.slice(0, 300))
+ok('dobowy: pokazuje zwrot i kaucję', /Zwrot/.test(s.body) && /Kaucja/.test(s.body), s.body.slice(0, 400))
+ok('dobowy: nie pyta o liczbę osób (brak limitu)', !/Ile osób\?/.test(s.body), s.body.slice(0, 200))
+ok('dobowy: progi cenowe w pigułkach', /1 doba/.test(s.body) && /120,00/.test(s.body), s.body.slice(0, 340))
+// 3 days crosses the cheaper tier: 3 x 90,00 = 270,00
+await clickByText('3 doby'); await page.waitForTimeout(900)
+s = await state()
+ok('dobowy: próg "od 3 dób" przelicza kwotę', /270,00/.test(s.body), s.body.slice(0, 420))
+
+// ── 12. A single-family business shows NO fork (regression guard for barbershops).
+await page.goto(URL + '?onlyServices=1')
+await page.waitForTimeout(900)
+s = await state()
+ok('biznes tylko z usługami: brak widelca', s.stepName === 'WYBÓR USŁUGI', `${s.stepName}`)
+
 await browser.close()
 console.log(`\n${pass} pass, ${fail} fail`)
 process.exit(fail ? 1 : 0)

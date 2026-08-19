@@ -88,12 +88,39 @@ export type Service = {
   // (older API, or a payload that skipped the columns) = inherit everything.
   cancellationPolicy?: ServiceCancellationPolicy
 }
+/** How the customer picks a unit of a rental type. */
+export type RentalUnitExposure = 'pool' | 'choice' | 'unit'
+/** Billing unit of a rental. minute/hour book a slot, day+ books a range. */
+export type RentalUnit = 'minute' | 'hour' | 'day' | 'week' | 'month'
+export type RentalPricingTier = { minUnits: number; maxUnits: number | null; unitPrice: number; label: string | null }
+export type RentalAddon = { id: number; name: string; description: string | null; price: number; maxQuantity: number }
+export type RentalAttribute = { key: string; label: string; value: string | number | boolean; unit: string | null; type: string }
+
 export type Resource = {
   id: number
   type: 'worker' | 'object'
   name: string
   position: string | null
   image: string | null
+  /**
+   * Rental fields. The server has been sending all of these in the SAME business
+   * payload the widget already fetches (publicResourceDTO) - the widget simply did
+   * not declare them, so renting needed no new endpoint, only this type.
+   */
+  isRentable?: boolean
+  /** Legacy flat rate per unit; used when the type has no pricing tiers. */
+  rentalRate?: number | null
+  rentalUnit?: RentalUnit | null
+  rentalMinUnits?: number | null
+  rentalMaxUnits?: number | null
+  rentalDeposit?: number | null
+  rentalTypeId?: number | null
+  rentalTypeName?: string | null
+  rentalUnitExposure?: RentalUnitExposure
+  rentalMaxPartySize?: number | null
+  pricingTiers?: RentalPricingTier[]
+  addons?: RentalAddon[]
+  publicAttributes?: RentalAttribute[]
   // Offerings-pool selectability. A pool unit shown in the unit-pick step must be
   // bookable AND customer-selectable and carry the service's primary categoryTag.
   // Optional so older payloads (workers only) keep working: absent = assume true
@@ -326,6 +353,171 @@ export const seatsLeft = (s: GroupSession, cls?: GroupClass): number | null => {
   if (cap == null) return null
   return Math.max(0, cap - (s.attendeeCount ?? 0))
 }
+
+// ---- rentals ---------------------------------------------------------------
+// Renting needed ZERO new endpoints: /rentals/{availability,availability-counts,
+// first-free,day-slots} and POST /rentals have accepted a site key and an
+// Idempotency-Key since v1. The widget just had no code for them.
+//
+// Two shapes of "when", decided by the billing unit:
+//  - minute/hour -> a START SLOT on a day, like a visit (day-slots answers a grid)
+//  - day/week/month -> a RANGE, where the question is "from when, for how long"
+// Pretending a week is a "slot" would give a calendar that lies, so the time step
+// renders one of two bodies.
+
+export type RentalDaySlot = { start: string; local: string; resourceIds: number[] }
+export type RentalDaySlots =
+  | { mode: 'slots'; unit: RentalUnit; minUnits: number; stepMinutes: number; durationMinutes: number; slots: RentalDaySlot[] }
+  | { mode: 'range' }
+
+/** Target of a rental: a concrete unit, or the pool of a type ("Dowolny"). */
+export type RentalTarget = { resourceId?: number; rentalTypeId?: number }
+
+const rentalQs = (t: RentalTarget, extra: Record<string, string | number | undefined>) => {
+  const p = new URLSearchParams()
+  if (t.resourceId != null) p.set('resourceId', String(t.resourceId))
+  if (t.rentalTypeId != null) p.set('rentalTypeId', String(t.rentalTypeId))
+  for (const [k, v] of Object.entries(extra)) if (v != null) p.set(k, String(v))
+  return p.toString()
+}
+
+export async function getRentalCounts(
+  cfg: Cfg,
+  p: RentalTarget & { from: string; to: string; units?: number; partySize?: number },
+): Promise<DayCounts> {
+  if (cfg.mock) return mock.getRentalCounts(p)
+  try {
+    const qs = rentalQs(p, { from: p.from, to: p.to, units: p.units, partySize: p.partySize })
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/rentals/availability-counts?${qs}`, { headers: headers(cfg) })
+    if (!r.ok) return {}
+    const data = await r.json()
+    return (data?.counts ?? data ?? {}) as DayCounts
+  } catch {
+    return {}
+  }
+}
+
+export async function getRentalDaySlots(
+  cfg: Cfg,
+  p: RentalTarget & { date: string; units?: number; partySize?: number },
+): Promise<RentalDaySlots> {
+  if (cfg.mock) return mock.getRentalDaySlots(p)
+  try {
+    const qs = rentalQs(p, { date: p.date, units: p.units, partySize: p.partySize })
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/rentals/day-slots?${qs}`, { headers: headers(cfg) })
+    if (!r.ok) return { mode: 'range' }
+    return (await r.json()) as RentalDaySlots
+  } catch {
+    return { mode: 'range' }
+  }
+}
+
+/**
+ * Is this exact window free? The range mode has no grid to pick from, so the
+ * answer has to be re-checked before the CTA unlocks - the same two gates the
+ * create path runs, asked ahead of time.
+ */
+export async function checkRentalRange(
+  cfg: Cfg,
+  p: RentalTarget & { startDate: string; endDate: string },
+): Promise<boolean> {
+  if (cfg.mock) return mock.checkRentalRange(p)
+  try {
+    const qs = rentalQs(p, { startDate: p.startDate, endDate: p.endDate })
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/rentals/availability?${qs}`, { headers: headers(cfg) })
+    if (!r.ok) return false
+    const data = await r.json()
+    return Boolean(data?.available ?? data === true)
+  } catch {
+    return false
+  }
+}
+
+export async function createRental(
+  cfg: Cfg,
+  p: RentalTarget & { startDate: string; endDate: string; bookedById: number; notes?: string; partySize?: number | null; idempotencyKey: string },
+  token: string | null,
+): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
+  if (cfg.mock) return mock.createRental({ startDate: p.startDate }, token)
+  try {
+    const extra: Record<string, string> = { 'Idempotency-Key': p.idempotencyKey }
+    if (token) extra.authorization = `Bearer ${token}`
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/rentals`, {
+      method: 'POST',
+      headers: headers(cfg, extra),
+      body: JSON.stringify({
+        resourceId: p.resourceId ?? null,
+        rentalTypeId: p.rentalTypeId ?? null,
+        startDate: p.startDate,
+        endDate: p.endDate,
+        bookedById: p.bookedById,
+        notes: p.notes,
+        partySize: p.partySize ?? null,
+      }),
+    })
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}` }
+    return { ok: true, data }
+  } catch {
+    return { ok: false, code: 'NETWORK' }
+  }
+}
+
+export const RENTAL_UNIT_MS: Record<RentalUnit, number> = {
+  minute: 60_000,
+  hour: 3_600_000,
+  day: 86_400_000,
+  week: 7 * 86_400_000,
+  month: 30 * 86_400_000,
+}
+
+const RENTAL_UNIT_ONE: Record<RentalUnit, string> = {
+  minute: 'minuta', hour: 'godzina', day: 'doba', week: 'tydzień', month: 'miesiąc',
+}
+const RENTAL_UNIT_FEW: Record<RentalUnit, string> = {
+  minute: 'minuty', hour: 'godziny', day: 'doby', week: 'tygodnie', month: 'miesiące',
+}
+const RENTAL_UNIT_MANY: Record<RentalUnit, string> = {
+  minute: 'minut', hour: 'godzin', day: 'dób', week: 'tygodni', month: 'miesięcy',
+}
+
+/** "1 doba" / "2 doby" / "5 dób" - Polish plural for a unit count. */
+export function rentalUnitsLabel(n: number, unit: RentalUnit): string {
+  if (n === 1) return `1 ${RENTAL_UNIT_ONE[unit]}`
+  const mod100 = n % 100
+  const mod10 = n % 10
+  const few = mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)
+  return `${n} ${few ? RENTAL_UNIT_FEW[unit] : RENTAL_UNIT_MANY[unit]}`
+}
+
+/**
+ * Price of `units` units, honouring the tier thresholds ("from 3 days cheaper").
+ * The server prices authoritatively on create; this mirrors the shared pricer so
+ * the customer sees the same number BEFORE committing. Falls back to the flat
+ * rate when a resource has no tiers.
+ */
+export function rentalPrice(r: Resource, units: number): number | null {
+  const tiers = r.pricingTiers ?? []
+  if (tiers.length > 0) {
+    const hit = tiers.find((t) => units >= t.minUnits && (t.maxUnits == null || units <= t.maxUnits))
+      ?? tiers[tiers.length - 1]
+    return hit ? hit.unitPrice * units : null
+  }
+  return r.rentalRate != null ? r.rentalRate * units : null
+}
+
+/** Allowed unit counts, clamped to the resource's min/max (capped for the UI). */
+export function rentalUnitOptions(r: Resource): number[] {
+  const min = Math.max(1, r.rentalMinUnits ?? 1)
+  const max = Math.min(r.rentalMaxUnits ?? min + 7, min + 11)
+  const out: number[] = []
+  for (let u = min; u <= max; u++) out.push(u)
+  return out.length ? out : [min]
+}
+
+/** minute/hour rent a start slot; day and longer rent a range. */
+export const isRangeUnit = (unit: RentalUnit | null | undefined): boolean =>
+  unit === 'day' || unit === 'week' || unit === 'month'
 
 export async function getServiceCategories(cfg: Cfg): Promise<ServiceCategory[]> {
   if (cfg.mock) return mock.getServiceCategories()

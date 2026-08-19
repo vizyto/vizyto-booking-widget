@@ -14,6 +14,7 @@ import type {
   DayCounts,
   GroupClass,
   GroupSession,
+  RentalDaySlots,
   LoginResult,
   OtpSendResult,
   OtpVerifyResult,
@@ -153,6 +154,40 @@ const BUSINESS: Business = {
     // 'loza' pool for the unit service.
     { id: 21, type: 'object', name: 'Loża 1', position: null, image: null, isBookable: true, isCustomerSelectable: true, categoryTag: 'loza' },
     { id: 22, type: 'object', name: 'Loża 2', position: null, image: null, isBookable: true, isCustomerSelectable: true, categoryTag: 'loza' },
+    // Rentables, covering BOTH time models. A pool of two hourly lanes grouped
+    // into one card (exposure 'pool' -> the customer never picks lane 1 of 2),
+    // and a single daily instance with tiers + deposit (range mode).
+    {
+      id: 28, type: 'object', name: 'Tor bowlingowy 1', position: null, image: null,
+      isBookable: true, isCustomerSelectable: true, categoryTag: 'tor',
+      isRentable: true, rentalUnit: 'hour', rentalMinUnits: 1, rentalMaxUnits: 4,
+      rentalTypeId: 7, rentalTypeName: 'Tor', rentalUnitExposure: 'pool', rentalMaxPartySize: 6,
+      rentalRate: 8000, pricingTiers: [], addons: [],
+      publicAttributes: [{ key: 'lanes', label: 'Bandy', value: 'Tak', unit: null, type: 'boolean' }],
+    },
+    {
+      id: 29, type: 'object', name: 'Tor bowlingowy 2', position: null, image: null,
+      isBookable: true, isCustomerSelectable: true, categoryTag: 'tor',
+      isRentable: true, rentalUnit: 'hour', rentalMinUnits: 1, rentalMaxUnits: 4,
+      rentalTypeId: 7, rentalTypeName: 'Tor', rentalUnitExposure: 'pool', rentalMaxPartySize: 6,
+      rentalRate: 8000, pricingTiers: [], addons: [],
+    },
+    {
+      id: 31, type: 'object', name: 'Przyczepa Niewiadów N7', position: null, image: null,
+      isBookable: true, isCustomerSelectable: true, categoryTag: 'przyczepa',
+      isRentable: true, rentalUnit: 'day', rentalMinUnits: 1, rentalMaxUnits: 14,
+      rentalTypeId: 8, rentalTypeName: 'Przyczepa', rentalUnitExposure: 'unit',
+      rentalMaxPartySize: null, rentalDeposit: 50000,
+      pricingTiers: [
+        { minUnits: 1, maxUnits: 2, unitPrice: 12000, label: null },
+        { minUnits: 3, maxUnits: null, unitPrice: 9000, label: 'od 3 dób taniej' },
+      ],
+      addons: [],
+      publicAttributes: [
+        { key: 'load', label: 'Ładowność', value: 750, unit: 'kg', type: 'number' },
+        { key: 'brakes', label: 'Hamulce', value: 'Nie', unit: null, type: 'boolean' },
+      ],
+    },
   ],
   workingHours: [],
   // Demo levers: show the "rezerwacja próbna" notice and enable the waitlist so
@@ -168,6 +203,15 @@ const BUSINESS: Business = {
 
 export async function fetchBusiness(): Promise<Business> {
   await wait(280)
+  // Test lever: a single-family business (plain barbershop) must never see the
+  // offering fork. Strips the group services and the rentables from the payload.
+  if ((window as any).__VIZYTO_MOCK_ONLY_SERVICES__) {
+    return {
+      ...BUSINESS,
+      services: BUSINESS.services.filter((x) => x.bookingType !== 'group'),
+      resources: BUSINESS.resources.filter((r) => !(r as any).isRentable),
+    }
+  }
   return BUSINESS
 }
 
@@ -390,4 +434,55 @@ export async function registerForSession(
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   if (p.sessionId === 903) return { ok: false, code: 'SESSION_FULL' }
   return { ok: true, data: { id: 5150, sessionId: p.sessionId, status: 'registered' } }
+}
+
+// ---- rentals -------------------------------------------------------------
+// The mock business rents two things, on purpose covering BOTH time models:
+//  - "Tor bowlingowy" - hourly pool of 2 lanes (slot mode, party size)
+//  - "Przyczepa" - daily single instance with pricing tiers (range mode, deposit)
+
+const day = (offset: number) => {
+  const d = new Date()
+  d.setDate(d.getDate() + offset)
+  return d.toISOString().slice(0, 10)
+}
+
+export async function getRentalCounts(p: { from: string; to: string }): Promise<DayCounts> {
+  await wait(200)
+  const out: DayCounts = {}
+  for (let i = 0; i < 21; i++) {
+    const d = day(i)
+    if (d < p.from || d > p.to) continue
+    // Every third day closed, so the calendar has both states to render.
+    out[d] = i % 3 === 2 ? 0 : 6
+  }
+  return out
+}
+
+export async function getRentalDaySlots(p: { resourceId?: number; rentalTypeId?: number; date: string }): Promise<RentalDaySlots> {
+  await wait(250)
+  // The trailer (resource 31) is billed per day -> no grid at all.
+  if (p.resourceId === 31) return { mode: 'range' }
+  const slots = ['10:00', '11:00', '12:00', '14:00', '15:00', '18:00'].map((hh) => ({
+    start: `${p.date}T${hh}:00.000Z`,
+    local: hh,
+    resourceIds: [21, 22],
+  }))
+  return { mode: 'slots', unit: 'hour', minUnits: 1, stepMinutes: 60, durationMinutes: 60, slots }
+}
+
+/** Deliberately refuses a window that starts on the third day (a closed day). */
+export async function checkRentalRange(p: { startDate: string }): Promise<boolean> {
+  await wait(250)
+  return !p.startDate.startsWith(day(2))
+}
+
+export async function createRental(
+  p: { startDate: string },
+  token: string | null,
+): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
+  await wait(600)
+  if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
+  if (/T\d{2}:55/.test(p.startDate)) return { ok: false, code: 'RENTAL_SLOT_UNAVAILABLE' }
+  return { ok: true, data: { id: 7700, status: 'reserved' } }
 }

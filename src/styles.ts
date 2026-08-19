@@ -524,6 +524,20 @@ export const css = `
 .vz-slot-group { margin-top: 20px; }
 .vz-slot-group-h { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--vz-text-muted); font-size: 12.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
 .vz-slot-group-h svg { color: var(--vz-accent); }
+/* Presets picked before the calendar (czas wynajmu, liczba osób). Wrapping row
+   of compact chips - the app's "pigułki długości" in widget scale. */
+.vz-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.vz-pill {
+  appearance: none; cursor: pointer; font: inherit; font-size: 13.5px; font-weight: 600;
+  padding: 8px 12px; border-radius: 999px; color: var(--vz-text);
+  background: var(--vz-surface); border: 1.5px solid var(--vz-border);
+  transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
+}
+.vz-pill small { font-weight: 500; color: var(--vz-text-muted); }
+.vz-pill:hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+.vz-pill:active { transform: scale(.98); }
+.vz-pill.on { border-color: var(--vz-accent); background: var(--vz-selected); }
+.vz-pill.on small { color: var(--vz-text); }
 .vz-slots { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
 .vz-slot {
   padding: 13px 0; border: 1.5px solid transparent; border-radius: var(--vz-r-md);

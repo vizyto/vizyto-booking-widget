@@ -25,7 +25,7 @@ export function StepClass({
 }) {
   if (options.length === 0) {
     return (
-      <div class="vz-noslots">
+      <div style="margin-top:20px;text-align:center;">
         <div class="vz-muted">Ten grafik jest chwilowo pusty.</div>
       </div>
     )

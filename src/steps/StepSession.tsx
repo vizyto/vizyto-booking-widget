@@ -36,7 +36,7 @@ export function StepSession({
 }) {
   if (sessions.length === 0) {
     return (
-      <div class="vz-noslots">
+      <div style="margin-top:20px;text-align:center;">
         <div class="vz-muted">Brak zaplanowanych terminów w najbliższym czasie.</div>
         <div class="vz-muted" style="margin-top:4px;">Grafik może się jeszcze zmienić - zajrzyj później.</div>
       </div>

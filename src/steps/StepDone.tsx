@@ -22,7 +22,7 @@ export function StepDone({
   status: string | null
   email: string
   /** A class sign-up is never "pending" and is not called a "rezerwacja". */
-  kind?: 'service' | 'class'
+  kind?: 'service' | 'class' | 'rental'
   onClose?: () => void
   onRestart: () => void
 }) {

@@ -11,6 +11,9 @@
   if (q.get('prefillClass')) prefill.classId = Number(q.get('prefillClass'));
   if (q.get('prefillSession')) prefill.sessionId = Number(q.get('prefillSession'));
   if (q.get('prefillService')) prefill.serviceId = Number(q.get('prefillService'));
+  // ?onlyServices=1 strips classes and rentables from the mock business, to prove a
+  // single-family business (a barbershop) never sees the offering fork.
+  if (q.get('onlyServices')) window.__VIZYTO_MOCK_ONLY_SERVICES__ = true;
   VizytoBooking.mount({
     businessId: 24, siteKey: 'pk_test', apiBase: 'mock', inline: '#booking',
     prefill: Object.keys(prefill).length ? prefill : undefined,

@@ -1,7 +1,7 @@
 import { SelectCard } from '../ui/SelectCard'
-import { Calendar, Users } from '../ui/icons'
+import { Calendar, KeyRound, Users } from '../ui/icons'
 
-export type OfferingKind = 'service' | 'class'
+export type OfferingKind = 'service' | 'class' | 'rental'
 
 /**
  * "Co chcesz zarezerwować?" - shown ONLY when the business sells both individual
@@ -18,30 +18,48 @@ export type OfferingKind = 'service' | 'class'
 export function StepOffering({
   selected,
   onPick,
+  kinds,
   serviceLabel,
   classLabel,
+  rentalLabel,
 }: {
   selected: OfferingKind | null
   onPick: (k: OfferingKind) => void
+  /** Only the families this business actually sells - never a dead option. */
+  kinds: OfferingKind[]
   serviceLabel: string
   classLabel: string
+  rentalLabel: string
 }) {
   return (
     <div class="vz-list vz-stagger" role="radiogroup" aria-label="Co chcesz zarezerwować">
-      <SelectCard
-        avatar={<Calendar size={20} />}
-        title={serviceLabel}
-        desc="Wybierasz termin, który Ci pasuje."
-        selected={selected === 'service'}
-        onSelect={() => onPick('service')}
-      />
-      <SelectCard
-        avatar={<Users size={20} />}
-        title={classLabel}
-        desc="Zapisujesz się na termin z grafiku."
-        selected={selected === 'class'}
-        onSelect={() => onPick('class')}
-      />
+      {kinds.includes('service') && (
+        <SelectCard
+          avatar={<Calendar size={20} />}
+          title={serviceLabel}
+          desc="Wybierasz termin, który Ci pasuje."
+          selected={selected === 'service'}
+          onSelect={() => onPick('service')}
+        />
+      )}
+      {kinds.includes('class') && (
+        <SelectCard
+          avatar={<Users size={20} />}
+          title={classLabel}
+          desc="Zapisujesz się na termin z grafiku."
+          selected={selected === 'class'}
+          onSelect={() => onPick('class')}
+        />
+      )}
+      {kinds.includes('rental') && (
+        <SelectCard
+          avatar={<KeyRound size={20} />}
+          title={rentalLabel}
+          desc="Wybierasz, na jak długo i od kiedy."
+          selected={selected === 'rental'}
+          onSelect={() => onPick('rental')}
+        />
+      )}
     </div>
   )
 }

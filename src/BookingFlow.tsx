@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import type { Business, CartItem, CartItemTime, Cfg, DayCounts, GroupClass, GroupSession, OAuthProvider, OtpMode, Resource, Service, ServiceCategory, Slots } from './api'
+import type { Business, CartItem, CartItemTime, Cfg, DayCounts, GroupClass, GroupSession, OAuthProvider, OtpMode, RentalDaySlots, Resource, Service, ServiceCategory, Slots } from './api'
 import {
   addonNames,
   addonTotals,
@@ -10,8 +10,12 @@ import {
   checkWaitlistWindow,
   configuredTotals,
   createAppointment,
+  checkRentalRange,
+  createRental,
   fetchGroupClasses,
   fetchTimetable,
+  getRentalCounts,
+  getRentalDaySlots,
   formatDuration,
   formatPrice2,
   priceLabel,
@@ -24,7 +28,11 @@ import {
   maskPhone,
   oauthLogin,
   priceRange,
+  isRangeUnit,
   registerForSession,
+  rentalPrice,
+  rentalUnitOptions,
+  rentalUnitsLabel,
   resolveVariant,
   seatsLeft,
   selectedAddons,
@@ -39,6 +47,8 @@ import { dayMonth, nextDays, ymd } from './dates'
 import { StepClass, type ClassOption } from './steps/StepClass'
 import { StepSession } from './steps/StepSession'
 import { StepOffering, type OfferingKind } from './steps/StepOffering'
+import { StepRentalItem, groupRentables, rentalOptionKey, type RentalOption } from './steps/StepRentalItem'
+import { StepRentalTime } from './steps/StepRentalTime'
 import { resolveCartPolicy } from './policy'
 import {
   canPickPerItem,
@@ -125,7 +135,7 @@ type Phase = 'select' | 'identify' | 'login' | 'otp' | 'confirming' | 'done' | '
  * Which of them exist depends on the cart (the provider step disappears when
  * there is nothing to choose), so an index alone cannot say which step it is.
  */
-type SelStepId = 'offering' | 'service' | 'provider' | 'time' | 'class' | 'session'
+type SelStepId = 'offering' | 'service' | 'provider' | 'time' | 'class' | 'session' | 'rental' | 'rentalTime'
 // Whether the identify/auth path finishes by booking a slot or joining a waitlist.
 type Intent = 'book' | 'waitlist'
 export type Auth = { userId: number; token: string | null }
@@ -158,12 +168,72 @@ function registerErrorMessage(code: string): string {
   }
 }
 
+/** Where a rental booking points: the pool of a type, or one exact instance. */
+function rentalTarget(o: RentalOption): { resourceId?: number; rentalTypeId?: number } {
+  return o.pooled ? { rentalTypeId: o.head.rentalTypeId ?? undefined } : { resourceId: o.head.id }
+}
+
+/**
+ * The [start, end] window a rental occupies, in UTC.
+ *
+ * Slot mode gets its start from the picked hour; range mode starts at the local
+ * day boundary (the server re-checks the real pickup window, and the WEB wizard
+ * makes the same approximation). The end is start + units * unit length, which is
+ * the same arithmetic the shared pricer bills against.
+ */
+function rentalWindow(
+  o: RentalOption,
+  date: string,
+  units: number,
+  slotLocal: string,
+): { startDate: string; endDate: string } | null {
+  if (!date) return null
+  const unit = o.head.rentalUnit ?? 'hour'
+  const ms = { minute: 60_000, hour: 3_600_000, day: 86_400_000, week: 7 * 86_400_000, month: 30 * 86_400_000 }[unit]
+  const hhmm = slotLocal && !isRangeUnit(unit) ? slotLocal.slice(0, 5) : '00:00'
+  const start = new Date(`${date}T${hhmm}:00.000Z`)
+  if (Number.isNaN(start.getTime())) return null
+  const end = new Date(start.getTime() + ms * Math.max(1, units))
+  return { startDate: start.toISOString(), endDate: end.toISOString() }
+}
+
 /** Hour of a materialized term, in the BUSINESS timezone (not the visitor's). */
 function sessionHour(iso: string, tz: string | null | undefined): string {
   try {
     return new Intl.DateTimeFormat('pl-PL', { hour: '2-digit', minute: '2-digit', timeZone: tz || 'Europe/Warsaw' }).format(new Date(iso))
   } catch {
     return iso.slice(11, 16)
+  }
+}
+
+/**
+ * Server codes for a rental, as sentences with a way out.
+ *
+ * The API answers several of these in ENGLISH (`"Rental not available"`), which
+ * both the WEB and CLIENT wizards pass straight through to a toast. The widget
+ * sits on a customer's own site, so it maps them itself rather than showing the
+ * visitor a raw API string.
+ */
+function rentalErrorMessage(code: string): string {
+  switch (code) {
+    case 'RENTAL_SLOT_UNAVAILABLE':
+    case 'RENTAL_POOL_EXHAUSTED':
+      return 'Ten termin właśnie został zajęty. Wybierz inny.'
+    case 'RENTAL_OUTSIDE_SCHEDULE':
+      return 'W tym czasie nie wypożyczamy. Wybierz inny termin.'
+    case 'RENTAL_BELOW_MIN_DURATION':
+      return 'Ten okres jest krótszy niż minimalny czas wynajmu.'
+    case 'RENTAL_ABOVE_MAX_DURATION':
+      return 'Ten okres jest dłuższy niż maksymalny czas wynajmu.'
+    case 'RENTAL_RANGE_TOO_LONG':
+      return 'Za długi zakres. Wybierz krótszy okres.'
+    case 'RENTAL_NOT_AVAILABLE':
+    case 'RENTAL_RESOURCE_NOT_RENTABLE':
+      return 'Ten przedmiot nie jest teraz dostępny do wynajęcia.'
+    case 'INCOMPLETE_PROFILE':
+      return 'Uzupełnij imię, nazwisko i numer telefonu, aby zarezerwować.'
+    default:
+      return 'Nie udało się zarezerwować. Spróbuj ponownie.'
   }
 }
 
@@ -221,6 +291,20 @@ export function BookingFlow({
   }, [groupClasses, groupServices])
   const hasClasses = classOptions.length > 0
   const hasServices = services.length > 0
+
+  // ---- rentals ------------------------------------------------------------
+  // No fetch at all: the rentables and their full rental config arrive in the same
+  // business payload the widget already has (publicResourceDTO). Grouped into
+  // OFFERS, so a pool of ten identical lanes is one card, not ten rows.
+  const rentalOptions = useMemo<RentalOption[]>(() => groupRentables(business.resources), [business])
+  const hasRentals = rentalOptions.length > 0
+  const [rentalPick, setRentalPick] = useState<RentalOption | null>(null)
+  const [rentalUnits, setRentalUnits] = useState(1)
+  const [rentalParty, setRentalParty] = useState(1)
+  const [rentalCounts, setRentalCounts] = useState<DayCounts>({})
+  const [rentalSlots, setRentalSlots] = useState<RentalDaySlots | null>(null)
+  const [rentalLoading, setRentalLoading] = useState(false)
+  const [rentalRangeOk, setRentalRangeOk] = useState<boolean | null>(null)
   // isCustomerSelectable is what the business uses to keep somebody off the
   // public picker. The per-service helpers honour it, so the cart-wide list has
   // to as well - otherwise the same person is offered on one screen and hidden
@@ -367,8 +451,16 @@ export function BookingFlow({
   const [kind, setKind] = useState<OfferingKind | null>(
     prefill?.kind ?? (prefill?.classId != null ? 'class' : prefill?.serviceId != null ? 'service' : null),
   )
-  const needsOfferingStep = kind === null && hasServices && mayHaveClasses
-  const effKind: OfferingKind = kind ?? (mayHaveClasses && !hasServices ? 'class' : 'service')
+  /** Families this business actually sells - the fork never offers a dead branch. */
+  const kinds = useMemo<OfferingKind[]>(() => {
+    const out: OfferingKind[] = []
+    if (hasServices) out.push('service')
+    if (mayHaveClasses) out.push('class')
+    if (hasRentals) out.push('rental')
+    return out
+  }, [hasServices, mayHaveClasses, hasRentals])
+  const needsOfferingStep = kind === null && kinds.length > 1
+  const effKind: OfferingKind = kind ?? kinds[0] ?? 'service'
 
   /**
    * The NUMBERED steps of the chosen family. The offering fork is deliberately not
@@ -378,8 +470,11 @@ export function BookingFlow({
    */
   const selectSteps = useMemo<SelStepId[]>(() => {
     if (effKind === 'class') return ['class', 'session']
+    // A single rentable offer needs no catalog step - the customer already chose
+    // by opening the widget on a page that rents one thing.
+    if (effKind === 'rental') return rentalOptions.length > 1 ? ['rental', 'rentalTime'] : ['rentalTime']
     return hasResourceStep ? ['service', 'provider', 'time'] : ['service', 'time']
-  }, [effKind, hasResourceStep])
+  }, [effKind, hasResourceStep, rentalOptions.length])
 
   const STEP_LABEL: Record<SelStepId, string> = {
     offering: 'CO REZERWUJESZ',
@@ -388,6 +483,8 @@ export function BookingFlow({
     time: 'WYBÓR TERMINU',
     class: 'WYBÓR ZAJĘĆ',
     session: 'WYBÓR TERMINU',
+    rental: 'WYBÓR PRZEDMIOTU',
+    rentalTime: 'WYBÓR TERMINU',
   }
   const stepNames = [...selectSteps.map((id) => STEP_LABEL[id]), 'TWOJE DANE']
   const totalSteps = stepNames.length
@@ -444,6 +541,7 @@ export function BookingFlow({
       return prefill?.sessionId != null ? 'session' : prefill?.classId != null ? 'session' : 'class'
     }
     if (needsOfferingStep) return 'offering'
+    if (prefill?.kind === 'rental') return rentalOptions.length > 1 ? 'rental' : 'rentalTime'
     if (initialServiceRef && serviceHasOptions(initialServiceRef)) return 'service'
     if (initialServiceRef && initialPick !== undefined) return 'time'
     if (initialServiceRef) return 'provider'
@@ -774,6 +872,75 @@ export function BookingFlow({
   )
 
   /**
+   * Rental availability. Two reads, chosen by the billing unit:
+   *  - day pills for the strip (always), narrowed by length AND party size,
+   *    because both change which days are even possible;
+   *  - per-day slots for minute/hour, whose answer also TELLS us the mode
+   *    ({mode:'range'} for day+), so the time step never has to guess.
+   * Re-runs on every input the server prices against; a stale grid would offer
+   * hours the create path refuses.
+   */
+  useEffect(() => {
+    if (effKind !== 'rental' || !rentalPick) return
+    const target = rentalTarget(rentalPick)
+    const from = days[0]
+    const to = days[days.length - 1]
+    if (!from || !to) return
+    let cancelled = false
+    getRentalCounts(cfg, { ...target, from, to, units: rentalUnits, partySize: rentalParty }).then((c) => {
+      if (!cancelled) setRentalCounts(c)
+    })
+    return () => { cancelled = true }
+  }, [effKind, rentalPick, rentalUnits, rentalParty, days[0], refetch])
+
+  /**
+   * Seed the day when the rental time step opens.
+   *
+   * Nothing else does it: the visit flow seeds today from its own effect, and
+   * without a day here `day-slots` is never called - so the step could not even
+   * learn whether it is a grid or a range, and rendered length pills over an empty
+   * body. Seeds the first day the counts report as free (falling back to today),
+   * so a closed Monday does not greet the customer with "brak wolnych godzin".
+   */
+  useEffect(() => {
+    if (effKind !== 'rental' || !rentalPick || date) return
+    const firstFree = days.find((d) => (rentalCounts[d] ?? 0) > 0)
+    const seedDay = firstFree ?? days[0]
+    if (seedDay) setDate(seedDay)
+  }, [effKind, rentalPick, date, rentalCounts, days[0]])
+
+  useEffect(() => {
+    if (effKind !== 'rental' || !rentalPick || !date) return
+    const target = rentalTarget(rentalPick)
+    let cancelled = false
+    setRentalLoading(true)
+    getRentalDaySlots(cfg, { ...target, date, units: rentalUnits, partySize: rentalParty }).then((r) => {
+      if (cancelled) return
+      setRentalSlots(r)
+      setRentalLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [effKind, rentalPick, date, rentalUnits, rentalParty, refetch])
+
+  /**
+   * Range mode has no grid to pick from, so the window itself has to be checked
+   * before the CTA unlocks - otherwise "Dalej" would walk the customer through
+   * identity only to be refused at create.
+   */
+  useEffect(() => {
+    if (effKind !== 'rental' || !rentalPick || !date) return
+    if (rentalSlots?.mode !== 'range') { setRentalRangeOk(null); return }
+    const win = rentalWindow(rentalPick, date, rentalUnits, '')
+    if (!win) return
+    let cancelled = false
+    setRentalRangeOk(null)
+    checkRentalRange(cfg, { ...rentalTarget(rentalPick), startDate: win.startDate, endDate: win.endDate }).then((ok) => {
+      if (!cancelled) setRentalRangeOk(ok)
+    })
+    return () => { cancelled = true }
+  }, [effKind, rentalPick, date, rentalUnits, rentalSlots?.mode, refetch])
+
+  /**
    * Clamp when the step on screen stops existing.
    *
    * A cart edit can remove the provider step under the customer's feet (e.g. the
@@ -856,6 +1023,116 @@ export function BookingFlow({
         { label: 'Cena', value: priceLabel(shownPrice, showFrom), total: true },
       ]
     : []
+
+  /** First numbered step of a family - used by the fork and by restart(). */
+  const firstStepOf = (k: OfferingKind): SelStepId =>
+    k === 'class' ? 'class' : k === 'rental' ? (rentalOptions.length > 1 ? 'rental' : 'rentalTime') : 'service'
+
+  /**
+   * Is the rental answer complete? Slot mode needs a picked hour; range mode needs
+   * the window to have come back available. Deliberately NOT "date is set": a
+   * range whose check failed must keep the CTA shut.
+   */
+  const rentalReady = Boolean(
+    rentalPick && date && (
+      rentalSlots?.mode === 'range' ? rentalRangeOk === true : !!slotKey
+    ),
+  )
+
+  const rentalSummaryRows: SummaryRow[] = rentalPick
+    ? (() => {
+        const unit = rentalPick.head.rentalUnit ?? 'hour'
+        const total = rentalPrice(rentalPick.head, rentalUnits)
+        const win = rentalWindow(rentalPick, date, rentalUnits, slotKey)
+        const fmt = (iso: string) => {
+          try {
+            return new Intl.DateTimeFormat('pl-PL', {
+              day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+              timeZone: business.timezone || 'Europe/Warsaw',
+            }).format(new Date(iso))
+          } catch { return iso.slice(0, 16).replace('T', ' ') }
+        }
+        return [
+          {
+            label: 'Przedmiot',
+            // A pool answers with the TYPE - the instance is the server's to pick,
+            // so naming one here would be a promise we do not control.
+            value: rentalPick.pooled ? (rentalPick.head.rentalTypeName ?? rentalPick.head.name) : rentalPick.head.name,
+          },
+          ...(win ? [{ label: 'Odbiór', value: fmt(win.startDate) }, { label: 'Zwrot', value: fmt(win.endDate) }] : []),
+          { label: 'Czas', value: rentalUnitsLabel(rentalUnits, unit) },
+          ...(rentalPick.head.rentalMaxPartySize != null ? [{ label: 'Osoby', value: String(rentalParty) }] : []),
+          ...(rentalPick.head.rentalDeposit != null
+            ? [{ label: 'Kaucja (na miejscu)', value: formatPrice2(rentalPick.head.rentalDeposit) }]
+            : []),
+          ...(total != null ? [{ label: 'Kwota', value: formatPrice2(total), total: true }] : []),
+        ]
+      })()
+    : []
+
+  /**
+   * Reserve a rental - the third create path, and again a sibling of book() rather
+   * than a branch inside it. A rental has no chain, no slot to lose in the visit
+   * sense, and its own refusal vocabulary; what it shares is the envelope.
+   */
+  async function reserveRental(a: Auth) {
+    if (!rentalPick || booking.current) return
+    const win = rentalWindow(rentalPick, date, rentalUnits, slotKey)
+    if (!win) return
+    booking.current = true
+    setBookingErr('')
+    setPhase('confirming')
+    const target = rentalTarget(rentalPick)
+    const ctx = { rental: rentalOptionKey(rentalPick), units: rentalUnits, businessId: business.id }
+    emit('booking_submitted', { ...ctx, userId: a.userId })
+    const trimmedNotes = notes.trim() || undefined
+    const r = await createRental(
+      cfg,
+      {
+        ...target,
+        startDate: win.startDate,
+        endDate: win.endDate,
+        bookedById: a.userId,
+        notes: trimmedNotes,
+        partySize: rentalPick.head.rentalMaxPartySize != null ? rentalParty : null,
+        idempotencyKey: `vzw-rnt-${business.id}-${win.startDate}-${target.resourceId ?? 't' + target.rentalTypeId}-${rentalUnits}-${a.userId}`,
+      },
+      a.token,
+    )
+    booking.current = false
+    if (r.ok) {
+      setBookedStatus(r.data?.status ?? 'reserved')
+      setPhase('done')
+      emit('booking_completed', {
+        ...ctx,
+        userId: a.userId,
+        rentalId: r.data?.id ?? null,
+        value: (rentalPrice(rentalPick.head, rentalUnits) ?? 0) / 100,
+        currency: 'PLN',
+      })
+      return
+    }
+    if (r.code === 'BOOKED_BY_MISMATCH' || r.code === 'VERIFICATION_REQUIRED' || r.code === 'PHONE_VERIFICATION_REQUIRED') {
+      setAuth(null)
+      setIdentifyErr('Potwierdź numer telefonu, aby dokończyć rezerwację.')
+      setPhase('identify')
+      emit('booking_failed', { ...ctx, code: r.code, reason: 'verification_required' })
+      return
+    }
+    if (r.code === 'NETWORK') {
+      setBookingErr('Brak połączenia. Spróbuj ponownie.')
+      emit('booking_failed', { ...ctx, code: r.code, reason: 'network' })
+      return
+    }
+    // Back to the time step with the reason named: the window is what has to change.
+    setBookingErr(rentalErrorMessage(r.code))
+    setSlotKey('')
+    setRentalRangeOk(null)
+    setRefetch((x) => x + 1)
+    setStepId('rentalTime')
+    setPhase('select')
+    emit('booking_failed', { ...ctx, code: r.code, reason: 'rental_refused' })
+  }
 
   /**
    * Summary of a class sign-up. Different rows, not a reshaped visit summary:
@@ -1199,6 +1476,9 @@ export function BookingFlow({
     else if (effKind === 'class') {
       if (chosenSession) void register(a, chosenSession.id)
       else setPhase('select')
+    } else if (effKind === 'rental') {
+      if (rentalReady) void reserveRental(a)
+      else setPhase('select')
     } else if (lines.length && date && slotKey) void book(a)
     else setPhase('select')
   }
@@ -1460,6 +1740,21 @@ export function BookingFlow({
       // The gate answers itself on tap; "Dalej" is only a fallback for keyboard
       // users who selected without activating.
       if (kind) setStepId(kind === 'class' ? 'class' : 'service')
+      return
+    }
+    if (stepId === 'rental') {
+      if (!rentalPick) return
+      setStepId('rentalTime')
+      return
+    }
+    if (stepId === 'rentalTime') {
+      if (!rentalReady || !rentalPick) return
+      setIntent('book')
+      if (auth) void reserveRental(auth)
+      else {
+        emit('details_started', { rental: rentalOptionKey(rentalPick), units: rentalUnits })
+        setPhase('identify')
+      }
       return
     }
     if (stepId === 'class') {
@@ -1732,7 +2027,13 @@ export function BookingFlow({
     setClassPick(null)
     setSessionId(null)
     setSessions(null)
-    if (hasServices && mayHaveClasses) { setKind(null); setStepId('offering') }
+    setRentalPick(null)
+    setRentalUnits(1)
+    setRentalParty(1)
+    setRentalCounts({})
+    setRentalSlots(null)
+    setRentalRangeOk(null)
+    if (kinds.length > 1) { setKind(null); setStepId('offering') }
     setContact(emptyContact)
     setNotes('')
     setIntent('book')
@@ -1786,7 +2087,9 @@ export function BookingFlow({
   const cartValid = lines.length > 0 && !configuring && lines.every((l) => addonsValid(l.service, l.addonIds))
   const canAdvance =
     stepId === 'offering' ? kind != null
-      : stepId === 'class' ? !!classPick
+      : stepId === 'rental' ? !!rentalPick
+        : stepId === 'rentalTime' ? rentalReady
+          : stepId === 'class' ? !!classPick
         : stepId === 'session' ? !!chosenSession
           : stepId === 'service' ? cartValid
             : stepId === 'provider' ? resourceValid
@@ -1862,10 +2165,53 @@ export function BookingFlow({
         {phase === 'select' && stepId === 'offering' && (
           <StepOffering
             selected={kind}
-            onPick={(k) => { setKind(k); setStepId(k === 'class' ? 'class' : 'service') }}
+            onPick={(k) => { setKind(k); setStepId(firstStepOf(k)) }}
+            kinds={kinds}
             serviceLabel="Wizyta indywidualna"
             classLabel="Zajęcia grupowe"
+            rentalLabel="Wynajem"
           />
+        )}
+        {phase === 'select' && stepId === 'rental' && (
+          <StepRentalItem
+            options={rentalOptions}
+            selectedKey={rentalPick ? rentalOptionKey(rentalPick) : null}
+            onPick={(o) => {
+              setRentalPick(o)
+              // Length/party/day belong to the PREVIOUS offer - a lane's hours say
+              // nothing about a trailer's days.
+              setRentalUnits(Math.max(1, o.head.rentalMinUnits ?? 1))
+              setRentalParty(1)
+              setDate('')
+              setSlotKey('')
+              setRentalSlots(null)
+              setRentalRangeOk(null)
+              setStepId('rentalTime')
+            }}
+          />
+        )}
+        {phase === 'select' && stepId === 'rentalTime' && rentalPick && (
+          <>
+            {bookingErr && <Notice title="Nie udało się zarezerwować">{bookingErr}</Notice>}
+            <StepRentalTime
+              head={rentalPick.head}
+              pooled={rentalPick.pooled}
+              days={days}
+              counts={rentalCounts}
+              date={date}
+              units={rentalUnits}
+              unitOptions={rentalUnitOptions(rentalPick.head)}
+              partySize={rentalParty}
+              slots={rentalSlots}
+              loading={rentalLoading}
+              rangeOk={rentalRangeOk}
+              onPickDate={(d) => { setBookingErr(''); setDate(d); setSlotKey('') }}
+              onPickUnits={(u) => { setBookingErr(''); setRentalUnits(u); setSlotKey('') }}
+              onPickPartySize={(n) => { setBookingErr(''); setRentalParty(n); setSlotKey('') }}
+              selectedSlot={slotKey}
+              onPickSlot={(k) => { setBookingErr(''); setSlotKey(k) }}
+            />
+          </>
         )}
         {phase === 'select' && stepId === 'class' && (
           groupClasses === null
@@ -2005,7 +2351,12 @@ export function BookingFlow({
           <StepIdentify
             // Access-check login (no slot picked yet): no summary and no notes -
             // the user is only confirming who they are.
-            summary={intent === 'waitlist' ? waitlistSummary : effKind === 'class' ? classSummaryRows : slotKey ? summaryRows : []}
+            summary={
+              intent === 'waitlist' ? waitlistSummary
+                : effKind === 'class' ? classSummaryRows
+                  : effKind === 'rental' ? rentalSummaryRows
+                    : slotKey ? summaryRows : []
+            }
             contact={contact}
             onChange={onContactChange}
             notes={intent === 'waitlist' || !slotKey ? undefined : notes}
@@ -2095,10 +2446,10 @@ export function BookingFlow({
         )}
         {phase === 'done' && (
           <StepDone
-            rows={effKind === 'class' ? classSummaryRows : summaryRows}
+            rows={effKind === 'class' ? classSummaryRows : effKind === 'rental' ? rentalSummaryRows : summaryRows}
             status={bookedStatus}
             email={contact.email}
-            kind={effKind}
+            kind={effKind === 'rental' ? 'rental' : effKind}
             onClose={onClose}
             onRestart={restart}
           />
@@ -2120,7 +2471,24 @@ export function BookingFlow({
         <div class="vz-cta">
           <div class="vz-cta-summary">
             <div class="vz-cta-left">
-              {effKind === 'class' ? (
+              {effKind === 'rental' ? (
+                rentalPick ? (
+                  <>
+                    <div class="vz-cta-svc">
+                      {rentalPick.pooled ? (rentalPick.head.rentalTypeName ?? rentalPick.head.name) : rentalPick.head.name}
+                    </div>
+                    <div class="vz-cta-meta">
+                      {(() => {
+                        const t = rentalPrice(rentalPick.head, rentalUnits)
+                        return t != null ? <b>{formatPrice2(t)}</b> : null
+                      })()}
+                      {' '}· {rentalUnitsLabel(rentalUnits, rentalPick.head.rentalUnit ?? 'hour')}
+                    </div>
+                  </>
+                ) : (
+                  <div class="vz-cta-meta">{stepId === 'offering' ? 'Wybierz, co chcesz zarezerwować' : 'Wybierz przedmiot, aby kontynuować'}</div>
+                )
+              ) : effKind === 'class' ? (
                 classPick ? (
                   <>
                     <div class="vz-cta-svc">{classPick.service.name}</div>
@@ -2148,7 +2516,7 @@ export function BookingFlow({
                 <div class="vz-cta-meta">{stepId === 'offering' ? 'Wybierz, co chcesz zarezerwować' : 'Wybierz usługę, aby kontynuować'}</div>
               )}
             </div>
-            {effKind !== 'class' && stepId !== 'service' && (eachMode || cartResource != null) && (
+            {effKind === 'service' && stepId !== 'service' && (eachMode || cartResource != null) && (
               <div class="vz-cta-who">
                 {pinnedResource && !eachMode ? (
                   <span class="vz-card-av">{pinnedResource.image ? <img src={pinnedResource.image} alt="" /> : pinnedResource.name.charAt(0)}</span>
