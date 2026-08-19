@@ -305,7 +305,19 @@ export function BookingFlow({
   // OFFERS, so a pool of ten identical lanes is one card, not ten rows.
   const rentalOptions = useMemo<RentalOption[]>(() => groupRentables(business.resources), [business])
   const hasRentals = rentalOptions.length > 0
-  const [rentalPick, setRentalPick] = useState<RentalOption | null>(null)
+  /**
+   * Egzemplarz wskazany przez stronę-gospodarza. Karta pojazdu w wypożyczalni
+   * podaje `resourceId`, bo klient wybrał już KONKRETNY bus - kalendarz ma
+   * pokazać doby tego egzemplarza, a nie listę, na której trzeba go znaleźć
+   * drugi raz. Prefill jest PODPOWIEDZIĄ: gdy pojazd zniknął z oferty albo
+   * należy do puli (`pooled`), zostaje zwykły wybór z listy.
+   */
+  const initialRental = useMemo<RentalOption | null>(() => {
+    if (prefill?.resourceId == null) return null
+    return rentalOptions.find((o) => !o.pooled && o.head.id === prefill.resourceId) ?? null
+  }, [rentalOptions, prefill?.resourceId])
+
+  const [rentalPick, setRentalPick] = useState<RentalOption | null>(initialRental)
   const [rentalUnits, setRentalUnits] = useState(1)
   const [rentalParty, setRentalParty] = useState(1)
   const [rentalCounts, setRentalCounts] = useState<DayCounts>({})
@@ -560,7 +572,11 @@ export function BookingFlow({
       return prefill?.classId != null || prefill?.sessionId != null ? 'session' : 'class'
     }
     if (needsOfferingStep) return 'offering'
-    if (prefill?.kind === 'rental') return rentalOptions.length > 1 ? 'rental' : 'rentalTime'
+    if (prefill?.kind === 'rental' || initialRental) {
+      // Trafiony prefill egzemplarza przeskakuje listę - tak samo jak klik
+      // w termin zajęć przeskakuje wybór kursu.
+      return initialRental || rentalOptions.length <= 1 ? 'rentalTime' : 'rental'
+    }
     if (initialServiceRef && serviceHasOptions(initialServiceRef)) return 'service'
     if (initialServiceRef && initialPick !== undefined) return 'time'
     if (initialServiceRef) return 'provider'
@@ -2359,8 +2375,24 @@ export function BookingFlow({
   const showProviderChip = lines.length > 0 && !isUnit && !providerAuto && (hasResourceStep || pinnedPeople.length > 0)
   const canEditProviders = getStaffItems(lines).some((l) => getResourcesForService(workers, l.service).length > 0)
 
+  /**
+   * Tytuł kreatora idzie za RODZAJEM oferty, a nie za nazwą produktu.
+   * Wypożyczalnia nie umawia wizyt, tylko wydaje przedmioty, a klub zapisuje na
+   * zajęcia - "Zarezerwuj wizytę" nad listą busów czytało się jak cudzy widget.
+   * Gdy biznes sprzedaje kilka rodzin i klient jeszcze nie wybrał, zostaje
+   * forma najogólniejsza.
+   */
+  const panelTitle =
+    needsOfferingStep && kind === null
+      ? 'Zarezerwuj termin'
+      : effKind === 'rental'
+        ? 'Zarezerwuj przedmiot'
+        : effKind === 'class'
+          ? 'Zapisz się na zajęcia'
+          : 'Zarezerwuj wizytę'
+
   return (
-    <div class="vz-panel" role="dialog" aria-modal={onClose ? 'true' : undefined} aria-label="Zarezerwuj wizytę">
+    <div class="vz-panel" role="dialog" aria-modal={onClose ? 'true' : undefined} aria-label={panelTitle}>
       {onClose && <span class="vz-grab" aria-hidden="true" />}
       <header class="vz-head">
         {backFn ? (
@@ -2368,7 +2400,7 @@ export function BookingFlow({
         ) : (
           <span class="vz-head-spacer" />
         )}
-        <div class="vz-title">Zarezerwuj wizytę</div>
+        <div class="vz-title">{panelTitle}</div>
         {onClose ? (
           <button class="vz-iconbtn" onClick={onClose} aria-label="Zamknij" type="button"><Close size={20} /></button>
         ) : (

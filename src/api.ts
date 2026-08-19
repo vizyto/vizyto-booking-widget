@@ -566,9 +566,20 @@ const RENTAL_UNIT_MANY: Record<RentalUnit, string> = {
   minute: 'minut', hour: 'godzin', day: 'dób', week: 'tygodni', month: 'miesięcy',
 }
 
-/** "1 doba" / "2 doby" / "5 dób" - Polish plural for a unit count. */
-export function rentalUnitsLabel(n: number, unit: RentalUnit): string {
-  if (n === 1) return `1 ${RENTAL_UNIT_ONE[unit]}`
+/** Dopełniacz liczby pojedynczej - forma po przyimku "od". */
+const RENTAL_UNIT_GEN: Record<RentalUnit, string> = {
+  minute: 'minuty', hour: 'godziny', day: 'doby', week: 'tygodnia', month: 'miesiąca',
+}
+
+/**
+ * "1 doba" / "2 doby" / "5 dób" - Polish plural for a unit count.
+ *
+ * `after: 'od'` zwraca formę po przyimku, który rządzi dopełniaczem. Bez tego
+ * karta przedmiotu pisała "od 1 doba" - liczebnik odmieniony poprawnie, ale
+ * w mianowniku, więc całość czytała się jak tłumaczenie maszynowe.
+ */
+export function rentalUnitsLabel(n: number, unit: RentalUnit, after?: 'od'): string {
+  if (n === 1) return `1 ${after === 'od' ? RENTAL_UNIT_GEN[unit] : RENTAL_UNIT_ONE[unit]}`
   const mod100 = n % 100
   const mod10 = n % 10
   const few = mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)
