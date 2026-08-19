@@ -38,6 +38,7 @@ export function Widget({
   preAuth,
   showLauncher = true,
   controller,
+  initialPrefill,
   emit = noopEmit,
 }: {
   cfg: Cfg
@@ -46,10 +47,12 @@ export function Widget({
   preAuth?: Auth
   showLauncher?: boolean
   controller?: WidgetController
+  /** Prefill known at mount time (host page already knows what was clicked). */
+  initialPrefill?: Prefill
   emit?: EmitFn
 }) {
   const [open, setOpen] = useState(mode === 'inline')
-  const [prefill, setPrefill] = useState<Prefill | undefined>(undefined)
+  const [prefill, setPrefill] = useState<Prefill | undefined>(initialPrefill)
   const [sessionId, setSessionId] = useState(0) // bump to remount the flow fresh per open
   const [business, setBusiness] = useState<Business | null>(null)
   const [loading, setLoading] = useState(false)
@@ -82,16 +85,23 @@ export function Widget({
     emit(open ? 'open' : 'close', open ? { source: openSource.current } : undefined)
   }, [open, mode])
 
-  // Expose open/close to the host (VizytoBooking.open / .close).
+  /**
+   * Expose open/close to the host (VizytoBooking.open / .close).
+   *
+   * Inline instances are wired up too. They used to be skipped, so a page that
+   * embedded the flow inline had NO way to hand it a prefill - which is exactly
+   * what a timetable row needs to do ("sign up for THIS class"). Inline is always
+   * visually open, so open() there means "restart with this prefill".
+   */
   useEffect(() => {
-    if (!controller || mode !== 'launcher') return
+    if (!controller) return
     controller.open = (p) => {
       setPrefill(p)
       setSessionId((s) => s + 1)
       openSource.current = 'api'
-      setOpen(true)
+      if (mode === 'launcher') setOpen(true)
     }
-    controller.close = () => setOpen(false)
+    controller.close = () => { if (mode === 'launcher') setOpen(false) }
   }, [controller, mode])
 
   // Esc + body-scroll-lock + focus trap, while the modal is open (launcher only).

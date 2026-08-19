@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import type { Business, CartItem, CartItemTime, Cfg, DayCounts, OAuthProvider, OtpMode, Resource, Service, ServiceCategory, Slots } from './api'
+import type { Business, CartItem, CartItemTime, Cfg, DayCounts, GroupClass, GroupSession, OAuthProvider, OtpMode, Resource, Service, ServiceCategory, Slots } from './api'
 import {
   addonNames,
   addonTotals,
@@ -10,6 +10,8 @@ import {
   checkWaitlistWindow,
   configuredTotals,
   createAppointment,
+  fetchGroupClasses,
+  fetchTimetable,
   formatDuration,
   formatPrice2,
   priceLabel,
@@ -22,7 +24,9 @@ import {
   maskPhone,
   oauthLogin,
   priceRange,
+  registerForSession,
   resolveVariant,
+  seatsLeft,
   selectedAddons,
   sendGuestOtp,
   serviceHasOptions,
@@ -31,7 +35,10 @@ import {
   verifyGuestOtp,
   workerOffersService,
 } from './api'
-import { dayMonth, nextDays } from './dates'
+import { dayMonth, nextDays, ymd } from './dates'
+import { StepClass, type ClassOption } from './steps/StepClass'
+import { StepSession } from './steps/StepSession'
+import { StepOffering, type OfferingKind } from './steps/StepOffering'
 import { resolveCartPolicy } from './policy'
 import {
   canPickPerItem,
@@ -118,14 +125,57 @@ type Phase = 'select' | 'identify' | 'login' | 'otp' | 'confirming' | 'done' | '
  * Which of them exist depends on the cart (the provider step disappears when
  * there is nothing to choose), so an index alone cannot say which step it is.
  */
-type SelStepId = 'service' | 'provider' | 'time'
+type SelStepId = 'offering' | 'service' | 'provider' | 'time' | 'class' | 'session'
 // Whether the identify/auth path finishes by booking a slot or joining a waitlist.
 type Intent = 'book' | 'waitlist'
 export type Auth = { userId: number; token: string | null }
 
+/**
+ * Server codes for a class sign-up, as sentences with a way out. Same job as the
+ * appointment error map, and deliberately the same wording as the Vizyto app so a
+ * customer who sees it in both places reads one product.
+ */
+function registerErrorMessage(code: string): string {
+  switch (code) {
+    case 'SESSION_FULL':
+      return 'Ten termin jest już pełny. Wybierz inny.'
+    case 'ALREADY_REGISTERED':
+      return 'Masz już zapis na ten termin.'
+    case 'REGISTRATION_WINDOW_CLOSED':
+      return 'Zapisy na ten termin zostały już zamknięte.'
+    case 'SESSION_NOT_OPEN':
+      return 'Ten termin nie jest już otwarty na zapisy. Wybierz inny.'
+    case 'GROUP_CLASS_PAUSED':
+      return 'Zapisy na te zajęcia są chwilowo wstrzymane.'
+    case 'GROUP_CLASS_FIXED_ROSTER':
+      return 'Na te zajęcia zapisuje organizator. Skontaktuj się z nim, aby dołączyć.'
+    case 'INCOMPLETE_PROFILE':
+      return 'Uzupełnij imię, nazwisko i numer telefonu - lista obecności jest imienna.'
+    case 'SESSION_NOT_FOUND':
+      return 'Tego terminu już nie ma w grafiku. Wybierz inny.'
+    default:
+      return 'Nie udało się zapisać na zajęcia. Spróbuj ponownie.'
+  }
+}
+
+/** Hour of a materialized term, in the BUSINESS timezone (not the visitor's). */
+function sessionHour(iso: string, tz: string | null | undefined): string {
+  try {
+    return new Intl.DateTimeFormat('pl-PL', { hour: '2-digit', minute: '2-digit', timeZone: tz || 'Europe/Warsaw' }).format(new Date(iso))
+  } catch {
+    return iso.slice(11, 16)
+  }
+}
+
 const emptyContact: Contact = { firstName: '', lastName: '', phone: '', email: '' }
 
-export type Prefill = { serviceId?: number; resourceId?: number }
+/**
+ * What the HOST page already knows. A timetable row on a club's site knows which
+ * class was clicked (and sometimes which term), so passing it here is what makes
+ * the difference between "sign up in place" and "sign up, then pick the thing you
+ * just clicked all over again" - the exact bug the vizyto.com hand-off had.
+ */
+export type Prefill = { serviceId?: number; resourceId?: number; classId?: number; sessionId?: number; kind?: OfferingKind }
 
 export function BookingFlow({
   cfg,
@@ -143,6 +193,34 @@ export function BookingFlow({
   emit?: EmitFn
 }) {
   const services = useMemo(() => business.services.filter((s) => s.bookingType !== 'group'), [business])
+  // The backing rows for group classes live in the SAME list, flagged 'group'.
+  // The 1:1 flow filters them out (above); the class flow resolves them by id.
+  const groupServices = useMemo(() => business.services.filter((s) => s.bookingType === 'group'), [business])
+
+  // ---- group classes ------------------------------------------------------
+  const [groupClasses, setGroupClasses] = useState<GroupClass[] | null>(null)
+  const [sessions, setSessions] = useState<GroupSession[] | null>(null)
+  const [loadingSessions, setLoadingSessions] = useState(false)
+  // Classes are only fetched when the business actually has group-type services,
+  // so a barbershop pays for nothing.
+  const mayHaveClasses = groupServices.length > 0
+  const classOptions = useMemo<ClassOption[]>(() => {
+    if (!groupClasses) return []
+    return groupClasses
+      // A fixed roster is filled by the organiser from linked customer groups and
+      // the server refuses self sign-up, so it must never appear as bookable.
+      // Filtered HERE, not inside the fetch: a rule that lives in the transport
+      // layer silently skips mock mode, which is the only test surface this repo
+      // has - and it did.
+      .filter((cls) => cls.attendanceMode !== 'fixed')
+      .map((cls) => {
+        const service = groupServices.find((s) => s.id === cls.businessServiceId)
+        return service ? { cls, service } : null
+      })
+      .filter((o): o is ClassOption => o !== null)
+  }, [groupClasses, groupServices])
+  const hasClasses = classOptions.length > 0
+  const hasServices = services.length > 0
   // isCustomerSelectable is what the business uses to keep somebody off the
   // public picker. The per-service helpers honour it, so the cart-wide list has
   // to as well - otherwise the same person is offered on one screen and hidden
@@ -280,14 +358,38 @@ export function BookingFlow({
    * Adding a fourth family of offering would have meant touching each of those
    * again; with the list as the single source of truth they all read from it.
    */
-  const selectSteps = useMemo<SelStepId[]>(
-    () => (hasResourceStep ? ['service', 'provider', 'time'] : ['service', 'time']),
-    [hasResourceStep],
+  /**
+   * Which family the customer is booking. Resolved without a question whenever
+   * only one exists (a barbershop never sees a fork, a club with only classes
+   * never sees one either), and taken from the prefill when the host page already
+   * said - a timetable CTA passing `classId` means the choice is made.
+   */
+  const [kind, setKind] = useState<OfferingKind | null>(
+    prefill?.kind ?? (prefill?.classId != null ? 'class' : prefill?.serviceId != null ? 'service' : null),
   )
-  const stepNames = [
-    ...selectSteps.map((id) => (id === 'service' ? 'WYBÓR USŁUGI' : id === 'provider' ? providerStepName : 'WYBÓR TERMINU')),
-    'TWOJE DANE',
-  ]
+  const needsOfferingStep = kind === null && hasServices && mayHaveClasses
+  const effKind: OfferingKind = kind ?? (mayHaveClasses && !hasServices ? 'class' : 'service')
+
+  /**
+   * The NUMBERED steps of the chosen family. The offering fork is deliberately not
+   * one of them: until the family is known there is nothing to number, and
+   * "KROK 1 Z 2" on a fork that leads to a 4-step flow would be a lie. It renders
+   * as a gate before the counter starts.
+   */
+  const selectSteps = useMemo<SelStepId[]>(() => {
+    if (effKind === 'class') return ['class', 'session']
+    return hasResourceStep ? ['service', 'provider', 'time'] : ['service', 'time']
+  }, [effKind, hasResourceStep])
+
+  const STEP_LABEL: Record<SelStepId, string> = {
+    offering: 'CO REZERWUJESZ',
+    service: 'WYBÓR USŁUGI',
+    provider: providerStepName,
+    time: 'WYBÓR TERMINU',
+    class: 'WYBÓR ZAJĘĆ',
+    session: 'WYBÓR TERMINU',
+  }
+  const stepNames = [...selectSteps.map((id) => STEP_LABEL[id]), 'TWOJE DANE']
   const totalSteps = stepNames.length
 
   // selection
@@ -334,15 +436,22 @@ export function BookingFlow({
   // Which selection step is on screen - skip ahead when prefilled. A prefilled
   // service that offers variants/add-ons stays on the service step so the customer
   // configures it (auto-opened above) before advancing.
-  const [stepId, setStepId] = useState<SelStepId>(
-    initialServiceRef && serviceHasOptions(initialServiceRef)
-      ? 'service'
-      : initialServiceRef && initialPick !== undefined
-        ? 'time'
-        : initialServiceRef
-          ? 'provider'
-          : 'service',
-  )
+  const [stepId, setStepId] = useState<SelStepId>(() => {
+    // Class branch: a prefilled term jumps straight past both steps, a prefilled
+    // class past the first. This is what turns a timetable click on the club's own
+    // page into "confirm your details" instead of "now find that class again".
+    if (prefill?.classId != null || prefill?.kind === 'class') {
+      return prefill?.sessionId != null ? 'session' : prefill?.classId != null ? 'session' : 'class'
+    }
+    if (needsOfferingStep) return 'offering'
+    if (initialServiceRef && serviceHasOptions(initialServiceRef)) return 'service'
+    if (initialServiceRef && initialPick !== undefined) return 'time'
+    if (initialServiceRef) return 'provider'
+    return 'service'
+  })
+  // The class the customer is signing up for, and the term.
+  const [classPick, setClassPick] = useState<ClassOption | null>(null)
+  const [sessionId, setSessionId] = useState<number | null>(prefill?.sessionId ?? null)
   /**
    * Index of the step on screen, or -1 when it is not in the list at all.
    *
@@ -597,6 +706,74 @@ export function BookingFlow({
   }, [phase, stepId])
 
   /**
+   * Load the class wrappers once, and only for a business that has group-type
+   * services. `business.services` already carries the name, price, description,
+   * images and the whitelist verdict, so this is the only class read the catalog
+   * step needs.
+   */
+  useEffect(() => {
+    if (!mayHaveClasses || groupClasses !== null) return
+    let cancelled = false
+    fetchGroupClasses(cfg).then((rows) => { if (!cancelled) setGroupClasses(rows) })
+    return () => { cancelled = true }
+  }, [mayHaveClasses, groupClasses])
+
+  /**
+   * Load the timetable when the customer actually enters the class branch.
+   *
+   * The window is 6 weeks on purpose. On the server this read doubles as the
+   * safety net that materializes missing terms, and asking for a year there is
+   * what once turned a club profile into a 31-second page. Six weeks is more than
+   * any class schedule a customer plans against.
+   */
+  const timetableReq = useRef(false)
+  useEffect(() => {
+    if (effKind !== 'class' || sessions !== null) return
+    // The in-flight guard is a REF, not state: with `loadingSessions` in the
+    // dependency list this effect's own setState re-ran it, the cleanup flipped
+    // `cancelled`, and the answer was thrown away - leaving the timetable on a
+    // spinner forever.
+    if (timetableReq.current) return
+    timetableReq.current = true
+    const from = new Date()
+    const to = new Date()
+    to.setDate(to.getDate() + 42)
+    setLoadingSessions(true)
+    fetchTimetable(cfg, { from: from.toISOString(), to: to.toISOString() }).then((rows) => {
+      timetableReq.current = false
+      setSessions(rows)
+      setLoadingSessions(false)
+    })
+  }, [effKind, sessions])
+
+  /**
+   * Resolve a prefilled class id against the loaded list. Until the list lands the
+   * step machine has already been told to stand on 'session'; if the id turns out
+   * to be stale (class deleted, or a customer site holding an old id) fall back to
+   * the class list rather than showing a term list for nothing.
+   */
+  useEffect(() => {
+    if (effKind !== 'class' || classPick || !groupClasses) return
+    if (prefill?.classId == null) return
+    const found = classOptions.find((o) => o.cls.id === prefill.classId)
+    if (found) setClassPick(found)
+    else if (stepId === 'session') setStepId('class')
+  }, [effKind, classPick, groupClasses, classOptions, prefill?.classId, stepId])
+
+  /** Terms of the chosen class, soonest first. */
+  const classSessions = useMemo(() => {
+    if (!sessions || !classPick) return []
+    return sessions
+      .filter((x) => x.groupClassId === classPick.cls.id)
+      .slice()
+      .sort((a, b) => a.startDate.localeCompare(b.startDate))
+  }, [sessions, classPick])
+  const chosenSession = useMemo(
+    () => classSessions.find((x) => x.id === sessionId) ?? null,
+    [classSessions, sessionId],
+  )
+
+  /**
    * Clamp when the step on screen stops existing.
    *
    * A cart edit can remove the provider step under the customer's feet (e.g. the
@@ -606,8 +783,11 @@ export function BookingFlow({
    */
   useEffect(() => {
     if (phase !== 'select') return
-    if (stepIndex === -1) setStepId('service')
-  }, [phase, stepIndex])
+    // 'offering' is a gate BEFORE the numbered steps, so it is legitimately absent
+    // from the list - never clamp it away.
+    if (stepId === 'offering') return
+    if (stepIndex === -1) setStepId(selectSteps[0] ?? 'service')
+  }, [phase, stepIndex, stepId])
 
   // Effective price/duration for the current configuration: chosen variant +
   // add-ons + any per-employee override for the worker pinned to THAT position.
@@ -674,6 +854,27 @@ export function BookingFlow({
         { label: providerRowLabel, value: providerName },
         { label: 'Termin', value: `${dayMonth(date)}, ${slotLabel(date, slotKey, business.timezone)}` },
         { label: 'Cena', value: priceLabel(shownPrice, showFrom), total: true },
+      ]
+    : []
+
+  /**
+   * Summary of a class sign-up. Different rows, not a reshaped visit summary:
+   * there is no provider CHOICE to report (the instructor is an attribute of the
+   * term) and no cart to total up.
+   */
+  const classSummaryRows: SummaryRow[] = classPick
+    ? [
+        { label: 'Zajęcia', value: classPick.service.name },
+        ...(chosenSession
+          ? [
+              {
+                label: 'Termin',
+                value: `${dayMonth(chosenSession.dateLocal)}, ${sessionHour(chosenSession.startDate, business.timezone)}`,
+              },
+            ]
+          : []),
+        ...(chosenSession?.instructor?.name ? [{ label: 'Prowadzi', value: chosenSession.instructor.name }] : []),
+        { label: 'Cena', value: priceLabel(chosenSession?.priceOverride ?? classPick.service.price), total: true },
       ]
     : []
 
@@ -885,6 +1086,77 @@ export function BookingFlow({
     emit('booking_failed', { ...ctx, code: r.code, reason: 'slot_lost' })
   }
 
+  /**
+   * Sign up for a term - the class twin of book().
+   *
+   * Kept separate rather than branching inside book(): the payload, the failure
+   * codes and the success shape genuinely differ (there is no slot to lose, no
+   * chain to rebuild, and a full term is a normal outcome, not a race). What IS
+   * shared is the envelope - identity, Idempotency-Key, the "verify your phone"
+   * recovery and the whitelist backstop - so those read the same in both.
+   */
+  async function register(a: Auth, id: number) {
+    if (!id || booking.current) return
+    booking.current = true
+    setBookingErr('')
+    setPhase('confirming')
+    const ctx = { groupClassId: classPick?.cls.id ?? null, sessionId: id, businessId: business.id }
+    emit('booking_submitted', { ...ctx, userId: a.userId })
+    const trimmedNotes = notes.trim() || undefined
+    const r = await registerForSession(
+      cfg,
+      {
+        sessionId: id,
+        bookedById: a.userId,
+        notes: trimmedNotes,
+        // Deterministic from the payload, like the appointment key: it must survive
+        // a remount and the phone-verification detour without minting a new one.
+        idempotencyKey: `vzw-gc-${business.id}-${id}-${a.userId}-${(trimmedNotes ?? '').length}`,
+      },
+      a.token,
+    )
+    booking.current = false
+    if (r.ok) {
+      setBookedStatus(r.data?.status ?? 'registered')
+      setPhase('done')
+      emit('booking_completed', {
+        ...ctx,
+        userId: a.userId,
+        attendeeId: r.data?.id ?? null,
+        value: (classPick?.service.price ?? 0) / 100,
+        currency: 'PLN',
+      })
+      return
+    }
+    if (r.code === 'BOOKED_BY_MISMATCH' || r.code === 'VERIFICATION_REQUIRED' || r.code === 'PHONE_VERIFICATION_REQUIRED') {
+      setAuth(null)
+      setIdentifyErr('Potwierdź numer telefonu, aby dokończyć zapis.')
+      setPhase('identify')
+      emit('booking_failed', { ...ctx, code: r.code, reason: 'verification_required' })
+      return
+    }
+    if (r.code === 'BOOKING_ACCESS_RESTRICTED') {
+      setPhase('restricted')
+      emit('booking_failed', { ...ctx, code: r.code, reason: 'access_restricted' })
+      return
+    }
+    if (r.code === 'NETWORK') {
+      setBookingErr('Brak połączenia. Spróbuj ponownie.')
+      emit('booking_failed', { ...ctx, code: r.code, reason: 'network' })
+      return
+    }
+    // Everything else is a policy answer about THIS term, so the customer stays on
+    // the timetable with the reason spelled out - there is no slot-recovery screen
+    // to send them to, and the fix is almost always "pick another term".
+    setBookingErr(registerErrorMessage(r.code))
+    setSessionId(null)
+    timetableReq.current = false
+    setSessions(null) // refetch: seat counts moved under us
+    setStepId('session')
+    setPhase('select')
+    emit('booking_failed', { ...ctx, code: r.code, reason: 'register_refused' })
+  }
+
   // Hard whitelist check right after any path that establishes a session (OTP
   // verify, e-mail login, OAuth). Resolves access for the actual user and the
   // selected service; anything but 'bookable' stops before the booking step.
@@ -924,7 +1196,10 @@ export function BookingFlow({
   // viewer is confirmed - just resume selection where they left off.
   function complete(a: Auth) {
     if (intent === 'waitlist') void submitWaitlist(a)
-    else if (lines.length && date && slotKey) void book(a)
+    else if (effKind === 'class') {
+      if (chosenSession) void register(a, chosenSession.id)
+      else setPhase('select')
+    } else if (lines.length && date && slotKey) void book(a)
     else setPhase('select')
   }
 
@@ -1181,6 +1456,28 @@ export function BookingFlow({
     }
   }
   function dalej() {
+    if (stepId === 'offering') {
+      // The gate answers itself on tap; "Dalej" is only a fallback for keyboard
+      // users who selected without activating.
+      if (kind) setStepId(kind === 'class' ? 'class' : 'service')
+      return
+    }
+    if (stepId === 'class') {
+      if (!classPick) return
+      setSessionId(null)
+      setStepId('session')
+      return
+    }
+    if (stepId === 'session') {
+      if (!chosenSession) return
+      setIntent('book')
+      if (auth) void register(auth, chosenSession.id)
+      else {
+        emit('details_started', { groupClassId: classPick?.cls.id ?? null, sessionId: chosenSession.id })
+        setPhase('identify')
+      }
+      return
+    }
     if (stepId === 'service') {
       if (!cartValid) return
       if (!hasResourceStep) {
@@ -1224,6 +1521,11 @@ export function BookingFlow({
       // "was the previous step the provider one?" at every call site.
       const prev = selectSteps[stepIndex - 1]
       if (prev) return () => setStepId(prev)
+      // First step of a family: go back to the fork when there was one, otherwise
+      // close. Without this a mixed business had no way to change its mind.
+      if (stepId !== 'offering' && hasServices && mayHaveClasses) {
+        return () => { setKind(null); setStepId('offering') }
+      }
       return onClose ?? null // first step: back closes (launcher)
     }
     return null // confirming / done
@@ -1425,6 +1727,12 @@ export function BookingFlow({
     setDetailsId(null)
     setBookedStatus(null)
     setLoginReason('')
+    // Class branch: drop the pick and the term, and re-ask which family when the
+    // business has both (a second sign-up may well be for a visit this time).
+    setClassPick(null)
+    setSessionId(null)
+    setSessions(null)
+    if (hasServices && mayHaveClasses) { setKind(null); setStepId('offering') }
     setContact(emptyContact)
     setNotes('')
     setIntent('book')
@@ -1476,7 +1784,13 @@ export function BookingFlow({
     : cartResource === 'any' || (typeof cartResource === 'number' && selectableProviders.some((p) => p.id === cartResource))
   // Every position must satisfy its own add-on groups before the cart can move on.
   const cartValid = lines.length > 0 && !configuring && lines.every((l) => addonsValid(l.service, l.addonIds))
-  const canAdvance = stepId === 'service' ? cartValid : stepId === 'provider' ? resourceValid : !!slotKey
+  const canAdvance =
+    stepId === 'offering' ? kind != null
+      : stepId === 'class' ? !!classPick
+        : stepId === 'session' ? !!chosenSession
+          : stepId === 'service' ? cartValid
+            : stepId === 'provider' ? resourceValid
+              : !!slotKey
   const ctaPrice = lines.length ? priceLabel(shownPrice, showFrom) : ''
   // The time step has to show who the hours belong to - and let it be changed
   // without walking back a step. A pool cart keeps its own (single) answer.
@@ -1501,7 +1815,9 @@ export function BookingFlow({
       </header>
 
       <div class="vz-body" ref={bodyRef} tabIndex={-1}>
-        {phase !== 'done' && phase !== 'waitlistDone' && phase !== 'restricted' && (
+        {/* The offering fork sits BEFORE the counter: the two families have
+            different step counts, so numbering it would promise the wrong total. */}
+        {phase !== 'done' && phase !== 'waitlistDone' && phase !== 'restricted' && !(phase === 'select' && stepId === 'offering') && (
           <ProgressBar step={progStep} total={totalSteps} label={stepNames[progStep]} />
         )}
 
@@ -1542,6 +1858,41 @@ export function BookingFlow({
               setDetailsId(null)
             }}
           />
+        )}
+        {phase === 'select' && stepId === 'offering' && (
+          <StepOffering
+            selected={kind}
+            onPick={(k) => { setKind(k); setStepId(k === 'class' ? 'class' : 'service') }}
+            serviceLabel="Wizyta indywidualna"
+            classLabel="Zajęcia grupowe"
+          />
+        )}
+        {phase === 'select' && stepId === 'class' && (
+          groupClasses === null
+            ? <div class="vz-center"><Spinner /></div>
+            : (
+              <StepClass
+                options={classOptions}
+                selectedId={classPick?.cls.id ?? null}
+                onPick={(o) => { setClassPick(o); setSessionId(null); setStepId('session') }}
+              />
+            )
+        )}
+        {phase === 'select' && stepId === 'session' && (
+          <>
+            {bookingErr && <Notice title="Nie udało się zapisać">{bookingErr}</Notice>}
+            {sessions === null || (classPick === null && prefill?.classId != null)
+              ? <div class="vz-center"><Spinner /></div>
+              : (
+                <StepSession
+                  sessions={classSessions}
+                  cls={classPick?.cls ?? null}
+                  timezone={business.timezone ?? null}
+                  selectedId={sessionId}
+                  onPick={(x) => { setBookingErr(''); setSessionId(x.id) }}
+                />
+              )}
+          </>
         )}
         {phase === 'select' && !configuring && stepId === 'service' && !detailsService && (
           <>
@@ -1654,7 +2005,7 @@ export function BookingFlow({
           <StepIdentify
             // Access-check login (no slot picked yet): no summary and no notes -
             // the user is only confirming who they are.
-            summary={intent === 'waitlist' ? waitlistSummary : slotKey ? summaryRows : []}
+            summary={intent === 'waitlist' ? waitlistSummary : effKind === 'class' ? classSummaryRows : slotKey ? summaryRows : []}
             contact={contact}
             onChange={onContactChange}
             notes={intent === 'waitlist' || !slotKey ? undefined : notes}
@@ -1743,7 +2094,14 @@ export function BookingFlow({
           </div>
         )}
         {phase === 'done' && (
-          <StepDone rows={summaryRows} status={bookedStatus} email={contact.email} onClose={onClose} onRestart={restart} />
+          <StepDone
+            rows={effKind === 'class' ? classSummaryRows : summaryRows}
+            status={bookedStatus}
+            email={contact.email}
+            kind={effKind}
+            onClose={onClose}
+            onRestart={restart}
+          />
         )}
         {phase === 'waitlistDone' && (
           <div class="vz-done vz-fade-in">
@@ -1762,7 +2120,19 @@ export function BookingFlow({
         <div class="vz-cta">
           <div class="vz-cta-summary">
             <div class="vz-cta-left">
-              {lines.length ? (
+              {effKind === 'class' ? (
+                classPick ? (
+                  <>
+                    <div class="vz-cta-svc">{classPick.service.name}</div>
+                    <div class="vz-cta-meta">
+                      <b>{priceLabel(classPick.service.price)}</b> · {formatDuration(classPick.service.duration)}
+                      {chosenSession?.instructor?.name ? ` · ${chosenSession.instructor.name}` : ''}
+                    </div>
+                  </>
+                ) : (
+                  <div class="vz-cta-meta">{stepId === 'offering' ? 'Wybierz, co chcesz zarezerwować' : 'Wybierz zajęcia, aby kontynuować'}</div>
+                )
+              ) : lines.length ? (
                 <>
                   <div class="vz-cta-svc">{lines.map((l) => l.service.name).join(', ')}</div>
                   <div class="vz-cta-meta">
@@ -1775,10 +2145,10 @@ export function BookingFlow({
                   )}
                 </>
               ) : (
-                <div class="vz-cta-meta">Wybierz usługę, aby kontynuować</div>
+                <div class="vz-cta-meta">{stepId === 'offering' ? 'Wybierz, co chcesz zarezerwować' : 'Wybierz usługę, aby kontynuować'}</div>
               )}
             </div>
-            {stepId !== 'service' && (eachMode || cartResource != null) && (
+            {effKind !== 'class' && stepId !== 'service' && (eachMode || cartResource != null) && (
               <div class="vz-cta-who">
                 {pinnedResource && !eachMode ? (
                   <span class="vz-card-av">{pinnedResource.image ? <img src={pinnedResource.image} alt="" /> : pinnedResource.name.charAt(0)}</span>

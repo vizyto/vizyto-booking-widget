@@ -4,6 +4,16 @@
 <div id="booking"></div>
 <script src="/dist/widget.js"></script>
 <script>
-  VizytoBooking.mount({ businessId: 24, siteKey: 'pk_test', apiBase: 'mock', inline: '#booking' });
+  // ?prefillClass=41 / ?prefillSession=901 emulate a timetable CTA on a customer
+  // site handing the widget what the visitor already clicked.
+  var q = new URLSearchParams(location.search);
+  var prefill = {};
+  if (q.get('prefillClass')) prefill.classId = Number(q.get('prefillClass'));
+  if (q.get('prefillSession')) prefill.sessionId = Number(q.get('prefillSession'));
+  if (q.get('prefillService')) prefill.serviceId = Number(q.get('prefillService'));
+  VizytoBooking.mount({
+    businessId: 24, siteKey: 'pk_test', apiBase: 'mock', inline: '#booking',
+    prefill: Object.keys(prefill).length ? prefill : undefined,
+  });
 </script>
 </body></html>

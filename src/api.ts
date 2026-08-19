@@ -191,6 +191,142 @@ export async function fetchBusiness(cfg: Cfg): Promise<Business | null> {
   }
 }
 
+// ---- group classes -------------------------------------------------------
+// A class is NOT a separate product in the database: it is a `business_services`
+// row with bookingType 'group', wrapped by a `group_classes` row that adds the
+// roster rules and the schedule. So name, price, description, images and the
+// whitelist verdict all arrive in `business.services` - which the widget already
+// has and used to throw away. Only the wrapper and the materialized terms need
+// fetching.
+
+/** Wrapper row: capacity + roster mode + the link to the backing service. */
+export type GroupClass = {
+  id: number
+  businessServiceId: number
+  /** null = no limit */
+  capacity: number | null
+  attendanceMode: 'open' | 'fixed'
+  cancellationCutoffHours: number | null
+}
+
+/**
+ * One materialized term. Unlike a service slot this is a FACT (the room is
+ * booked, the instructor is assigned, people are signed up) - not a candidate
+ * computed from a schedule. That is the one real domain difference between
+ * signing up for a class and booking a visit, and it is why the time step needs
+ * its own body instead of the availability grid.
+ */
+export type GroupSession = {
+  id: number
+  groupClassId: number
+  /** ISO UTC */
+  startDate: string
+  endDate: string
+  /** business-local YYYY-MM-DD, computed server-side in the business timezone */
+  dateLocal: string
+  status: string
+  capacity: number | null
+  /** grosze; null = use the class price */
+  priceOverride: number | null
+  instructor?: { id: number; name: string; image: string | null } | null
+  /** seats already taken (registered + auto-enrolled members) */
+  attendeeCount?: number
+}
+
+export async function fetchGroupClasses(cfg: Cfg): Promise<GroupClass[]> {
+  if (cfg.mock) return mock.fetchGroupClasses()
+  try {
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/group-classes`, { headers: headers(cfg) })
+    if (!r.ok) return []
+    const data = await r.json()
+    const arr = Array.isArray(data) ? data : data?.data ?? []
+    return arr
+      .map((c: any) => ({
+        id: c.id,
+        businessServiceId: c.businessServiceId,
+        capacity: c.capacity ?? null,
+        attendanceMode: c.attendanceMode ?? 'open',
+        cancellationCutoffHours: c.cancellationCutoffHours ?? null,
+      }))
+      .filter((c: GroupClass) => c.businessServiceId != null)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Terms in a window. The window is deliberately narrow (the caller asks for the
+ * next few weeks, not a year): on the server this read is also the safety net
+ * that materializes missing sessions, and a wide window there is what once made
+ * a club profile take 31 seconds.
+ */
+export async function fetchTimetable(cfg: Cfg, p: { from: string; to: string }): Promise<GroupSession[]> {
+  if (cfg.mock) return mock.fetchTimetable()
+  try {
+    const qs = `from=${encodeURIComponent(p.from)}&to=${encodeURIComponent(p.to)}`
+    const r = await fetch(
+      `${cfg.apiBase}/api/public/businesses/${cfg.businessId}/group-class-sessions/timetable?${qs}`,
+      { headers: headers(cfg) },
+    )
+    if (!r.ok) return []
+    const data = await r.json()
+    const arr = Array.isArray(data) ? data : data?.data ?? []
+    return arr
+      .map((s: any) => ({
+        id: s.id,
+        groupClassId: s.groupClassId,
+        startDate: s.startDate,
+        endDate: s.endDate,
+        dateLocal: s.dateLocal,
+        status: s.status,
+        capacity: s.capacity ?? null,
+        priceOverride: s.priceOverride ?? null,
+        instructor: s.instructor ?? null,
+        attendeeCount: s.attendeeCount ?? s.effectiveAttendeeCount ?? 0,
+      }))
+      .filter((s: GroupSession) => s.status !== 'cancelled')
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Sign up for a term. Same envelope as createAppointment (Idempotency-Key,
+ * Bearer for a guest token) because it is the same public contract - see the
+ * route comment in the monorepo. A guest who passed SMS OTP is accepted.
+ */
+export async function registerForSession(
+  cfg: Cfg,
+  p: { sessionId: number; bookedById: number; notes?: string; idempotencyKey: string },
+  token: string | null,
+): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
+  if (cfg.mock) return mock.registerForSession({ sessionId: p.sessionId }, token)
+  try {
+    const extra: Record<string, string> = { 'Idempotency-Key': p.idempotencyKey }
+    if (token) extra.authorization = `Bearer ${token}`
+    const r = await fetch(
+      `${cfg.apiBase}/api/public/businesses/${cfg.businessId}/group-class-sessions/${p.sessionId}/register`,
+      {
+        method: 'POST',
+        headers: headers(cfg, extra),
+        body: JSON.stringify({ bookedById: p.bookedById, notes: p.notes }),
+      },
+    )
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}` }
+    return { ok: true, data }
+  } catch {
+    return { ok: false, code: 'NETWORK' }
+  }
+}
+
+/** Seats left, or null when the term has no limit. */
+export const seatsLeft = (s: GroupSession, cls?: GroupClass): number | null => {
+  const cap = s.capacity ?? cls?.capacity ?? null
+  if (cap == null) return null
+  return Math.max(0, cap - (s.attendeeCount ?? 0))
+}
+
 export async function getServiceCategories(cfg: Cfg): Promise<ServiceCategory[]> {
   if (cfg.mock) return mock.getServiceCategories()
   try {

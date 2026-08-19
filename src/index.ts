@@ -20,6 +20,12 @@ export type MountConfig = {
   userId?: number
   inline?: boolean | string | HTMLElement // selector/element to mount into, or true (no <div> needed)
   showLauncher?: boolean // false = no floating button; open only via VizytoBooking.open()
+  /**
+   * What the host page already knows the visitor picked - a service, a specialist,
+   * or (for a timetable CTA) a class / a specific term. Without this an inline
+   * embed had no way to receive a preselection at all.
+   */
+  prefill?: Prefill
   onEvent?: EventHandler // funnel events (service_selected, booking_completed, ...) - see README
   dataLayer?: boolean // false = don't push events to window.dataLayer (GTM/GA); default true
 }
@@ -114,9 +120,11 @@ export function mount(config: MountConfig): HTMLElement | null {
   const showLauncher = config.showLauncher !== false
   const emit = createEmitter({ businessId: config.businessId, onEvent: config.onEvent, dataLayer: config.dataLayer })
   const controller: WidgetController = {}
-  render(h(Widget, { cfg, mode, label, preAuth, showLauncher, controller, emit }), root)
+  render(h(Widget, { cfg, mode, label, preAuth, showLauncher, controller, initialPrefill: config.prefill, emit }), root)
   instances.push({ host, root, cleanup, controller })
-  if (mode === 'launcher') activeController = controller
+  // Inline instances are addressable too: a page whose only embed is inline still
+  // needs VizytoBooking.open({ classId }) to work from its own CTA.
+  activeController = controller
   return host
 }
 
@@ -137,7 +145,7 @@ export function unmount() {
 // optionally jumps to a service/specialist (e.g. a "book this barber" CTA).
 export function open(prefill?: Prefill) {
   if (!activeController?.open) {
-    console.warn('[vizyto] open() called but no launcher instance is mounted')
+    console.warn('[vizyto] open() called but no instance is mounted')
     return
   }
   activeController.open(prefill)

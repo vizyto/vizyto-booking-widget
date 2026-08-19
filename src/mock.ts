@@ -12,6 +12,8 @@ import type {
   CartItemTime,
   CheckEmailResult,
   DayCounts,
+  GroupClass,
+  GroupSession,
   LoginResult,
   OtpSendResult,
   OtpVerifyResult,
@@ -126,6 +128,22 @@ const BUSINESS: Business = {
     {
       id: 8, name: 'Mycie i stylizacja', description: 'Krótka wizyta', price: 4000, duration: 20,
       bookingType: 'single', fulfillmentMode: 'staff', providerSelection: 'customer',
+    },
+    // Group classes are business_services rows with bookingType 'group' - the
+    // 1:1 flow filters them out, the class flow resolves them by id. Two of them
+    // so the class list is a real list, and the first one is free (a martial-arts
+    // club selling an intro session for 0 zł is the case that produced the
+    // "Bezpłatnie" label).
+    {
+      id: 31, name: 'Trening otwarty - pierwszy raz', description: '<p>Wejście próbne, bez zobowiązań. Strój sportowy wystarczy.</p>',
+      price: 0, duration: 60,
+      bookingType: 'group', fulfillmentMode: 'staff', providerSelection: 'auto',
+      image: THUMB2,
+      images: [{ id: 31, url: THUMB2, orderIndex: 0 }],
+    },
+    {
+      id: 32, name: 'Grupa zaawansowana', description: 'Dla osób po co najmniej roku treningu', price: 5500, duration: 90,
+      bookingType: 'group', fulfillmentMode: 'staff', providerSelection: 'auto',
     },
   ],
   resources: [
@@ -327,4 +345,49 @@ export async function createAppointment(
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   if (/T\d{2}:55/.test(p.startDate)) return { ok: false, code: 'SLOT_TAKEN' }
   return { ok: true, data: { id: 12345, status: 'confirmed' } }
+}
+
+// ---- group classes -------------------------------------------------------
+// Wrapper rows. The 'fixed' one must never reach the picker: its roster comes
+// from linked customer groups and the server refuses self sign-up.
+export async function fetchGroupClasses(): Promise<GroupClass[]> {
+  await wait(200)
+  return [
+    { id: 41, businessServiceId: 31, capacity: 12, attendanceMode: 'open', cancellationCutoffHours: 12 },
+    { id: 42, businessServiceId: 32, capacity: 8, attendanceMode: 'open', cancellationCutoffHours: null },
+    { id: 43, businessServiceId: 32, capacity: 6, attendanceMode: 'fixed', cancellationCutoffHours: null },
+  ]
+}
+
+/**
+ * Materialized terms across the next few days, business-local. Deliberately
+ * includes a FULL term (0 seats left) and one with a single seat, so the seat
+ * copy and the disabled state are both reachable without a backend.
+ */
+export async function fetchTimetable(): Promise<GroupSession[]> {
+  await wait(300)
+  const day = (offset: number) => {
+    const d = new Date()
+    d.setDate(d.getDate() + offset)
+    return d.toISOString().slice(0, 10)
+  }
+  const at = (offset: number, hhmm: string) => `${day(offset)}T${hhmm}:00.000Z`
+  return [
+    { id: 901, groupClassId: 41, startDate: at(1, '16:00'), endDate: at(1, '17:00'), dateLocal: day(1), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 11, name: 'Marek', image: null }, attendeeCount: 3 },
+    { id: 902, groupClassId: 41, startDate: at(2, '16:00'), endDate: at(2, '17:00'), dateLocal: day(2), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 11, name: 'Marek', image: null }, attendeeCount: 11 },
+    { id: 903, groupClassId: 41, startDate: at(3, '16:00'), endDate: at(3, '17:00'), dateLocal: day(3), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 13, name: 'Ola', image: null }, attendeeCount: 12 },
+    { id: 911, groupClassId: 42, startDate: at(1, '18:30'), endDate: at(1, '20:00'), dateLocal: day(1), status: 'scheduled', capacity: 8, priceOverride: null, instructor: { id: 12, name: 'Kuba', image: null }, attendeeCount: 2 },
+    { id: 912, groupClassId: 42, startDate: at(4, '18:30'), endDate: at(4, '20:00'), dateLocal: day(4), status: 'scheduled', capacity: 8, priceOverride: 4000, instructor: { id: 12, name: 'Kuba', image: null }, attendeeCount: 0 },
+  ]
+}
+
+/** Session 903 is full in the timetable above - reject it the way the server does. */
+export async function registerForSession(
+  p: { sessionId: number },
+  token: string | null,
+): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
+  await wait(600)
+  if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
+  if (p.sessionId === 903) return { ok: false, code: 'SESSION_FULL' }
+  return { ok: true, data: { id: 5150, sessionId: p.sessionId, status: 'registered' } }
 }
