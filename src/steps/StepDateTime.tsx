@@ -1,19 +1,13 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
+import { useEffect, useMemo, useState } from 'preact/hooks'
 import type { VNode } from 'preact'
 import type { DayCounts, PromoBadges, Slots } from '../api'
 import { slotLabel } from '../api'
-import { DOW, dayNum, monthMatrix, monthOf, monthTitle, spanLabel, weekday } from '../dates'
+import { DOW, dayNum, monthMatrix, monthOf, monthTitle } from '../dates'
 import { ChevronDown, ChevronLeft, ChevronRight, Calendar, CalendarDays, Grid, Moon, Sun, Sunrise, Bell } from '../ui/icons'
 import { AvatarStack } from '../ui/AvatarStack'
+import { DayStrip, useDayPager } from '../ui/DayStrip'
 import { Spinner } from '../ui/Spinner'
 import { PromoBadge, dayPromo } from '../ui/PromoBadge'
-
-// Day tiles flow to fill the available width: we measure the strip and show as
-// many whole tiles as fit (MIN_TILE = narrowest a tile may get), then paginate
-// the horizon in chunks of that many. Swiping left/right moves between chunks.
-const MIN_TILE = 60
-const GAP = 8
-const SWIPE_THRESHOLD = 40
 
 export function StepDateTime({
   days,
@@ -87,38 +81,8 @@ export function StepDateTime({
 }) {
   const [view, setView] = useState<'week' | 'month'>('week')
   const [editingWho, setEditingWho] = useState(false)
-  // A date set from OUTSIDE (first-free jump) must bring its page into view -
-  // otherwise the customer is told "znaleziono termin" and sees the same week.
-  const [perPage, setPerPage] = useState(7)
-  const [page, setPage] = useState(0)
-  const stripRef = useRef<HTMLDivElement | null>(null)
-  const touchX = useRef<number | null>(null)
-  const swiped = useRef(false)
+  const pager = useDayPager(days, date, view === 'week')
   const inHorizon = useMemo(() => new Set(days), [days])
-
-  // Measure how many tiles fit and keep it in sync with the strip width.
-  useLayoutEffect(() => {
-    if (view !== 'week') return
-    const el = stripRef.current
-    if (!el) return
-    const measure = () => {
-      const w = el.clientWidth
-      if (!w) return
-      const n = Math.max(1, Math.floor((w + GAP) / (MIN_TILE + GAP)))
-      setPerPage((prev) => (prev === n ? prev : n))
-    }
-    measure()
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [view])
-
-  const maxPage = Math.max(0, Math.ceil(days.length / perPage) - 1)
-  // Keep the page in range when the horizon shrinks or more tiles now fit.
-  useEffect(() => {
-    setPage((p) => Math.min(p, maxPage))
-  }, [maxPage])
-
 
   // distinct months covered by the horizon, for month-view navigation
   const months = useMemo(() => {
@@ -136,63 +100,32 @@ export function StepDateTime({
   }, [days])
   const [mIdx, setMIdx] = useState(0)
 
-  // Follow a date set from OUTSIDE the strip (the "najbliższy wolny termin"
-  // jump): without this the customer is told a date was found and keeps looking
-  // at the same week, with no tile marked active. Also switch the month view to
-  // the month that actually holds it.
+  // The strip follows a date set from outside on its own (see useDayPager); the
+  // month view has to be told which month actually holds it.
   useEffect(() => {
     if (!date) return
-    const idx = days.indexOf(date)
-    if (idx < 0) return
-    setPage(Math.floor(idx / perPage))
+    if (days.indexOf(date) < 0) return
     const m = monthOf(date)
     const mi = months.findIndex((x) => x.year === m.year && x.month === m.month)
     if (mi >= 0) setMIdx(mi)
-  }, [date, days, perPage, months])
+  }, [date, days, months])
 
   const free = (d: string) => (counts[d] ?? 0) > 0
 
-  const safePage = Math.min(page, maxPage)
-  const pageDays = days.slice(safePage * perPage, safePage * perPage + perPage)
   // Promotion marks (owner's mockup, #430): a corner badge on every bookable day
   // and time tile that has one, a dot in the month grid - never on a disabled day.
+  // The week strip leaves room above its row only on a page that shows a badge
+  // (DayStrip decides that per page).
   const badges = promoBadges?.lowest ? promoBadges : null
   const dayMarks = dayPromo(days, (d) => inHorizon.has(d) && free(d), badges?.days)
-  // Only a page that shows a badge leaves room above its row for it.
-  const weekMarked = pageDays.some((d) => !!dayMarks.tile(d))
   const monthCells = useMemo(() => monthMatrix(months[mIdx]?.year ?? 0, months[mIdx]?.month ?? 0).flat(), [months, mIdx])
   const monthMarked = monthCells.some((d) => !!d && !!dayMarks.tile(d))
-  const label =
-    view === 'week'
-      ? pageDays.length
-        ? spanLabel(pageDays[0], pageDays[pageDays.length - 1])
-        : ''
-      : monthTitle(months[mIdx]?.year ?? 0, months[mIdx]?.month ?? 0)
+  const label = view === 'week' ? pager.label : monthTitle(months[mIdx]?.year ?? 0, months[mIdx]?.month ?? 0)
 
-  const goPrev = () => (view === 'week' ? setPage((p) => Math.max(0, p - 1)) : setMIdx((i) => Math.max(0, i - 1)))
-  const goNext = () =>
-    view === 'week' ? setPage((p) => Math.min(maxPage, p + 1)) : setMIdx((i) => Math.min(months.length - 1, i + 1))
-  const prevDisabled = view === 'week' ? safePage === 0 : mIdx === 0
-  const nextDisabled = view === 'week' ? safePage >= maxPage : mIdx >= months.length - 1
-
-  const onTouchStart = (e: TouchEvent) => {
-    touchX.current = e.touches[0]?.clientX ?? null
-    swiped.current = false
-  }
-  const onTouchEnd = (e: TouchEvent) => {
-    const start = touchX.current
-    touchX.current = null
-    if (start == null) return
-    const dx = (e.changedTouches[0]?.clientX ?? start) - start
-    if (Math.abs(dx) < SWIPE_THRESHOLD) return
-    // A real swipe: flag it so the trailing click on a day tile doesn't pick a date.
-    swiped.current = true
-    if (dx < 0) {
-      if (!nextDisabled) goNext()
-    } else if (!prevDisabled) {
-      goPrev()
-    }
-  }
+  const goPrev = () => (view === 'week' ? pager.goPrev() : setMIdx((i) => Math.max(0, i - 1)))
+  const goNext = () => (view === 'week' ? pager.goNext() : setMIdx((i) => Math.min(months.length - 1, i + 1)))
+  const prevDisabled = view === 'week' ? pager.prevDisabled : mIdx === 0
+  const nextDisabled = view === 'week' ? pager.nextDisabled : mIdx >= months.length - 1
 
   const groups = useMemo(() => {
     const keys = slots.slice().sort()
@@ -258,19 +191,7 @@ export function StepDateTime({
       </div>
 
       {view === 'week' ? (
-        <div class={`vz-days${weekMarked ? ' has-promo' : ''}`} ref={stripRef} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-          {pageDays.map((d) => {
-            const f = free(d)
-            return (
-              <button class={`vz-day ${d === date ? 'active' : ''}${f ? '' : ' is-disabled'}`} aria-label={dayMarks.tile(d) ? `${weekday(d)} ${dayNum(d)}, promocja ${dayMarks.tile(d)}` : undefined} aria-disabled={f ? undefined : 'true'} aria-current={d === date ? 'true' : undefined} onClick={() => { if (swiped.current) { swiped.current = false; return } if (f) onPickDate(d) }} type="button">
-                <small>{weekday(d)}</small>
-                {dayNum(d)}
-                <span class={`vz-free${f ? '' : ' ghost'}`} />
-                {dayMarks.tile(d) && <PromoBadge corner>{dayMarks.tile(d)}</PromoBadge>}
-              </button>
-            )
-          })}
-        </div>
+        <DayStrip pager={pager} counts={counts} date={date} onPickDate={onPickDate} mark={dayMarks.tile} />
       ) : (
         <div>
           <div class="vz-month">

@@ -58,3 +58,35 @@ export function monthMatrix(year: number, month: number): string[][] {
 export const monthOf = (d: string) => ({ year: at(d).getFullYear(), month: at(d).getMonth() })
 export const monthTitle = (year: number, month: number) =>
   monthYear(ymd(new Date(year, month, 1)))
+
+/**
+ * The UTC offset of `tz` at a given instant, in milliseconds. Read back what the
+ * instant looks like on the zone's wall clock and subtract - the only way to get
+ * a zone offset from the platform without shipping a timezone library.
+ */
+function tzOffset(ms: number, tz: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(ms))
+  const p: Record<string, string> = {}
+  for (const { type, value } of parts) p[type] = value
+  const wall = Date.UTC(+p.year!, +p.month! - 1, +p.day!, +p.hour! % 24, +p.minute!, +p.second!)
+  return wall - ms
+}
+
+/**
+ * The instant at which the wall clock in `tz` reads `date` `hhmm`, as an ISO
+ * string. Guess with the offset at the naive instant, then correct once with the
+ * offset at the guess - enough for every real zone, including the DST edges
+ * (inside the repeated hour either answer is defensible, and a rental pickup at
+ * 02:30 on the fold night is not a case worth a library).
+ */
+export function zonedIso(date: string, hhmm: string, tz: string): string | null {
+  const naive = Date.parse(`${date}T${hhmm}:00Z`)
+  if (Number.isNaN(naive)) return null
+  const guess = naive - tzOffset(naive, tz)
+  return new Date(naive - tzOffset(guess, tz)).toISOString()
+}

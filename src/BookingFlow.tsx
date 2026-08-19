@@ -46,7 +46,7 @@ import {
   verifyGuestOtp,
   workerOffersService,
 } from './api'
-import { dayMonth, nextDays, ymd } from './dates'
+import { dayMonth, nextDays, ymd, zonedIso } from './dates'
 import { StepClass, type ClassOption } from './steps/StepClass'
 import { StepSession } from './steps/StepSession'
 import { StepOffering, type OfferingKind } from './steps/StepOffering'
@@ -183,25 +183,56 @@ function rentalTarget(o: RentalOption): { resourceId?: number; rentalTypeId?: nu
 /**
  * The [start, end] window a rental occupies, in UTC.
  *
- * Slot mode gets its start from the picked hour; range mode starts at the local
- * day boundary (the server re-checks the real pickup window, and the WEB wizard
- * makes the same approximation). The end is start + units * unit length, which is
- * the same arithmetic the shared pricer bills against.
+ * Slot mode gets its start from the picked hour. Range mode (day/week/month) has
+ * no hour to pick, so the start is the business opening time on that weekday, in
+ * the BUSINESS timezone, bumped past "now" for today - the same rule the counts
+ * endpoint applies and the same derivation the WEB and CLIENT wizards make. The
+ * naive alternative (the day's UTC midnight) is 02:00 local in Poland and lands
+ * outside every published rental window, so the availability check refuses the
+ * whole calendar. The server still validates the exact instant on create.
+ *
+ * The end is start + units * unit length, which is the same arithmetic the shared
+ * pricer bills against. Returns null when the business is closed that day.
  */
 function rentalWindow(
   o: RentalOption,
   date: string,
   units: number,
   slotLocal: string,
+  business: Business,
 ): { startDate: string; endDate: string } | null {
   if (!date) return null
   const unit = o.head.rentalUnit ?? 'hour'
   const ms = { minute: 60_000, hour: 3_600_000, day: 86_400_000, week: 7 * 86_400_000, month: 30 * 86_400_000 }[unit]
-  const hhmm = slotLocal && !isRangeUnit(unit) ? slotLocal.slice(0, 5) : '00:00'
-  const start = new Date(`${date}T${hhmm}:00.000Z`)
+
+  let startIso: string | null
+  if (isRangeUnit(unit)) {
+    startIso = rangePickupIso(business, date)
+  } else {
+    const hhmm = slotLocal ? slotLocal.slice(0, 5) : '00:00'
+    startIso = `${date}T${hhmm}:00.000Z`
+  }
+  if (!startIso) return null
+  const start = new Date(startIso)
   if (Number.isNaN(start.getTime())) return null
   const end = new Date(start.getTime() + ms * Math.max(1, units))
   return { startDate: start.toISOString(), endDate: end.toISOString() }
+}
+
+/** Opening instant of `date` in the business timezone, never in the past. */
+function rangePickupIso(business: Business, date: string): string | null {
+  const dow = new Date(`${date}T00:00:00`).getDay()
+  const wh = business.workingHours?.find((h) => h.dayOfWeek === dow)
+  if (!wh || !wh.isOpened) return null
+  const tz = business.timezone || 'Europe/Warsaw'
+  const iso = zonedIso(date, (wh.openTime || '09:00').slice(0, 5), tz)
+  if (!iso) return null
+  const start = Date.parse(iso)
+  const now = Date.now()
+  if (start > now) return iso
+  // Today, opening already passed: the earliest realistic pickup is the next
+  // quarter-hour (strictly future), which is what the counts endpoint counted.
+  return new Date(Math.ceil((now + 1) / 900_000) * 900_000).toISOString()
 }
 
 /** Hour of a materialized term, in the BUSINESS timezone (not the visitor's). */
@@ -1052,8 +1083,10 @@ export function BookingFlow({
   useEffect(() => {
     if (effKind !== 'rental' || !rentalPick || !date) return
     if (rentalSlots?.mode !== 'range') { setRentalRangeOk(null); return }
-    const win = rentalWindow(rentalPick, date, rentalUnits, '')
-    if (!win) return
+    const win = rentalWindow(rentalPick, date, rentalUnits, '', business)
+    // No opening hours that weekday: the window cannot exist, so say so instead
+    // of keeping the previous day's answer (which could leave the CTA unlocked).
+    if (!win) { setRentalRangeOk(false); return }
     let cancelled = false
     setRentalRangeOk(null)
     checkRentalRange(cfg, { ...rentalTarget(rentalPick), startDate: win.startDate, endDate: win.endDate }).then((ok) => {
@@ -1077,7 +1110,7 @@ export function BookingFlow({
       }, auth?.token).then((next) => { if (!cancelled) setQuote(next) })
     } else if (effKind === 'rental' && rentalPick && date) {
       const ready = rentalSlots?.mode === 'range' ? rentalRangeOk === true : !!slotKey
-      const win = ready ? rentalWindow(rentalPick, date, rentalUnits, slotKey) : null
+      const win = ready ? rentalWindow(rentalPick, date, rentalUnits, slotKey, business) : null
       if (win) {
         quoteRental(cfg, {
           ...rentalTarget(rentalPick),
@@ -1212,7 +1245,7 @@ export function BookingFlow({
     ? (() => {
         const unit = rentalPick.head.rentalUnit ?? 'hour'
         const total = rentalPrice(rentalPick.head, rentalUnits)
-        const win = rentalWindow(rentalPick, date, rentalUnits, slotKey)
+        const win = rentalWindow(rentalPick, date, rentalUnits, slotKey, business)
         const fmt = (iso: string) => {
           try {
             return new Intl.DateTimeFormat('pl-PL', {
@@ -1249,7 +1282,7 @@ export function BookingFlow({
    */
   // An hour grid needs its hour; a range term is the day itself.
   const rentalTermChosen = !!rentalPick && (rentalSlots?.mode !== 'slots' || !!slotKey)
-    && !!rentalWindow(rentalPick, date, rentalUnits, slotKey)
+    && !!rentalWindow(rentalPick, date, rentalUnits, slotKey, business)
   const rentalPicked = rentalTermChosen && quote?.advertised && quote.total != null && quote.priorTotal != null
     ? { total: quote.total, priorTotal: quote.priorTotal }
     : null
@@ -1265,7 +1298,7 @@ export function BookingFlow({
    */
   async function reserveRental(a: Auth, pricing: PriceQuote | null = quote) {
     if (!rentalPick || booking.current) return
-    const win = rentalWindow(rentalPick, date, rentalUnits, slotKey)
+    const win = rentalWindow(rentalPick, date, rentalUnits, slotKey, business)
     if (!win) return
     booking.current = true
     setBookingErr('')
@@ -1704,7 +1737,7 @@ export function BookingFlow({
         bookedById: a.userId,
       }, a.token)
     } else if (effKind === 'rental' && rentalPick) {
-      const win = rentalWindow(rentalPick, date, rentalUnits, slotKey)
+      const win = rentalWindow(rentalPick, date, rentalUnits, slotKey, business)
       if (win) {
         fresh = await quoteRental(cfg, {
           ...rentalTarget(rentalPick),
@@ -2501,6 +2534,8 @@ export function BookingFlow({
               rangeOk={rentalRangeOk}
               promoBadges={rentalBadges}
               quote={quote}
+              window={rentalWindow(rentalPick, date, rentalUnits, slotKey, business)}
+              tz={business.timezone}
               onPickDate={(d) => { setBookingErr(''); setDate(d); setSlotKey('') }}
               onPickUnits={(u) => { setBookingErr(''); setRentalUnits(u); setSlotKey('') }}
               onPickPartySize={(n) => { setBookingErr(''); setRentalParty(n); setSlotKey('') }}

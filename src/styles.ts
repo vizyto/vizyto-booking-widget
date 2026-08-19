@@ -550,11 +550,6 @@ export const css = `
    day label pushed clear of them. */
 .vz-days.has-promo { padding-top: 10px; }
 .vz-days.has-promo .vz-day { padding-top: 16px; }
-/* The rental strip lists the whole horizon: it scrolls sideways with tiles at
-   the width the visit strip pages by, instead of squeezing every day into one row. */
-.vz-days.scroll { overflow-x: auto; touch-action: auto; scrollbar-width: none; padding-bottom: 2px; }
-.vz-days.scroll::-webkit-scrollbar { display: none; }
-.vz-days.scroll .vz-day { flex: 0 0 60px; }
 
 /* month grid */
 .vz-month { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
@@ -589,6 +584,9 @@ export const css = `
 .vz-pill:active { transform: scale(.98); }
 .vz-pill.on { border-color: var(--vz-accent); background: var(--vz-selected); }
 .vz-pill.on small { color: var(--vz-text); }
+/* "Dłużej" opens the rest of the durations - a way in, not an answer, so it
+   never carries the selected state the real options compete for. */
+.vz-pill-more { border-style: dashed; color: var(--vz-text-muted); }
 .vz-slots { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
 .vz-slot {
   position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 13px 0; border: 1.5px solid transparent; border-radius: var(--vz-r-md);

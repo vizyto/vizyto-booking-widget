@@ -226,7 +226,11 @@ const BUSINESS: Business = {
       ],
     },
   ],
-  workingHours: [],
+  // Open every day 09:00-18:00: a daily rental starts at the opening time in the
+  // business timezone, so an empty list would close every pickup day.
+  workingHours: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({
+    id: dayOfWeek + 1, dayOfWeek, openTime: '09:00', closeTime: '18:00', isOpened: true,
+  })),
   // Demo levers: show the "rezerwacja próbna" notice and enable the waitlist so
   // both flows are reachable in the local configurator.
   isTestMode: true,

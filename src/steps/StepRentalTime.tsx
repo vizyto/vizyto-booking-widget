@@ -1,10 +1,11 @@
+import { useState } from 'preact/hooks'
 import type { PriceQuote, PromoBadges, RentalDaySlots, RentalUnit, Resource } from '../api'
 import { formatPrice2, rentalPrice, rentalUnitsLabel } from '../api'
-import { dayNum, weekday } from '../dates'
+import { DayStrip, useDayPager } from '../ui/DayStrip'
 import { Spinner } from '../ui/Spinner'
 import { Notice } from '../ui/Notice'
 import { SummaryCard } from '../ui/SummaryCard'
-import { Calendar, Clock, Users } from '../ui/icons'
+import { Calendar, ChevronLeft, ChevronRight, Clock, Users } from '../ui/icons'
 import { PromoBadge, dayPromo } from '../ui/PromoBadge'
 
 /**
@@ -12,12 +13,12 @@ import { PromoBadge, dayPromo } from '../ui/PromoBadge'
  *  - minute/hour: pick a START SLOT on a day (a grid, like a visit)
  *  - day/week/month: pick a START and a LENGTH; the window is then re-checked
  *
- * The day strip below is a deliberately simpler twin of the one inside
- * StepDateTime (same CSS classes, so it looks identical) rather than an
- * extraction. StepDateTime carries the live visit flow on a customer's site, and
- * pulling its paging/swipe/month-grid apart to share it is precisely the work the
- * shared booking kit is for - not something to risk inside a feature commit.
+ * The day strip is the SAME component the visit calendar uses (ui/DayStrip): a
+ * rental horizon is 42 days, and a strip that renders them all in one flex row
+ * squeezes every tile past the point where the weekday labels stay apart.
  */
+const SHORT_STAYS = 6
+
 export function StepRentalTime({
   head,
   pooled,
@@ -30,6 +31,8 @@ export function StepRentalTime({
   slots,
   loading,
   rangeOk,
+  window: win,
+  tz,
   onPickDate,
   onPickUnits,
   onPickPartySize,
@@ -50,6 +53,10 @@ export function StepRentalTime({
   loading: boolean
   /** Range mode only: null = not asked yet, false = window taken/closed. */
   rangeOk: boolean | null
+  /** The [start, end] the answer so far adds up to - null when the day is closed. */
+  window: { startDate: string; endDate: string } | null
+  /** Business timezone - pickup and return are stated in it, not the visitor's. */
+  tz: string | null
   onPickDate: (d: string) => void
   onPickUnits: (u: number) => void
   onPickPartySize: (n: number) => void
@@ -82,13 +89,22 @@ export function StepRentalTime({
   // Every promoted day and hour carries its corner badge (owner's mockup, #430).
   const slotBadges = slots?.mode === 'slots' && badges ? slots.slots.map(slotBadge) : []
   const slotMarked = slotBadges.some(Boolean)
-  const returnDate = (() => {
-    if (!date) return null
-    const ms = { minute: 60_000, hour: 3_600_000, day: 86_400_000, week: 7 * 86_400_000, month: 30 * 86_400_000 }[unit]
-    const d = new Date(`${date}T00:00:00`)
-    d.setTime(d.getTime() + ms * units)
-    return d.toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long' })
-  })()
+  const pager = useDayPager(days, date)
+  // A rental can run for a dozen units, and a dozen chips is a wall that pushes
+  // the calendar off the panel. Show the short stays everyone picks and let the
+  // rest in on demand - already expanded when the answer itself is a long one.
+  const [allUnits, setAllUnits] = useState(false)
+  const showAll = allUnits || units > unitOptions[Math.min(SHORT_STAYS, unitOptions.length) - 1]!
+  const shownOptions = showAll ? unitOptions : unitOptions.slice(0, SHORT_STAYS)
+  const hiddenCount = unitOptions.length - shownOptions.length
+  // Pickup and return are shown as the exact instants the reservation will carry,
+  // in the BUSINESS timezone - a van picked up at 07:00 must not read "00:00"
+  // because the visitor happens to sit in another zone.
+  const stamp = (iso: string) =>
+    new Date(iso).toLocaleString('pl-PL', {
+      weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit',
+      timeZone: tz || undefined,
+    })
 
   return (
     <div>
@@ -121,7 +137,7 @@ export function StepRentalTime({
       <div class="vz-field">
         <label class="vz-label"><Clock size={15} /> Na jak długo?</label>
         <div class="vz-pills" role="radiogroup" aria-label="Czas wynajmu">
-          {unitOptions.map((u) => {
+          {shownOptions.map((u) => {
             const p = rentalPrice(head, u)
             return (
               <button
@@ -137,32 +153,25 @@ export function StepRentalTime({
               </button>
             )
           })}
+          {hiddenCount > 0 && (
+            <button class="vz-pill vz-pill-more" onClick={() => setAllUnits(true)} type="button">
+              Dłużej<small> · do {rentalUnitsLabel(unitOptions[unitOptions.length - 1]!, unit)}</small>
+            </button>
+          )}
         </div>
       </div>
 
       <div class="vz-cal-head">
-        <span class="vz-cal-month"><Calendar size={16} /> {isRange ? 'Odbiór' : 'Termin'}</span>
+        <span class="vz-cal-month"><Calendar size={16} /> {isRange ? 'Dzień odbioru' : 'Termin'}</span>
       </div>
-      <div class={`vz-days scroll${dayMarks.any ? ' has-promo' : ''}`}>
-        {days.map((d) => {
-          const f = free(d)
-          return (
-            <button
-              class={`vz-day ${d === date ? 'active' : ''}${f ? '' : ' is-disabled'}`}
-              aria-label={dayMarks.tile(d) ? `${weekday(d)} ${dayNum(d)}, promocja ${dayMarks.tile(d)}` : undefined}
-              aria-disabled={f ? undefined : 'true'}
-              aria-current={d === date ? 'true' : undefined}
-              onClick={() => { if (f) onPickDate(d) }}
-              type="button"
-            >
-              <small>{weekday(d)}</small>
-              {dayNum(d)}
-              <span class={`vz-free${f ? '' : ' ghost'}`} />
-              {dayMarks.tile(d) && <PromoBadge corner>{dayMarks.tile(d)}</PromoBadge>}
-            </button>
-          )
-        })}
+      {/* The same period bar as the visit calendar: arrows page the strip, the
+          label names the days on screen. */}
+      <div class="vz-period">
+        <button class="vz-period-nav" onClick={pager.goPrev} disabled={pager.prevDisabled} aria-label="Poprzednie dni" type="button"><ChevronLeft size={18} /></button>
+        <div class="vz-period-label is-static"><span>{pager.label}</span></div>
+        <button class="vz-period-nav" onClick={pager.goNext} disabled={pager.nextDisabled} aria-label="Następne dni" type="button"><ChevronRight size={18} /></button>
       </div>
+      <DayStrip pager={pager} counts={counts} date={date} onPickDate={onPickDate} mark={dayMarks.tile} />
       {/* The 30-day note of the marks sits in the booking summary, next to the price (#430). */}
 
       {loading ? (
@@ -176,7 +185,7 @@ export function StepRentalTime({
           )}
           <SummaryCard
             rows={[
-              { label: 'Zwrot', value: returnDate ?? '-' },
+              ...(win ? [{ label: 'Odbiór', value: stamp(win.startDate) }, { label: 'Zwrot', value: stamp(win.endDate) }] : []),
               { label: 'Czas', value: rentalUnitsLabel(units, unit) },
               ...(head.rentalDeposit != null ? [{ label: 'Kaucja', value: formatPrice2(head.rentalDeposit) }] : []),
               // An advertised quote brings its own price block; otherwise the
