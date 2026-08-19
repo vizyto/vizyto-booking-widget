@@ -154,6 +154,38 @@ VizytoBooking.close()
 VizytoBooking.unmount()     // usuwa wszystkie instancje
 ```
 
+### Prefill - trzy rodziny oferty
+
+Widget obsługuje wizyty, **zajęcia grupowe** i **wynajem**. Biznes, który sprzedaje
+więcej niż jedną rodzinę, dostaje na wejściu pytanie „co rezerwujesz"; prefill jest
+odpowiedzią na to pytanie z góry, więc klik w grafik na stronie klubu nie każe
+szukać tych zajęć drugi raz.
+
+```js
+// wizyta
+VizytoBooking.open({ serviceId: 1, resourceId: 12 })
+
+// zajęcia grupowe - kurs z listą jego terminów
+VizytoBooking.open({ classId: 41 })
+// konkretny termin z grafiku (sam `sessionId` wystarcza - kurs dobieramy sami)
+VizytoBooking.open({ classId: 41, sessionId: 901 })
+
+// wynajem - od katalogu przedmiotów
+VizytoBooking.open({ kind: 'rental' })
+```
+
+| klucz | rodzina | znaczenie |
+| --- | --- | --- |
+| `serviceId` | wizyta | usługa do koszyka; z wariantami zostaje na kroku usługi, żeby je wybrać |
+| `resourceId` | wizyta | wykonawca albo egzemplarz z puli; ignorowany, gdy usługa przydziela automatycznie |
+| `classId` | zajęcia | kurs; wchodzi od razu na jego grafik |
+| `sessionId` | zajęcia | konkretny termin; **pełny termin jest odrzucany** i klient staje na liście |
+| `kind` | wszystkie | `'service' \| 'class' \| 'rental'` - jawny wybór rodziny, gdy nie znasz id |
+
+Prefill jest **podpowiedzią, nie rozkazem**: nieistniejący kurs, pełny termin albo
+rodzina, której ten biznes nie sprzedaje, cofają klienta o krok zamiast pokazywać
+pusty katalog albo obiecywać zapis, który serwer odrzuci.
+
 Tag `<script>` z atrybutami `data-*` woła `mount()` automatycznie po załadowaniu.
 `data-vizyto-launcher="hidden"` ukrywa przycisk (otwierasz przez `open()`).
 

@@ -228,6 +228,29 @@ s = await state()
 ok('prefill classId: wchodzi od razu na grafik', s.stepName === 'WYBÓR TERMINU', `${s.stepName}`)
 ok('prefill classId: bez widelca i bez ponownego wyboru klasy', /Prowadzi/.test(s.body), s.body.slice(0, 160))
 
+// Prefill of the TERM alone. A club timetable knows the term id, not necessarily
+// the class wrapping it, so this has to resolve on its own.
+await page.goto(URL + '?prefillSession=901')
+await page.waitForTimeout(1100)
+s = await state()
+ok('prefill sessionId sam: wchodzi na grafik właściwej klasy', s.stepName === 'WYBÓR TERMINU', `${s.stepName}`)
+ok('prefill sessionId sam: termin wybrany, CTA otwarte', !s.ctaDisabled, `${s.ctaText}`)
+
+// A prefilled FULL term must be dropped, not confirmed - the server answers
+// SESSION_FULL and the customer would read that as our failure. (903 = 12/12.)
+await page.goto(URL + '?prefillClass=41&prefillSession=903')
+await page.waitForTimeout(1100)
+s = await state()
+ok('prefill pełnego terminu: CTA zostaje zamknięte', s.ctaDisabled, `${s.ctaText}`)
+ok('prefill pełnego terminu: klient stoi na liście terminów', s.stepName === 'WYBÓR TERMINU' && /Brak miejsc/.test(s.body), `${s.stepName}`)
+
+// A stale class prefill on a business that sells only services must not open an
+// empty class catalog.
+await page.goto(URL + '?onlyServices=1&prefillClass=41')
+await page.waitForTimeout(1000)
+s = await state()
+ok('nieaktualny prefill zajęć na biznesie bez zajęć: spada na usługi', s.stepName === 'WYBÓR USŁUGI', `${s.stepName}`)
+
 // ── 11. Rentals. Two time models in one mock: an HOURLY pool (slot grid, party
 //        size) and a DAILY single instance (range, tiers, deposit).
 await reload()

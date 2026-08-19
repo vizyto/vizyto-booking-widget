@@ -449,7 +449,12 @@ export function BookingFlow({
    * said - a timetable CTA passing `classId` means the choice is made.
    */
   const [kind, setKind] = useState<OfferingKind | null>(
-    prefill?.kind ?? (prefill?.classId != null ? 'class' : prefill?.serviceId != null ? 'service' : null),
+    prefill?.kind ??
+      (prefill?.classId != null || prefill?.sessionId != null
+        ? 'class'
+        : prefill?.serviceId != null
+          ? 'service'
+          : null),
   )
   /** Families this business actually sells - the fork never offers a dead branch. */
   const kinds = useMemo<OfferingKind[]>(() => {
@@ -460,7 +465,14 @@ export function BookingFlow({
     return out
   }, [hasServices, mayHaveClasses, hasRentals])
   const needsOfferingStep = kind === null && kinds.length > 1
-  const effKind: OfferingKind = kind ?? kinds[0] ?? 'service'
+  /**
+   * Clamped to what the business actually sells. A host page can hand us a family
+   * this business does not have - a stale `classId` on a page whose club moved its
+   * schedule off Vizyto, say - and honouring it would open a catalog with nothing
+   * in it. Falling back to the first real family shows the customer something they
+   * can buy; the step clamp below then moves them off the step that vanished.
+   */
+  const effKind: OfferingKind = (kind && kinds.includes(kind) ? kind : null) ?? kinds[0] ?? 'service'
 
   /**
    * The NUMBERED steps of the chosen family. The offering fork is deliberately not
@@ -537,8 +549,8 @@ export function BookingFlow({
     // Class branch: a prefilled term jumps straight past both steps, a prefilled
     // class past the first. This is what turns a timetable click on the club's own
     // page into "confirm your details" instead of "now find that class again".
-    if (prefill?.classId != null || prefill?.kind === 'class') {
-      return prefill?.sessionId != null ? 'session' : prefill?.classId != null ? 'session' : 'class'
+    if (prefill?.classId != null || prefill?.sessionId != null || prefill?.kind === 'class') {
+      return prefill?.classId != null || prefill?.sessionId != null ? 'session' : 'class'
     }
     if (needsOfferingStep) return 'offering'
     if (prefill?.kind === 'rental') return rentalOptions.length > 1 ? 'rental' : 'rentalTime'
@@ -858,6 +870,21 @@ export function BookingFlow({
     else if (stepId === 'session') setStepId('class')
   }, [effKind, classPick, groupClasses, classOptions, prefill?.classId, stepId])
 
+  /**
+   * The same resolution from the other direction: a page whose timetable lists
+   * concrete terms knows the TERM id, not necessarily the class wrapping it, so
+   * `open({ sessionId })` has to be enough on its own. Without this the flow
+   * stood on the term step with an empty list and no way to explain why.
+   */
+  useEffect(() => {
+    if (effKind !== 'class' || classPick || !sessions || !groupClasses) return
+    if (prefill?.classId != null || prefill?.sessionId == null) return
+    const s = sessions.find((x) => x.id === prefill.sessionId)
+    const found = s ? classOptions.find((o) => o.cls.id === s.groupClassId) : null
+    if (found) setClassPick(found)
+    else if (stepId === 'session') setStepId('class')
+  }, [effKind, classPick, sessions, groupClasses, classOptions, prefill?.classId, prefill?.sessionId, stepId])
+
   /** Terms of the chosen class, soonest first. */
   const classSessions = useMemo(() => {
     if (!sessions || !classPick) return []
@@ -870,6 +897,23 @@ export function BookingFlow({
     () => classSessions.find((x) => x.id === sessionId) ?? null,
     [classSessions, sessionId],
   )
+
+  /**
+   * A prefilled term has to clear the same bar a tapped one does. StepSession
+   * refuses to select a full term, but a host page handing us `sessionId` from
+   * its own timetable goes around that guard - the CTA would then offer a
+   * sign-up the server answers with SESSION_FULL, and the customer would read
+   * that as our failure. So the moment the terms land, drop a prefill that no
+   * longer holds: full, or not in this class's window at all (stale id, cancelled
+   * term - the fetch already drops those, or simply further out than six weeks).
+   * Dropping it leaves the customer standing on the list, which is where the
+   * choice belongs anyway.
+   */
+  useEffect(() => {
+    if (sessionId == null || !sessions || !classPick) return
+    const s = classSessions.find((x) => x.id === sessionId)
+    if (!s || seatsLeft(s, classPick.cls) === 0) setSessionId(null)
+  }, [sessionId, sessions, classPick, classSessions])
 
   /**
    * Rental availability. Two reads, chosen by the billing unit:
