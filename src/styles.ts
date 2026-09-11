@@ -144,11 +144,12 @@ export const css = `
   background: var(--vz-surface-2); color: var(--vz-text); cursor: pointer;
   font-family: var(--vz-font); transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
 }
-.vz-card:hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+.vz-card:not(.is-disabled):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
 /* Karta jest divem z rolą (nosi własne przyciski), więc obrys fokusu trzeba
    narysować samemu - przeglądarka nie da go za darmo. */
 .vz-card:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
-.vz-card:active { transform: scale(.99); }
+.vz-card:not(.is-disabled):active { transform: scale(.99); }
+.vz-card.is-disabled { cursor: not-allowed; color: var(--vz-text-muted); filter: grayscale(1); }
 .vz-card.selected { background: var(--vz-selected); border-color: var(--vz-accent); }
 /* Karta usługi ma DWIE strefy: klikalną treść (szczegóły) i sterowanie obok.
    Wciska się więc sama treść - gdyby skalowała się cała karta, plus uciekałby
@@ -290,6 +291,10 @@ export const css = `
   display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
   border-radius: var(--vz-r-pill); border: 1px solid var(--vz-border); background: var(--vz-surface);
   color: var(--vz-text-muted); font-size: 11px; font-weight: 500; white-space: nowrap;
+}
+.vz-lock-chip.warning {
+  color: var(--vz-warning); border-color: currentColor;
+  background: color-mix(in srgb, var(--vz-warning) 10%, var(--vz-surface));
 }
 .vz-lock-chip svg { flex: 0 0 auto; }
 .vz-radio {

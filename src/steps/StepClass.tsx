@@ -1,7 +1,8 @@
 import type { GroupClass, Service } from '../api'
 import { priceLabel, formatDuration, richTextToPlain } from '../api'
+import { AvailabilityBadge } from '../ui/AvailabilityBadge'
 import { SelectCard } from '../ui/SelectCard'
-import { Clock, Users } from '../ui/icons'
+import { Clock } from '../ui/icons'
 
 export type ClassOption = { cls: GroupClass; service: Service }
 
@@ -38,14 +39,13 @@ export function StepClass({
           thumb={service.image ?? null}
           title={service.name}
           desc={richTextToPlain(service.description)}
-          selected={selectedId === cls.id}
+          selected={cls.availability !== 'full' && selectedId === cls.id}
+          disabled={cls.availability === 'full'}
           onSelect={() => onPick({ cls, service })}
           meta={
             <>
               <span class="vz-dur"><Clock size={14} /> {formatDuration(service.duration)}</span>
-              {cls.capacity != null && (
-                <span class="vz-dur"><Users size={14} /> do {cls.capacity} os.</span>
-              )}
+              <AvailabilityBadge availability={cls.availability} />
               <span class="vz-price">{priceLabel(service.price)}</span>
             </>
           }

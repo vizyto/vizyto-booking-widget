@@ -26,6 +26,7 @@ export function SelectCard({
   desc,
   meta,
   selected,
+  disabled = false,
   onSelect,
   multi,
   control,
@@ -41,6 +42,7 @@ export function SelectCard({
   desc?: string
   meta?: ComponentChildren
   selected: boolean
+  disabled?: boolean
   /** Karta bez `control`: wybór opcji. Z `control`: klik w treść (szczegóły). */
   onSelect: () => void
   /** Multi-select semantics (cart): checkbox + square tick instead of a radio. */
@@ -53,12 +55,13 @@ export function SelectCard({
 }) {
   // A broken/unreachable photo degrades to the same letter placeholder as null.
   const [imgOk, setImgOk] = useState(true)
+  const select = () => { if (!disabled) onSelect() }
   const activate = (e: KeyboardEvent) => {
     // Only the region itself - a key pressed inside is its own element's.
     if (e.target !== e.currentTarget) return
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
-      onSelect()
+      select()
     }
   }
   const body = (
@@ -80,8 +83,8 @@ export function SelectCard({
 
   if (control !== undefined) {
     return (
-      <div class={`vz-card split${selected ? ' selected' : ''}`}>
-        <div class="vz-card-hit" role="button" tabIndex={0} onClick={onSelect} onKeyDown={activate}>
+      <div class={`vz-card split${selected ? ' selected' : ''}${disabled ? ' is-disabled' : ''}`}>
+        <div class="vz-card-hit" role="button" tabIndex={disabled ? -1 : 0} aria-disabled={disabled || undefined} onClick={select} onKeyDown={activate}>
           {body}
         </div>
         {control}
@@ -91,11 +94,11 @@ export function SelectCard({
 
   return (
     <div
-      class={`vz-card${selected ? ' selected' : ''}`}
+      class={`vz-card${selected ? ' selected' : ''}${disabled ? ' is-disabled' : ''}`}
       role={multi ? 'checkbox' : 'radio'}
       aria-checked={selected}
-      tabIndex={0}
-      onClick={onSelect}
+      tabIndex={disabled ? -1 : 0} aria-disabled={disabled || undefined}
+      onClick={select}
       onKeyDown={activate}
     >
       {body}

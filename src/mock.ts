@@ -146,6 +146,10 @@ const BUSINESS: Business = {
       id: 32, name: 'Grupa zaawansowana', description: 'Dla osób po co najmniej roku treningu', price: 5500, duration: 90,
       bookingType: 'group', fulfillmentMode: 'staff', providerSelection: 'auto',
     },
+    {
+      id: 33, name: 'Trening weekendowy', description: null, price: 5500, duration: 60,
+      bookingType: 'group', fulfillmentMode: 'staff', providerSelection: 'auto',
+    },
   ],
   resources: [
     { id: 11, type: 'worker', name: 'Marek', position: 'Barber', image: null, isBookable: true, isCustomerSelectable: true, categoryTag: null },
@@ -397,16 +401,17 @@ export async function createAppointment(
 export async function fetchGroupClasses(): Promise<GroupClass[]> {
   await wait(200)
   return [
-    { id: 41, businessServiceId: 31, capacity: 12, attendanceMode: 'open', cancellationCutoffHours: 12 },
-    { id: 42, businessServiceId: 32, capacity: 8, attendanceMode: 'open', cancellationCutoffHours: null },
-    { id: 43, businessServiceId: 32, capacity: 6, attendanceMode: 'fixed', cancellationCutoffHours: null },
+    { id: 41, businessServiceId: 31, availability: 'available', capacity: 12, attendanceMode: 'open', cancellationCutoffHours: 12 },
+    { id: 42, businessServiceId: 32, availability: 'last_spots', capacity: 8, attendanceMode: 'open', cancellationCutoffHours: null },
+    { id: 44, businessServiceId: 33, availability: 'full', capacity: 8, attendanceMode: 'open', cancellationCutoffHours: null },
+    { id: 43, businessServiceId: 32, availability: 'full', capacity: 6, attendanceMode: 'fixed', cancellationCutoffHours: null },
   ]
 }
 
 /**
  * Materialized terms across the next few days, business-local. Deliberately
  * includes a FULL term (0 seats left) and one with a single seat, so the seat
- * copy and the disabled state are both reachable without a backend.
+ * badges and the disabled state are both reachable without a backend.
  */
 export async function fetchTimetable(): Promise<GroupSession[]> {
   await wait(300)
@@ -417,11 +422,11 @@ export async function fetchTimetable(): Promise<GroupSession[]> {
   }
   const at = (offset: number, hhmm: string) => `${day(offset)}T${hhmm}:00.000Z`
   return [
-    { id: 901, groupClassId: 41, startDate: at(1, '16:00'), endDate: at(1, '17:00'), dateLocal: day(1), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 11, name: 'Marek', image: null }, attendeeCount: 3 },
-    { id: 902, groupClassId: 41, startDate: at(2, '16:00'), endDate: at(2, '17:00'), dateLocal: day(2), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 11, name: 'Marek', image: null }, attendeeCount: 11 },
-    { id: 903, groupClassId: 41, startDate: at(3, '16:00'), endDate: at(3, '17:00'), dateLocal: day(3), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 13, name: 'Ola', image: null }, attendeeCount: 12 },
-    { id: 911, groupClassId: 42, startDate: at(1, '18:30'), endDate: at(1, '20:00'), dateLocal: day(1), status: 'scheduled', capacity: 8, priceOverride: null, instructor: { id: 12, name: 'Kuba', image: null }, attendeeCount: 2 },
-    { id: 912, groupClassId: 42, startDate: at(4, '18:30'), endDate: at(4, '20:00'), dateLocal: day(4), status: 'scheduled', capacity: 8, priceOverride: 4000, instructor: { id: 12, name: 'Kuba', image: null }, attendeeCount: 0 },
+    { id: 901, availability: 'available', groupClassId: 41, startDate: at(1, '16:00'), endDate: at(1, '17:00'), dateLocal: day(1), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 11, name: 'Marek', image: null }, attendeeCount: 3 },
+    { id: 902, availability: 'last_spots', groupClassId: 41, startDate: at(2, '16:00'), endDate: at(2, '17:00'), dateLocal: day(2), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 11, name: 'Marek', image: null }, attendeeCount: 11 },
+    { id: 903, availability: 'full', groupClassId: 41, startDate: at(3, '16:00'), endDate: at(3, '17:00'), dateLocal: day(3), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 13, name: 'Ola', image: null }, attendeeCount: 12 },
+    { id: 911, availability: 'last_spots', groupClassId: 42, startDate: at(1, '18:30'), endDate: at(1, '20:00'), dateLocal: day(1), status: 'scheduled', capacity: 8, priceOverride: null, instructor: { id: 12, name: 'Kuba', image: null }, attendeeCount: 6 },
+    { id: 912, availability: 'available', groupClassId: 42, startDate: at(4, '18:30'), endDate: at(4, '20:00'), dateLocal: day(4), status: 'scheduled', capacity: 8, priceOverride: 4000, instructor: { id: 12, name: 'Kuba', image: null }, attendeeCount: 0 },
   ]
 }
 

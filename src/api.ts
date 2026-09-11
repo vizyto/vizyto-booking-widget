@@ -226,11 +226,14 @@ export async function fetchBusiness(cfg: Cfg): Promise<Business | null> {
 // has and used to throw away. Only the wrapper and the materialized terms need
 // fetching.
 
+export type Availability = 'available' | 'last_spots' | 'full'
+
 /** Wrapper row: capacity + roster mode + the link to the backing service. */
 export type GroupClass = {
   id: number
   businessServiceId: number
   /** null = no limit */
+  availability: Availability
   capacity: number | null
   attendanceMode: 'open' | 'fixed'
   cancellationCutoffHours: number | null
@@ -252,6 +255,7 @@ export type GroupSession = {
   /** business-local YYYY-MM-DD, computed server-side in the business timezone */
   dateLocal: string
   status: string
+  availability: Availability
   capacity: number | null
   /** grosze; null = use the class price */
   priceOverride: number | null
@@ -272,6 +276,7 @@ export async function fetchGroupClasses(cfg: Cfg): Promise<GroupClass[]> {
         id: c.id,
         businessServiceId: c.businessServiceId,
         capacity: c.capacity ?? null,
+        availability: resolveAvailability(c),
         attendanceMode: c.attendanceMode ?? 'open',
         cancellationCutoffHours: c.cancellationCutoffHours ?? null,
       }))
@@ -307,6 +312,7 @@ export async function fetchTimetable(cfg: Cfg, p: { from: string; to: string }):
         dateLocal: s.dateLocal,
         status: s.status,
         capacity: s.capacity ?? null,
+        availability: resolveAvailability(s),
         priceOverride: s.priceOverride ?? null,
         instructor: s.instructor ?? null,
         attendeeCount: s.attendeeCount ?? s.effectiveAttendeeCount ?? 0,
@@ -347,11 +353,17 @@ export async function registerForSession(
   }
 }
 
-/** Seats left, or null when the term has no limit. */
-export const seatsLeft = (s: GroupSession, cls?: GroupClass): number | null => {
-  const cap = s.capacity ?? cls?.capacity ?? null
-  if (cap == null) return null
-  return Math.max(0, cap - (s.attendeeCount ?? 0))
+function resolveAvailability(value: {
+  availability?: Availability
+  capacity?: number | null
+  attendeeCount?: number | null
+  effectiveAttendeeCount?: number | null
+}): Availability {
+  if (value.availability != null) return value.availability
+  // Tymczasowy fallback dla starego API. Usunąć po wydaniu API z availability.
+  if (value.capacity == null) return 'available'
+  const remaining = value.capacity - (value.attendeeCount ?? value.effectiveAttendeeCount ?? 0)
+  return remaining <= 0 ? 'full' : remaining <= 3 ? 'last_spots' : 'available'
 }
 
 // ---- rentals ---------------------------------------------------------------

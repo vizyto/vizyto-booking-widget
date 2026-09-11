@@ -34,7 +34,6 @@ import {
   rentalUnitOptions,
   rentalUnitsLabel,
   resolveVariant,
-  seatsLeft,
   selectedAddons,
   sendGuestOtp,
   serviceHasOptions,
@@ -912,7 +911,7 @@ export function BookingFlow({
   useEffect(() => {
     if (sessionId == null || !sessions || !classPick) return
     const s = classSessions.find((x) => x.id === sessionId)
-    if (!s || seatsLeft(s, classPick.cls) === 0) setSessionId(null)
+    if (!s || s.availability === 'full') setSessionId(null)
   }, [sessionId, sessions, classPick, classSessions])
 
   /**
@@ -2276,7 +2275,6 @@ export function BookingFlow({
               : (
                 <StepSession
                   sessions={classSessions}
-                  cls={classPick?.cls ?? null}
                   timezone={business.timezone ?? null}
                   selectedId={sessionId}
                   onPick={(x) => { setBookingErr(''); setSessionId(x.id) }}
