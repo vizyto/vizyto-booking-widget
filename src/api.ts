@@ -235,6 +235,8 @@ export type GroupClass = {
   /** null = no limit */
   availability: Availability
   capacity: number | null
+  /** Whether a single-session entry can be booked. Older APIs default to true. */
+  entryEnabled: boolean
   attendanceMode: 'open' | 'fixed'
   cancellationCutoffHours: number | null
 }
@@ -265,11 +267,14 @@ export type GroupSession = {
 }
 
 export async function fetchGroupClasses(cfg: Cfg): Promise<GroupClass[]> {
-  if (cfg.mock) return mock.fetchGroupClasses()
   try {
-    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/group-classes`, { headers: headers(cfg) })
-    if (!r.ok) return []
-    const data = await r.json()
+    let data
+    if (cfg.mock) data = await mock.fetchGroupClasses()
+    else {
+      const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/group-classes`, { headers: headers(cfg) })
+      if (!r.ok) return []
+      data = await r.json()
+    }
     const arr = Array.isArray(data) ? data : data?.data ?? []
     return arr
       .map((c: any) => ({
@@ -277,10 +282,11 @@ export async function fetchGroupClasses(cfg: Cfg): Promise<GroupClass[]> {
         businessServiceId: c.businessServiceId,
         capacity: c.capacity ?? null,
         availability: resolveAvailability(c),
+        entryEnabled: c.entryEnabled ?? true,
         attendanceMode: c.attendanceMode ?? 'open',
         cancellationCutoffHours: c.cancellationCutoffHours ?? null,
       }))
-      .filter((c: GroupClass) => c.businessServiceId != null)
+      .filter((c: GroupClass) => c.businessServiceId != null && c.entryEnabled !== false)
   } catch {
     return []
   }

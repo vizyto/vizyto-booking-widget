@@ -147,6 +147,10 @@ const BUSINESS: Business = {
       bookingType: 'group', fulfillmentMode: 'staff', providerSelection: 'auto',
     },
     {
+      id: 34, name: 'Kurs semestralny', description: 'Zapis wyłącznie na okres', price: 5500, duration: 60,
+      bookingType: 'group', fulfillmentMode: 'staff', providerSelection: 'auto',
+    },
+    {
       id: 33, name: 'Trening weekendowy', description: null, price: 5500, duration: 60,
       bookingType: 'group', fulfillmentMode: 'staff', providerSelection: 'auto',
     },
@@ -401,10 +405,12 @@ export async function createAppointment(
 export async function fetchGroupClasses(): Promise<GroupClass[]> {
   await wait(200)
   return [
-    { id: 41, businessServiceId: 31, availability: 'available', capacity: 12, attendanceMode: 'open', cancellationCutoffHours: 12 },
-    { id: 42, businessServiceId: 32, availability: 'last_spots', capacity: 8, attendanceMode: 'open', cancellationCutoffHours: null },
-    { id: 44, businessServiceId: 33, availability: 'full', capacity: 8, attendanceMode: 'open', cancellationCutoffHours: null },
-    { id: 43, businessServiceId: 32, availability: 'full', capacity: 6, attendanceMode: 'fixed', cancellationCutoffHours: null },
+    // Available via period enrollment, but never bookable as a single entry.
+    { id: 45, businessServiceId: 34, entryEnabled: false, availability: 'available', capacity: 12, attendanceMode: 'open', cancellationCutoffHours: null },
+    { id: 41, entryEnabled: true, businessServiceId: 31, availability: 'available', capacity: 12, attendanceMode: 'open', cancellationCutoffHours: 12 },
+    { id: 42, entryEnabled: true, businessServiceId: 32, availability: 'last_spots', capacity: 8, attendanceMode: 'open', cancellationCutoffHours: null },
+    { id: 44, entryEnabled: true, businessServiceId: 33, availability: 'full', capacity: 8, attendanceMode: 'open', cancellationCutoffHours: null },
+    { id: 43, entryEnabled: true, businessServiceId: 32, availability: 'full', capacity: 6, attendanceMode: 'fixed', cancellationCutoffHours: null },
   ]
 }
 
@@ -422,6 +428,7 @@ export async function fetchTimetable(): Promise<GroupSession[]> {
   }
   const at = (offset: number, hhmm: string) => `${day(offset)}T${hhmm}:00.000Z`
   return [
+    { id: 921, availability: 'available', groupClassId: 45, startDate: at(1, '14:00'), endDate: at(1, '15:00'), dateLocal: day(1), status: 'scheduled', capacity: 12, priceOverride: null, attendeeCount: 0 },
     { id: 901, availability: 'available', groupClassId: 41, startDate: at(1, '16:00'), endDate: at(1, '17:00'), dateLocal: day(1), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 11, name: 'Marek', image: null }, attendeeCount: 3 },
     { id: 902, availability: 'last_spots', groupClassId: 41, startDate: at(2, '16:00'), endDate: at(2, '17:00'), dateLocal: day(2), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 11, name: 'Marek', image: null }, attendeeCount: 11 },
     { id: 903, availability: 'full', groupClassId: 41, startDate: at(3, '16:00'), endDate: at(3, '17:00'), dateLocal: day(3), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 13, name: 'Ola', image: null }, attendeeCount: 12 },
@@ -437,6 +444,7 @@ export async function registerForSession(
 ): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
   await wait(600)
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
+  if (p.sessionId === 921) return { ok: false, code: 'ENTRY_DISABLED' }
   if (p.sessionId === 903) return { ok: false, code: 'SESSION_FULL' }
   return { ok: true, data: { id: 5150, sessionId: p.sessionId, status: 'registered' } }
 }

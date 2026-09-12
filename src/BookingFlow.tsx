@@ -146,6 +146,8 @@ export type Auth = { userId: number; token: string | null }
  */
 function registerErrorMessage(code: string): string {
   switch (code) {
+    case 'ENTRY_DISABLED':
+      return 'Te zajęcia wymagają zapisu na okres. Zapisz się w aplikacji Vizyto.'
     case 'SESSION_FULL':
       return 'Ten termin jest już pełny. Wybierz inny.'
     case 'ALREADY_REGISTERED':
@@ -837,7 +839,7 @@ export function BookingFlow({
    */
   const timetableReq = useRef(false)
   useEffect(() => {
-    if (effKind !== 'class' || sessions !== null) return
+    if (effKind !== 'class' || sessions !== null || groupClasses === null) return
     // The in-flight guard is a REF, not state: with `loadingSessions` in the
     // dependency list this effect's own setState re-ran it, the cleanup flipped
     // `cancelled`, and the answer was thrown away - leaving the timetable on a
@@ -850,10 +852,11 @@ export function BookingFlow({
     setLoadingSessions(true)
     fetchTimetable(cfg, { from: from.toISOString(), to: to.toISOString() }).then((rows) => {
       timetableReq.current = false
-      setSessions(rows)
+      const allowedClassIds = new Set(groupClasses.map((cls) => cls.id))
+      setSessions(rows.filter((session) => allowedClassIds.has(session.groupClassId)))
       setLoadingSessions(false)
     })
-  }, [effKind, sessions])
+  }, [effKind, sessions, groupClasses])
 
   /**
    * Resolve a prefilled class id against the loaded list. Until the list lands the
