@@ -1491,7 +1491,7 @@ export function BookingFlow({
     // EVERY position has to clear the whitelist - one locked service in a chain
     // would otherwise be caught only by the create backstop, after the OTP.
     if (!cartServices.length) {
-      const r = await checkBookingAccess(cfg, { bookedById: a.userId })
+      const r = await checkBookingAccess(cfg, { bookedById: a.userId }, a.token)
       if (r.viewerCanBook === false) {
         setPhase('restricted')
         emit('booking_access_denied', { userId: a.userId, serviceId: null, stage: 'check' })
@@ -1502,7 +1502,7 @@ export function BookingFlow({
       return true
     }
     for (const svc of cartServices) {
-      const r = await checkBookingAccess(cfg, { bookedById: a.userId, businessServiceId: svc.id })
+      const r = await checkBookingAccess(cfg, { bookedById: a.userId, businessServiceId: svc.id }, a.token)
       if (r.serviceAccess !== 'bookable') {
         setPhase('restricted')
         emit('booking_access_denied', { userId: a.userId, serviceId: svc.id, stage: 'check' })

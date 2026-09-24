@@ -678,6 +678,7 @@ export type BookingAccessCheck = {
 export async function checkBookingAccess(
   cfg: Cfg,
   p: { bookedById?: number; businessServiceId?: number },
+  token: string | null = null,
 ): Promise<BookingAccessCheck> {
   const open: BookingAccessCheck = { policy: 'everyone', viewerCanBook: true, serviceAccess: 'bookable' }
   if (cfg.mock) return open
@@ -685,7 +686,11 @@ export async function checkBookingAccess(
   if (p.bookedById != null) q.set('bookedById', String(p.bookedById))
   if (p.businessServiceId != null) q.set('businessServiceId', String(p.businessServiceId))
   try {
-    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/booking-access?${q}`, { headers: headers(cfg) })
+    // The API derives the viewer from the session and ignores bookedById without
+    // one (vizyto#307), so the answer is personal only with the Bearer.
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/booking-access?${q}`, {
+      headers: headers(cfg, token ? { authorization: `Bearer ${token}` } : undefined),
+    })
     if (!r.ok) return open
     const data = await r.json().catch(() => null)
     if (!data) return open
