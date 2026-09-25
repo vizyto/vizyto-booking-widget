@@ -582,20 +582,26 @@ async function isAccessRestricted(r: Response): Promise<boolean> {
   return (data as any)?.code === 'BOOKING_ACCESS_RESTRICTED'
 }
 
+// Availability is personal (a customer blocked at a worker loses that worker's
+// slots). Since vizyto#310 the API takes the viewer from the session, so these
+// calls carry the Bearer; bookedById stays in the body for APIs released before.
+const viewerHeaders = (cfg: Cfg, token?: string | null) =>
+  headers(cfg, token ? { authorization: `Bearer ${token}` } : undefined)
+
 // Per-day free-slot counts over a range, via the cart contract (POST). A single
 // item is still a 1-element cart, so variants/add-ons that lengthen the chain are
-// reflected in the counts. bookedById resolves the whitelist gate for the
+// reflected in the counts. The viewer resolves the whitelist gate for the
 // logged-in user (anonymously a restricted business fails soft to all-zero here;
 // the slots call + the create backstop still guard access).
 export async function getCartCounts(
   cfg: Cfg,
-  p: { startDate: string; endDate: string; items: CartItem[]; bookedById?: number },
+  p: { startDate: string; endDate: string; items: CartItem[]; bookedById?: number; token?: string | null },
 ): Promise<CountsResult> {
   if (cfg.mock) return { counts: await mock.getCounts({ startDate: p.startDate, endDate: p.endDate, items: p.items }), restricted: false }
   try {
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability/cart/counts`, {
       method: 'POST',
-      headers: headers(cfg),
+      headers: viewerHeaders(cfg, p.token),
       body: JSON.stringify({ from: p.startDate, to: p.endDate, items: p.items, bookedById: p.bookedById || undefined }),
     })
     if (r.ok) return { counts: (await r.json()) as DayCounts, restricted: false }
@@ -610,13 +616,13 @@ export async function getCartCounts(
 // into the chain the engine plans.
 export async function getCartSlots(
   cfg: Cfg,
-  p: { date: string; items: CartItem[]; bookedById?: number; includeCandidates?: boolean },
+  p: { date: string; items: CartItem[]; bookedById?: number; token?: string | null; includeCandidates?: boolean },
 ): Promise<SlotsResult> {
   if (cfg.mock) return { ...(await mock.getAvailability({ date: p.date, items: p.items })), restricted: false }
   try {
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability/cart`, {
       method: 'POST',
-      headers: headers(cfg),
+      headers: viewerHeaders(cfg, p.token),
       body: JSON.stringify({
         date: p.date,
         items: p.items,
@@ -645,7 +651,7 @@ export async function getCartSlots(
 // instead of a dead end - parytet z kreatorem WEB.
 export async function getCartFirstFree(
   cfg: Cfg,
-  p: { items: CartItem[]; from?: string; bookedById?: number },
+  p: { items: CartItem[]; from?: string; bookedById?: number; token?: string | null },
 ): Promise<{ date: string; time: string } | null | 'error'> {
   // 'error' (not null) on transport trouble: null means "nothing free in 60 days"
   // and the UI latches on it, so a failed request must not claim that.
@@ -653,7 +659,7 @@ export async function getCartFirstFree(
   try {
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability/cart/first-free`, {
       method: 'POST',
-      headers: headers(cfg),
+      headers: viewerHeaders(cfg, p.token),
       body: JSON.stringify({ from: p.from, items: p.items, bookedById: p.bookedById || undefined }),
     })
     if (!r.ok) return 'error'

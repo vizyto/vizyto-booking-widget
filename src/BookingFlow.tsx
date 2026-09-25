@@ -734,6 +734,7 @@ export function BookingFlow({
       endDate: days[days.length - 1],
       items: buildCartItems({ forAvailability: true }),
       bookedById: auth?.userId,
+      token: auth?.token,
     }).then((x) => {
       if (cancelled) return
       setCounts(x.counts)
@@ -764,7 +765,7 @@ export function BookingFlow({
     // Ask for per-slot candidates only when they can drive a real choice: one
     // position, "Dowolny", staff-realized (a pool has its own pick step).
     const wantsCandidates = lines.length === 1 && anyChosen && !isUnit && !providerAuto
-    getCartSlots(cfg, { date, items: buildCartItems({ forAvailability: true }), bookedById: auth?.userId, includeCandidates: wantsCandidates })
+    getCartSlots(cfg, { date, items: buildCartItems({ forAvailability: true }), bookedById: auth?.userId, token: auth?.token, includeCandidates: wantsCandidates })
       .then((x) => {
         if (cancelled) return
         setSlots(x.slots)
@@ -796,7 +797,7 @@ export function BookingFlow({
     if (probedFor.current === key) return
     probedFor.current = key
     let cancelled = false
-    getCartSlots(cfg, { date, items: buildCartItems({ unpinned: true }), bookedById: auth?.userId }).then((x) => {
+    getCartSlots(cfg, { date, items: buildCartItems({ unpinned: true }), bookedById: auth?.userId, token: auth?.token }).then((x) => {
       if (!cancelled) setEmptyProbe(x.slots.length ? 'others' : 'none')
     })
     return () => {
@@ -1261,7 +1262,7 @@ export function BookingFlow({
     // The sweep is slow (60 days server-side); if the cart changed meanwhile, the
     // answer describes a visit that no longer exists - drop it.
     const forCart = cartKey
-    const hit = await getCartFirstFree(cfg, { items: buildCartItems({ forAvailability: true }), from: date || undefined, bookedById: auth?.userId })
+    const hit = await getCartFirstFree(cfg, { items: buildCartItems({ forAvailability: true }), from: date || undefined, bookedById: auth?.userId, token: auth?.token })
     setFindingNext(false)
     if (forCart !== cartKey) return
     if (hit === 'error') return
