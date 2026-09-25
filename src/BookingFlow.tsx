@@ -2393,7 +2393,7 @@ export function BookingFlow({
               setPhase('select')
             }}
             check={(win) =>
-              checkWaitlistWindow(cfg, { businessServiceId: waitlistLine.service.id, resourceId: anyChosen ? null : lineWorker(waitlistLine) ?? null, ...win })
+              checkWaitlistWindow(cfg, { businessServiceId: waitlistLine.service.id, resourceId: anyChosen ? null : lineWorker(waitlistLine) ?? null, ...win }, auth?.token)
             }
             busy={wlBusy}
             error={wlErr}

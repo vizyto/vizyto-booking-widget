@@ -866,7 +866,7 @@ const NO_SLOTS: WaitlistCheck = { available: false, date: null, time: null, matc
 // Pre-check of a prospective waitlist window: the waitlist is a fallback, so
 // when the window still has a bookable slot the form steers to booking instead.
 // Fails open (available: false) - the server enforces the same gate on join.
-export async function checkWaitlistWindow(cfg: Cfg, p: WaitlistCheckParams): Promise<WaitlistCheck> {
+export async function checkWaitlistWindow(cfg: Cfg, p: WaitlistCheckParams, token?: string | null): Promise<WaitlistCheck> {
   if (cfg.mock) return mock.checkWaitlistWindow(p)
   try {
     const q = new URLSearchParams({ businessServiceId: String(p.businessServiceId), dateFrom: p.dateFrom, dateTo: p.dateTo })
@@ -874,7 +874,7 @@ export async function checkWaitlistWindow(cfg: Cfg, p: WaitlistCheckParams): Pro
     if (p.timeFrom) q.set('timeFrom', p.timeFrom)
     if (p.timeTo) q.set('timeTo', p.timeTo)
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/waitlist/check?${q.toString()}`, {
-      headers: headers(cfg),
+      headers: viewerHeaders(cfg, token),
     })
     if (!r.ok) return NO_SLOTS
     const data = await r.json().catch(() => null)
