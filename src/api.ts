@@ -195,7 +195,7 @@ export type OtpSendResult =
   | { ok: false; code: 'RATE_LIMITED' | 'SITE_KEY_REQUIRED' | 'NETWORK' | string; retryAfter?: number }
 export type OtpVerifyResult =
   | { ok: true; data: GuestData; mode: OtpMode }
-  | { ok: false; code: 'INVALID' | 'EXPIRED' | 'EMAIL_IN_USE' | 'NETWORK' | string; remainingAttempts?: number }
+  | { ok: false; code: 'INVALID' | 'EXPIRED' | 'EMAIL_IN_USE' | 'OTP_LOCKED' | 'OTP_BUSY' | 'NETWORK' | string; remainingAttempts?: number; message?: string }
 export type CheckEmailResult = { exists: boolean; providers: string[] } | { error: true }
 export type LoginResult =
   | { ok: true; data: GuestData }
@@ -749,6 +749,7 @@ export async function verifyGuestOtp(
       ok: false,
       code: data?.code || (r.status === 400 ? 'INVALID' : `HTTP_${r.status}`),
       remainingAttempts: data?.remainingAttempts,
+      message: typeof data?.message === 'string' ? data.message : undefined,
     }
   } catch {
     return { ok: false, code: 'NETWORK' }

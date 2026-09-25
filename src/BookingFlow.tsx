@@ -1975,9 +1975,10 @@ export function BookingFlow({
       setOtpErr('Kod wygasł. Wyślij nowy.')
       return
     }
-    if (r.code === 'OTP_LOCKED') {
+    // The API's own sentence for these two (vizyto#309); a busy check did not use an attempt.
+    if (r.code === 'OTP_LOCKED' || r.code === 'OTP_BUSY') {
       setCode('')
-      setOtpErr('Zbyt wiele błędnych kodów dla tego numeru. Spróbuj ponownie za godzinę.')
+      setOtpErr(r.message ?? (r.code === 'OTP_LOCKED' ? 'Zbyt wiele prób dla tego numeru. Spróbuj ponownie za godzinę.' : 'Sprawdzamy już ten kod. Spróbuj ponownie za chwilę.'))
       return
     }
     const left = r.remainingAttempts ?? attemptsLeft - 1
