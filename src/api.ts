@@ -191,11 +191,11 @@ export type CartItem = {
 // the classic guest-signup path.
 export type OtpMode = 'login' | 'guest'
 export type OtpSendResult =
-  | { ok: true; expiresIn: number; maskedPhone: string; mode: OtpMode }
+  | { ok: true; expiresIn: number; maskedPhone: string; mode: OtpMode; codeLength: number }
   | { ok: false; code: 'RATE_LIMITED' | 'SITE_KEY_REQUIRED' | 'NETWORK' | string; retryAfter?: number }
 export type OtpVerifyResult =
   | { ok: true; data: GuestData; mode: OtpMode }
-  | { ok: false; code: 'INVALID' | 'EXPIRED' | 'EMAIL_IN_USE' | 'NETWORK' | string; remainingAttempts?: number }
+  | { ok: false; code: 'INVALID' | 'EXPIRED' | 'EMAIL_IN_USE' | 'OTP_LOCKED' | 'OTP_BUSY' | 'NETWORK' | string; remainingAttempts?: number; message?: string }
 export type CheckEmailResult = { exists: boolean; providers: string[] } | { error: true }
 export type LoginResult =
   | { ok: true; data: GuestData }
@@ -582,20 +582,26 @@ async function isAccessRestricted(r: Response): Promise<boolean> {
   return (data as any)?.code === 'BOOKING_ACCESS_RESTRICTED'
 }
 
+// Availability is personal (a customer blocked at a worker loses that worker's
+// slots). Since vizyto#310 the API takes the viewer from the session, so these
+// calls carry the Bearer; bookedById stays in the body for APIs released before.
+const viewerHeaders = (cfg: Cfg, token?: string | null) =>
+  headers(cfg, token ? { authorization: `Bearer ${token}` } : undefined)
+
 // Per-day free-slot counts over a range, via the cart contract (POST). A single
 // item is still a 1-element cart, so variants/add-ons that lengthen the chain are
-// reflected in the counts. bookedById resolves the whitelist gate for the
+// reflected in the counts. The viewer resolves the whitelist gate for the
 // logged-in user (anonymously a restricted business fails soft to all-zero here;
 // the slots call + the create backstop still guard access).
 export async function getCartCounts(
   cfg: Cfg,
-  p: { startDate: string; endDate: string; items: CartItem[]; bookedById?: number },
+  p: { startDate: string; endDate: string; items: CartItem[]; bookedById?: number; token?: string | null },
 ): Promise<CountsResult> {
   if (cfg.mock) return { counts: await mock.getCounts({ startDate: p.startDate, endDate: p.endDate, items: p.items }), restricted: false }
   try {
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability/cart/counts`, {
       method: 'POST',
-      headers: headers(cfg),
+      headers: viewerHeaders(cfg, p.token),
       body: JSON.stringify({ from: p.startDate, to: p.endDate, items: p.items, bookedById: p.bookedById || undefined }),
     })
     if (r.ok) return { counts: (await r.json()) as DayCounts, restricted: false }
@@ -610,13 +616,13 @@ export async function getCartCounts(
 // into the chain the engine plans.
 export async function getCartSlots(
   cfg: Cfg,
-  p: { date: string; items: CartItem[]; bookedById?: number; includeCandidates?: boolean },
+  p: { date: string; items: CartItem[]; bookedById?: number; token?: string | null; includeCandidates?: boolean },
 ): Promise<SlotsResult> {
   if (cfg.mock) return { ...(await mock.getAvailability({ date: p.date, items: p.items })), restricted: false }
   try {
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability/cart`, {
       method: 'POST',
-      headers: headers(cfg),
+      headers: viewerHeaders(cfg, p.token),
       body: JSON.stringify({
         date: p.date,
         items: p.items,
@@ -645,7 +651,7 @@ export async function getCartSlots(
 // instead of a dead end - parytet z kreatorem WEB.
 export async function getCartFirstFree(
   cfg: Cfg,
-  p: { items: CartItem[]; from?: string; bookedById?: number },
+  p: { items: CartItem[]; from?: string; bookedById?: number; token?: string | null },
 ): Promise<{ date: string; time: string } | null | 'error'> {
   // 'error' (not null) on transport trouble: null means "nothing free in 60 days"
   // and the UI latches on it, so a failed request must not claim that.
@@ -653,7 +659,7 @@ export async function getCartFirstFree(
   try {
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/availability/cart/first-free`, {
       method: 'POST',
-      headers: headers(cfg),
+      headers: viewerHeaders(cfg, p.token),
       body: JSON.stringify({ from: p.from, items: p.items, bookedById: p.bookedById || undefined }),
     })
     if (!r.ok) return 'error'
@@ -704,6 +710,10 @@ export async function checkBookingAccess(
   }
 }
 
+// Codes have 6 digits since vizyto#309; an API released before sends 4 and no length.
+export const otpCodeLength = (data: { codeLength?: unknown } | null | undefined): number =>
+  typeof data?.codeLength === 'number' && data.codeLength >= 4 && data.codeLength <= 8 ? data.codeLength : 4
+
 export async function sendGuestOtp(cfg: Cfg, p: { phone: string; turnstileToken?: string | null }): Promise<OtpSendResult> {
   if (cfg.mock) return mock.sendGuestOtp(p)
   try {
@@ -713,7 +723,7 @@ export async function sendGuestOtp(cfg: Cfg, p: { phone: string; turnstileToken?
       body: JSON.stringify({ businessId: cfg.businessId, phone: p.phone, turnstileToken: p.turnstileToken || undefined }),
     })
     const data = await r.json().catch(() => ({}))
-    if (r.ok) return { ok: true, expiresIn: data.expiresIn ?? 300, maskedPhone: data.maskedPhone ?? '', mode: data.mode === 'login' ? 'login' : 'guest' }
+    if (r.ok) return { ok: true, expiresIn: data.expiresIn ?? 300, maskedPhone: data.maskedPhone ?? '', mode: data.mode === 'login' ? 'login' : 'guest', codeLength: otpCodeLength(data) }
     if (r.status === 429) return { ok: false, code: 'RATE_LIMITED', retryAfter: data?.retryAfter }
     return { ok: false, code: data?.code || `HTTP_${r.status}` }
   } catch {
@@ -739,6 +749,7 @@ export async function verifyGuestOtp(
       ok: false,
       code: data?.code || (r.status === 400 ? 'INVALID' : `HTTP_${r.status}`),
       remainingAttempts: data?.remainingAttempts,
+      message: typeof data?.message === 'string' ? data.message : undefined,
     }
   } catch {
     return { ok: false, code: 'NETWORK' }
@@ -856,7 +867,7 @@ const NO_SLOTS: WaitlistCheck = { available: false, date: null, time: null, matc
 // Pre-check of a prospective waitlist window: the waitlist is a fallback, so
 // when the window still has a bookable slot the form steers to booking instead.
 // Fails open (available: false) - the server enforces the same gate on join.
-export async function checkWaitlistWindow(cfg: Cfg, p: WaitlistCheckParams): Promise<WaitlistCheck> {
+export async function checkWaitlistWindow(cfg: Cfg, p: WaitlistCheckParams, token?: string | null): Promise<WaitlistCheck> {
   if (cfg.mock) return mock.checkWaitlistWindow(p)
   try {
     const q = new URLSearchParams({ businessServiceId: String(p.businessServiceId), dateFrom: p.dateFrom, dateTo: p.dateTo })
@@ -864,7 +875,7 @@ export async function checkWaitlistWindow(cfg: Cfg, p: WaitlistCheckParams): Pro
     if (p.timeFrom) q.set('timeFrom', p.timeFrom)
     if (p.timeTo) q.set('timeTo', p.timeTo)
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/waitlist/check?${q.toString()}`, {
-      headers: headers(cfg),
+      headers: viewerHeaders(cfg, token),
     })
     if (!r.ok) return NO_SLOTS
     const data = await r.json().catch(() => null)

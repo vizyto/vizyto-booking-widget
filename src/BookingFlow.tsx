@@ -614,7 +614,7 @@ export function BookingFlow({
   // captured from the visible widget, consumed by a send, then cleared so the
   // next send re-gates. Only enforced when cfg.turnstileKey is configured.
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
-  const [otpInfo, setOtpInfo] = useState({ maskedPhone: '', expiresAt: 0, resendAt: 0 })
+  const [otpInfo, setOtpInfo] = useState({ maskedPhone: '', expiresAt: 0, resendAt: 0, codeLength: 6 })
   // 'login' = this phone already has a Vizyto account; the code doubles as a login.
   const [otpMode, setOtpMode] = useState<OtpMode>('guest')
   const [attemptsLeft, setAttemptsLeft] = useState(3)
@@ -734,6 +734,7 @@ export function BookingFlow({
       endDate: days[days.length - 1],
       items: buildCartItems({ forAvailability: true }),
       bookedById: auth?.userId,
+      token: auth?.token,
     }).then((x) => {
       if (cancelled) return
       setCounts(x.counts)
@@ -764,7 +765,7 @@ export function BookingFlow({
     // Ask for per-slot candidates only when they can drive a real choice: one
     // position, "Dowolny", staff-realized (a pool has its own pick step).
     const wantsCandidates = lines.length === 1 && anyChosen && !isUnit && !providerAuto
-    getCartSlots(cfg, { date, items: buildCartItems({ forAvailability: true }), bookedById: auth?.userId, includeCandidates: wantsCandidates })
+    getCartSlots(cfg, { date, items: buildCartItems({ forAvailability: true }), bookedById: auth?.userId, token: auth?.token, includeCandidates: wantsCandidates })
       .then((x) => {
         if (cancelled) return
         setSlots(x.slots)
@@ -796,7 +797,7 @@ export function BookingFlow({
     if (probedFor.current === key) return
     probedFor.current = key
     let cancelled = false
-    getCartSlots(cfg, { date, items: buildCartItems({ unpinned: true }), bookedById: auth?.userId }).then((x) => {
+    getCartSlots(cfg, { date, items: buildCartItems({ unpinned: true }), bookedById: auth?.userId, token: auth?.token }).then((x) => {
       if (!cancelled) setEmptyProbe(x.slots.length ? 'others' : 'none')
     })
     return () => {
@@ -1261,7 +1262,7 @@ export function BookingFlow({
     // The sweep is slow (60 days server-side); if the cart changed meanwhile, the
     // answer describes a visit that no longer exists - drop it.
     const forCart = cartKey
-    const hit = await getCartFirstFree(cfg, { items: buildCartItems({ forAvailability: true }), from: date || undefined, bookedById: auth?.userId })
+    const hit = await getCartFirstFree(cfg, { items: buildCartItems({ forAvailability: true }), from: date || undefined, bookedById: auth?.userId, token: auth?.token })
     setFindingNext(false)
     if (forCart !== cartKey) return
     if (hit === 'error') return
@@ -1910,6 +1911,7 @@ export function BookingFlow({
       maskedPhone,
       expiresAt: Date.now() + r.expiresIn * 1000,
       resendAt: Date.now() + OTP_RESEND_MS,
+      codeLength: r.codeLength,
     })
     setPhase('otp')
     emit('otp_sent', { maskedPhone, resend: false })
@@ -1938,6 +1940,7 @@ export function BookingFlow({
       maskedPhone,
       expiresAt: Date.now() + r.expiresIn * 1000,
       resendAt: Date.now() + OTP_RESEND_MS,
+      codeLength: r.codeLength,
     })
     emit('otp_sent', { maskedPhone, resend: true })
   }
@@ -1970,6 +1973,12 @@ export function BookingFlow({
     }
     if (r.code === 'EXPIRED') {
       setOtpErr('Kod wygasł. Wyślij nowy.')
+      return
+    }
+    // The API's own sentence for these two (vizyto#309); a busy check did not use an attempt.
+    if (r.code === 'OTP_LOCKED' || r.code === 'OTP_BUSY') {
+      setCode('')
+      setOtpErr(r.message ?? (r.code === 'OTP_LOCKED' ? 'Zbyt wiele prób dla tego numeru. Spróbuj ponownie później.' : 'Sprawdzamy już ten kod. Spróbuj ponownie za chwilę.'))
       return
     }
     const left = r.remainingAttempts ?? attemptsLeft - 1
@@ -2092,7 +2101,7 @@ export function BookingFlow({
     setCalRestricted(false)
     setCode('')
     setAttemptsLeft(3)
-    setOtpInfo({ maskedPhone: '', expiresAt: 0, resendAt: 0 })
+    setOtpInfo({ maskedPhone: '', expiresAt: 0, resendAt: 0, codeLength: 6 })
     setSending(false)
     setVerifying(false)
     setLoggingIn(false)
@@ -2385,7 +2394,7 @@ export function BookingFlow({
               setPhase('select')
             }}
             check={(win) =>
-              checkWaitlistWindow(cfg, { businessServiceId: waitlistLine.service.id, resourceId: anyChosen ? null : lineWorker(waitlistLine) ?? null, ...win })
+              checkWaitlistWindow(cfg, { businessServiceId: waitlistLine.service.id, resourceId: anyChosen ? null : lineWorker(waitlistLine) ?? null, ...win }, auth?.token)
             }
             busy={wlBusy}
             error={wlErr}
@@ -2437,6 +2446,7 @@ export function BookingFlow({
           <StepOtp
             existingAccount={otpMode === 'login'}
             maskedPhone={otpInfo.maskedPhone}
+            codeLength={otpInfo.codeLength}
             code={code}
             onCode={setCode}
             onComplete={onVerify}

@@ -628,9 +628,10 @@ export const css = `
 /* ---- OTP INPUT --------------------------------------------------------- */
 .vz-otp-wrap { position: relative; display: flex; justify-content: center; margin: 8px 0 4px; }
 .vz-otp-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; background: transparent; font-size: 16px; letter-spacing: 1em; text-align: center; caret-color: transparent; cursor: text; }
-.vz-otp-boxes { display: flex; gap: 10px; pointer-events: none; }
+.vz-otp-boxes { display: flex; justify-content: center; gap: 8px; width: 100%; pointer-events: none; }
+/* Six digits since vizyto#309: boxes shrink on narrow embeds instead of overflowing. */
 .vz-otp-box {
-  width: 56px; height: 64px; border: 1.5px solid var(--vz-border); border-radius: var(--vz-r-md);
+  flex: 0 1 52px; min-width: 0; height: 60px; border: 1.5px solid var(--vz-border); border-radius: var(--vz-r-md);
   display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 600;
   background: var(--vz-input-bg); color: var(--vz-text); transition: border-color var(--vz-dur-out), box-shadow var(--vz-dur-out);
 }
