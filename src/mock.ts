@@ -1,7 +1,7 @@
 // In-memory mock of the Vizyto public API, activated by data-vizyto-api="mock".
 // Lets the whole booking + OTP + login flow be exercised locally before the
 // backend endpoints ship. Test levers:
-//   - OTP code is always 1234 (also printed to the console on send)
+//   - OTP code is always 123456 (also printed to the console on send)
 //   - email "taken@example.com" -> EMAIL_IN_USE (verify) / exists (checkEmail)
 //   - login: taken@example.com + any non-empty password succeeds
 //   - picking a slot at :55 -> createAppointment reports the slot is gone
@@ -343,8 +343,8 @@ export async function sendGuestOtp(p: { phone: string }): Promise<OtpSendResult>
   lastOtpAt = Date.now()
   attempts = 0
   // eslint-disable-next-line no-console
-  console.info('%c[vizyto mock] OTP = 1234', 'color:#fd9320;font-weight:bold')
-  return { ok: true, expiresIn: 300, maskedPhone: p.phone.replace(/\d(?=\d{3})/g, '*'), mode: isExistingAccountPhone(p.phone) ? 'login' : 'guest' }
+  console.info('%c[vizyto mock] OTP = 123456', 'color:#fd9320;font-weight:bold')
+  return { ok: true, expiresIn: 300, maskedPhone: p.phone.replace(/\d(?=\d{3})/g, '*'), mode: isExistingAccountPhone(p.phone) ? 'login' : 'guest', codeLength: 6 }
 }
 
 export async function verifyGuestOtp(p: {
@@ -355,12 +355,12 @@ export async function verifyGuestOtp(p: {
   otp: string
 }): Promise<OtpVerifyResult> {
   await wait(500)
-  if (p.otp === '1234' && isExistingAccountPhone(p.phone)) {
+  if (p.otp === '123456' && isExistingAccountPhone(p.phone)) {
     lastOtpAt = 0
     return { ok: true, data: { userId: 555, token: 'mock-token' }, mode: 'login' }
   }
   if (p.email.trim().toLowerCase() === 'taken@example.com') return { ok: false, code: 'EMAIL_IN_USE' }
-  if (p.otp === '1234') {
+  if (p.otp === '123456') {
     lastOtpAt = 0
     return { ok: true, data: { userId: 999, token: 'mock-token' }, mode: 'guest' }
   }

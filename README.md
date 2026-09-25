@@ -245,7 +245,7 @@ zmian, i dokładają obok `serviceIds`, `serviceNames` oraz `itemCount`. `value`
 Ustaw `data-vizyto-api="mock"` w `index.html`. Wbudowany mock obsługuje cały
 przepływ offline:
 
-- kod SMS to zawsze **1234** (logowany też w konsoli),
+- kod SMS to zawsze **123456** (logowany też w konsoli),
 - e-mail **taken@example.com** → wymusza logowanie (`EMAIL_IN_USE`),
 - termin **15:55** → symuluje zajęty slot (recovery „wybierz inny termin”),
 - mock respektuje koszyk: dłuższy łańcuch skraca dzień, zwraca `itemTimes` i

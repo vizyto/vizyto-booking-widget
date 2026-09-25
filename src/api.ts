@@ -191,7 +191,7 @@ export type CartItem = {
 // the classic guest-signup path.
 export type OtpMode = 'login' | 'guest'
 export type OtpSendResult =
-  | { ok: true; expiresIn: number; maskedPhone: string; mode: OtpMode }
+  | { ok: true; expiresIn: number; maskedPhone: string; mode: OtpMode; codeLength: number }
   | { ok: false; code: 'RATE_LIMITED' | 'SITE_KEY_REQUIRED' | 'NETWORK' | string; retryAfter?: number }
 export type OtpVerifyResult =
   | { ok: true; data: GuestData; mode: OtpMode }
@@ -710,6 +710,10 @@ export async function checkBookingAccess(
   }
 }
 
+// Codes have 6 digits since vizyto#309; an API released before sends 4 and no length.
+export const otpCodeLength = (data: { codeLength?: unknown } | null | undefined): number =>
+  typeof data?.codeLength === 'number' && data.codeLength >= 4 && data.codeLength <= 8 ? data.codeLength : 4
+
 export async function sendGuestOtp(cfg: Cfg, p: { phone: string; turnstileToken?: string | null }): Promise<OtpSendResult> {
   if (cfg.mock) return mock.sendGuestOtp(p)
   try {
@@ -719,7 +723,7 @@ export async function sendGuestOtp(cfg: Cfg, p: { phone: string; turnstileToken?
       body: JSON.stringify({ businessId: cfg.businessId, phone: p.phone, turnstileToken: p.turnstileToken || undefined }),
     })
     const data = await r.json().catch(() => ({}))
-    if (r.ok) return { ok: true, expiresIn: data.expiresIn ?? 300, maskedPhone: data.maskedPhone ?? '', mode: data.mode === 'login' ? 'login' : 'guest' }
+    if (r.ok) return { ok: true, expiresIn: data.expiresIn ?? 300, maskedPhone: data.maskedPhone ?? '', mode: data.mode === 'login' ? 'login' : 'guest', codeLength: otpCodeLength(data) }
     if (r.status === 429) return { ok: false, code: 'RATE_LIMITED', retryAfter: data?.retryAfter }
     return { ok: false, code: data?.code || `HTTP_${r.status}` }
   } catch {

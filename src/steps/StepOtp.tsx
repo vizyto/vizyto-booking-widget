@@ -7,6 +7,7 @@ const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, 
 export function StepOtp({
   existingAccount,
   maskedPhone,
+  codeLength,
   code,
   onCode,
   onComplete,
@@ -25,6 +26,7 @@ export function StepOtp({
   // into it, so the booking lands in their real history.
   existingAccount?: boolean
   maskedPhone: string
+  codeLength: number
   code: string
   onCode: (v: string) => void
   onComplete: (v: string) => void
@@ -47,7 +49,7 @@ export function StepOtp({
     <div class="vz-fade-in">
       <StepHeader title="Weryfikacja SMS" />
       <p class="vz-lead">
-        Wysłaliśmy 4-cyfrowy kod na numer <b style="color:var(--vz-text)">{maskedPhone}</b>. Wpisz go poniżej.
+        Wysłaliśmy {codeLength}-cyfrowy kod na numer <b style="color:var(--vz-text)">{maskedPhone}</b>. Wpisz go poniżej.
       </p>
       {existingAccount && (
         <p class="vz-hint" style="margin-top:-4px;margin-bottom:12px;">
@@ -55,7 +57,7 @@ export function StepOtp({
         </p>
       )}
 
-      <OtpInput value={code} onInput={onCode} onComplete={onComplete} disabled={verifying || expired} invalid={!!error} />
+      <OtpInput length={codeLength} value={code} onInput={onCode} onComplete={onComplete} disabled={verifying || expired} invalid={!!error} />
 
       <div aria-live="assertive">
         {error && <div class="vz-err" role="alert">{error}</div>}

@@ -614,7 +614,7 @@ export function BookingFlow({
   // captured from the visible widget, consumed by a send, then cleared so the
   // next send re-gates. Only enforced when cfg.turnstileKey is configured.
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
-  const [otpInfo, setOtpInfo] = useState({ maskedPhone: '', expiresAt: 0, resendAt: 0 })
+  const [otpInfo, setOtpInfo] = useState({ maskedPhone: '', expiresAt: 0, resendAt: 0, codeLength: 6 })
   // 'login' = this phone already has a Vizyto account; the code doubles as a login.
   const [otpMode, setOtpMode] = useState<OtpMode>('guest')
   const [attemptsLeft, setAttemptsLeft] = useState(3)
@@ -1911,6 +1911,7 @@ export function BookingFlow({
       maskedPhone,
       expiresAt: Date.now() + r.expiresIn * 1000,
       resendAt: Date.now() + OTP_RESEND_MS,
+      codeLength: r.codeLength,
     })
     setPhase('otp')
     emit('otp_sent', { maskedPhone, resend: false })
@@ -1939,6 +1940,7 @@ export function BookingFlow({
       maskedPhone,
       expiresAt: Date.now() + r.expiresIn * 1000,
       resendAt: Date.now() + OTP_RESEND_MS,
+      codeLength: r.codeLength,
     })
     emit('otp_sent', { maskedPhone, resend: true })
   }
@@ -1971,6 +1973,11 @@ export function BookingFlow({
     }
     if (r.code === 'EXPIRED') {
       setOtpErr('Kod wygasł. Wyślij nowy.')
+      return
+    }
+    if (r.code === 'OTP_LOCKED') {
+      setCode('')
+      setOtpErr('Zbyt wiele błędnych kodów dla tego numeru. Spróbuj ponownie za godzinę.')
       return
     }
     const left = r.remainingAttempts ?? attemptsLeft - 1
@@ -2093,7 +2100,7 @@ export function BookingFlow({
     setCalRestricted(false)
     setCode('')
     setAttemptsLeft(3)
-    setOtpInfo({ maskedPhone: '', expiresAt: 0, resendAt: 0 })
+    setOtpInfo({ maskedPhone: '', expiresAt: 0, resendAt: 0, codeLength: 6 })
     setSending(false)
     setVerifying(false)
     setLoggingIn(false)
@@ -2438,6 +2445,7 @@ export function BookingFlow({
           <StepOtp
             existingAccount={otpMode === 'login'}
             maskedPhone={otpInfo.maskedPhone}
+            codeLength={otpInfo.codeLength}
             code={code}
             onCode={setCode}
             onComplete={onVerify}

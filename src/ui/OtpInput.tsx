@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from 'preact/hooks'
 
-const LEN = 4
-
-// One real <input> (transparent, full-bleed) drives four visual boxes. A single
+// One real <input> (transparent, full-bleed) drives one visual box per digit. A single
 // input is the most reliable target for iOS/Android SMS autofill
 // (autocomplete="one-time-code") and for paste, and keeps the markup tiny.
 export function OtpInput({
+  length = 6,
   value,
   onInput,
   onComplete,
   disabled,
   invalid,
 }: {
+  /** Digits in the code: from the send response (6 since vizyto#309, 4 before). */
+  length?: number
   value: string
   onInput: (v: string) => void
   onComplete: (v: string) => void
@@ -26,9 +27,9 @@ export function OtpInput({
   }, [disabled])
 
   function handle(raw: string) {
-    const digits = raw.replace(/\D/g, '').slice(0, LEN)
+    const digits = raw.replace(/\D/g, '').slice(0, length)
     onInput(digits)
-    if (digits.length === LEN) onComplete(digits)
+    if (digits.length === length) onComplete(digits)
   }
 
   return (
@@ -42,14 +43,14 @@ export function OtpInput({
         inputMode="numeric"
         autoComplete="one-time-code"
         pattern="[0-9]*"
-        maxLength={LEN}
+        maxLength={length}
         aria-label="Kod weryfikacyjny"
         onInput={(e) => handle((e.target as HTMLInputElement).value)}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
       />
       <div class="vz-otp-boxes">
-        {Array.from({ length: LEN }).map((_, i) => (
+        {Array.from({ length }).map((_, i) => (
           <div class={`vz-otp-box${value[i] ? ' filled' : ''}${focused && i === value.length ? ' cursor' : ''}`}>
             {value[i] ?? ''}
           </div>
