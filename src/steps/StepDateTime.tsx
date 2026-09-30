@@ -73,7 +73,8 @@ export function StepDateTime({
     people: { name: string; image: string | null }[]
     /** Two answers (several people, or a person + "bez preferencji"): "Specjaliści". */
     plural?: boolean
-    editor?: VNode | null
+    /** Renders the editor; `close` folds the field after a pick. */
+    editor?: ((close: () => void) => VNode) | null
   }
   /** Why the day came back empty: 'busy' = these people are, others are not. */
   emptyReason?: 'busy'
@@ -231,7 +232,7 @@ export function StepDateTime({
             </span>
             {providerChip.editor && <ChevronDown size={16} class="vz-chip-cv" />}
           </button>
-          {editingWho && providerChip.editor}
+          {editingWho && providerChip.editor?.(() => setEditingWho(false))}
         </div>
       )}
 

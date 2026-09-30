@@ -25,15 +25,18 @@ export const fullDate = (d: string) =>
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
 const monthYear = (d: string) => capitalize(at(d).toLocaleDateString('pl-PL', { month: 'long', year: 'numeric' }))
-const monthOnly = (d: string) => capitalize(at(d).toLocaleDateString('pl-PL', { month: 'long' }))
+// Fixed list instead of Intl: engines disagree on dots in short Polish months.
+const MONTHS_SHORT = ['sty', 'lut', 'mar', 'kwi', 'maj', 'cze', 'lip', 'sie', 'wrz', 'paź', 'lis', 'gru']
+const monthShort = (d: string) => MONTHS_SHORT[at(d).getMonth()]
 
-// "Czerwiec 2026" when one month, "Czerwiec / Lipiec 2026" when the span crosses.
+// "Czerwiec 2026" when one month; a span that crosses months is abbreviated so it
+// fits the period bar on one line: "Wrz / paź 2026", "Gru 2026 / sty 2027".
 export function spanLabel(first: string, last: string): string {
   const a = at(first)
   const b = at(last)
   if (a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear()) return monthYear(first)
-  if (a.getFullYear() === b.getFullYear()) return `${monthOnly(first)} / ${monthYear(last)}`
-  return `${monthYear(first)} / ${monthYear(last)}`
+  if (a.getFullYear() === b.getFullYear()) return `${capitalize(monthShort(first))} / ${monthShort(last)} ${b.getFullYear()}`
+  return `${capitalize(monthShort(first))} ${a.getFullYear()} / ${monthShort(last)} ${b.getFullYear()}`
 }
 
 export const DOW = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Ndz']
