@@ -6,8 +6,7 @@ import { DOW, dayNum, monthMatrix, monthOf, monthTitle, spanLabel, weekday } fro
 import { ChevronDown, ChevronLeft, ChevronRight, Calendar, CalendarDays, Grid, Moon, Sun, Sunrise, Bell } from '../ui/icons'
 import { AvatarStack } from '../ui/AvatarStack'
 import { Spinner } from '../ui/Spinner'
-import type { PromoNote } from '../ui/PromoBadge'
-import { PromoBadge, PromoNotes, dayPromo } from '../ui/PromoBadge'
+import { PromoBadge, dayPromo } from '../ui/PromoBadge'
 
 // Day tiles flow to fill the available width: we measure the strip and show as
 // many whole tiles as fit (MIN_TILE = narrowest a tile may get), then paginate
@@ -37,7 +36,6 @@ export function StepDateTime({
   emptyReason,
   onCheckAll,
   promoBadges,
-  promoNotes = [],
 }: {
   days: string[]
   counts: DayCounts
@@ -81,12 +79,11 @@ export function StepDateTime({
   /** Drop every specialist pin and ask the day again. */
   onCheckAll?: () => void
   /** Promotion badges per day and per slot key (fail-soft: null = none). */
-  promoBadges?: PromoBadges | null
   /**
-   * Reference-price lines for the cart. A badge is an announced reduction, so
-   * without its line no badge shows at all.
+   * A badge is an announced reduction: it shows only with the answer's `lowest`
+   * (the cart's price and its 30-day price), which the booking summary carries.
    */
-  promoNotes?: PromoNote[]
+  promoBadges?: PromoBadges | null
 }) {
   const [view, setView] = useState<'week' | 'month'>('week')
   const [editingWho, setEditingWho] = useState(false)
@@ -159,7 +156,7 @@ export function StepDateTime({
   const pageDays = days.slice(safePage * perPage, safePage * perPage + perPage)
   // Promotion marks (owner's mockup, #430): a corner badge on every bookable day
   // and time tile that has one, a dot in the month grid - never on a disabled day.
-  const badges = promoNotes.length ? promoBadges : null
+  const badges = promoBadges?.lowest ? promoBadges : null
   const dayMarks = dayPromo(days, (d) => inHorizon.has(d) && free(d), badges?.days)
   // Only a page that shows a badge leaves room above its row for it.
   const weekMarked = pageDays.some((d) => !!dayMarks.tile(d))
@@ -297,12 +294,10 @@ export function StepDateTime({
         </div>
       )}
 
-      {(dayMarks.any || slotMarked) && (
+      {/* The 30-day note sits in the booking summary, next to the price (#430). */}
+      {view === 'month' && monthMarked && (
         <div class="vz-promo-foot">
-          {view === 'month' && monthMarked && (
-            <div class="vz-promo-caption"><span class="vz-promo-dot" aria-hidden="true" /> Dni z promocją</div>
-          )}
-          <PromoNotes notes={promoNotes} />
+          <div class="vz-promo-caption"><span class="vz-promo-dot" aria-hidden="true" /> Dni z promocją</div>
         </div>
       )}
 

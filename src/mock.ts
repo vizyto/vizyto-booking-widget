@@ -261,7 +261,8 @@ export async function getPromotionSummary(_bookedById?: number | null): Promise<
     staff: [{
       resourceId: 11,
       businessServiceId: 1,
-      texts: [{ amount: MOCK_BADGE, rest: 'w środę 12:00-15:00', note: 'Promocja przy wyborze Marka' }],
+      variantMinutes: 30,
+      texts: [{ amount: '20% taniej', headline: '20% taniej', rest: 'w środy od 12:00 do 15:00', note: null }],
       priorPrice: 5000,
     }],
     groupClasses: [{ groupClassId: 42, saveUpToPercent: 20, priorPrice: 5500 }],
@@ -278,7 +279,9 @@ export async function getPromoBadges(p: PromoBadgesRequest): Promise<PromoBadges
   if (p.slots && isPromoDay(p.slots.date)) {
     for (const time of p.slots.times) slots[time] = isPromoTime(time) ? MOCK_BADGE : null
   }
-  return { days, slots }
+  // A mock cart price: 20% off 50 zł, with the 30-day price of that cart.
+  const marked = Object.values(days).some(Boolean) || Object.values(slots).some(Boolean)
+  return { days, slots, lowest: marked ? { total: 4000, priorTotal: 5000 } : null }
 }
 
 export async function quoteAppointment(p: AppointmentQuoteRequest): Promise<PriceQuote> {

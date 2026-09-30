@@ -3,6 +3,8 @@ import type { PromotionText } from '../api'
 import { formatPrice2 } from '../api'
 import { Tag } from './icons'
 
+const upperFirst = (s: string) => s.charAt(0).toLocaleUpperCase('pl-PL') + s.slice(1)
+
 /**
  * The promotion badge ("-20%", "-15 zł", "Zaoszczędź do 20%"), in the plakietka
  * idiom: body text on an accent tint, 12px. The accent colours only the
@@ -97,8 +99,10 @@ export function shownStaffPromos(entries: StaffPromoEntry[]) {
 /**
  * A worker's own promotion in a specialist picker (owner's mockup, #430): a band
  * across the FOOT of the card, edge to edge - hairline on top, an accent tint a
- * step stronger than the selected card's wash, a tag icon, the amount in 500
- * weight, the when-part plain, the end date and the reference price under it.
+ * step stronger than the selected card's wash, a tag icon, the headline in 500
+ * weight ("Cena w promocji: 49 zł", "20% taniej"), when it applies on its own
+ * line (only this worker has it, so the customer must see when), then the end
+ * date and the reference price.
  * Rendered through SelectCard's `foot`, which makes the card clip it. Every
  * promoted position of the card shares ONE band.
  */
@@ -113,10 +117,9 @@ export function StaffPromoBand({ entries }: { entries: StaffPromoEntry[] }) {
           <span class="vz-staff-band-entry" key={`${entry.label ?? ''}-${i}`}>
             {entry.texts.map((text, index) => (
               <span class="vz-staff-band-text" key={`${text.amount}-${text.rest}-${index}`}>
-                <span class="vz-staff-band-line">
-                  {entry.label && <>{entry.label}: </>}
-                  <b>{text.amount}</b>{text.rest ? ` ${text.rest}` : ''}
-                </span>
+                {entry.label && index === 0 && <span class="vz-staff-band-note">{entry.label}</span>}
+                <b class="vz-staff-band-line">{text.headline ?? text.amount}</b>
+                {text.rest && <span class="vz-staff-band-when">{upperFirst(text.rest)}</span>}
                 {text.note && <span class="vz-staff-band-note">{text.note}</span>}
               </span>
             ))}

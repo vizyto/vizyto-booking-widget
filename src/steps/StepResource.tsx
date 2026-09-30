@@ -1,5 +1,5 @@
 import type { PublicPromotionSummary, Resource, Service } from '../api'
-import { configuredTotals, formatDuration, formatPrice2, workerOffersService } from '../api'
+import { configuredTotals, findStaffPromotion, formatDuration, formatPrice2, workerOffersService } from '../api'
 import { SelectCard } from '../ui/SelectCard'
 import { Notice } from '../ui/Notice'
 import { Clock, Shuffle, Users } from '../ui/icons'
@@ -138,7 +138,7 @@ export function StepResource({
             items
               .map((item) => ({
                 label: items.length > 1 ? item.service.name : null,
-                promotion: promotionSummary?.staff.find((x) => x.resourceId === p.id && x.businessServiceId === item.service.id),
+                promotion: findStaffPromotion(promotionSummary, p.id, item.service.id, item.variantDuration),
               }))
               .filter((x) => !!x.promotion)
               .map(({ label, promotion }) => ({ label, texts: promotion!.texts, priorPrice: promotion!.priorPrice })),

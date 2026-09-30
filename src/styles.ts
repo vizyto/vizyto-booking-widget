@@ -679,8 +679,9 @@ export const css = `
 .vz-session-note { margin: -4px 0 10px; }
 /* A worker's own promotion: a band across the specialist card's foot (owner's
    mockup) - accent hairline on top, an accent tint a step stronger than the
-   selected card's wash, a tag icon, the amount in 500, the rest plain, the note
-   and the reference price in 12px. Text stays in the body colours. */
+   selected card's wash, a tag icon, the headline in 500, when it applies plain
+   on its own line, the note and the reference price in 12px. Text stays in the
+   body colours. */
 .vz-staff-band {
   display: flex; align-items: flex-start; gap: 10px; padding: 11px 16px 12px;
   border-top: 1px solid color-mix(in srgb, var(--vz-accent) 25%, var(--vz-surface));
@@ -691,7 +692,7 @@ export const css = `
 .vz-staff-band-icon { flex: 0 0 auto; margin-top: 2px; color: var(--vz-accent); }
 .vz-staff-band-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .vz-staff-band-entry, .vz-staff-band-text { display: flex; flex-direction: column; gap: 2px; }
-.vz-staff-band-line b { font-weight: 500; }
+.vz-staff-band-line { font-weight: 500; }
 .vz-staff-band-note { font-size: 12px; color: color-mix(in srgb, var(--vz-text-muted) 70%, var(--vz-text)); }
 @media (max-width: 400px) {
   .vz-staff-band { padding: 10px 13px 11px; }

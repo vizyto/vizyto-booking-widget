@@ -72,6 +72,7 @@ import { Powered } from './ui/Powered'
 import { ArrowLeft, ArrowRight, Close } from './ui/icons'
 import { SummaryCard, type SummaryRow } from './ui/SummaryCard'
 import type { PromoNote } from './ui/PromoBadge'
+import { LowestPriceLine } from './ui/PromoBadge'
 import { AvatarStack } from './ui/AvatarStack'
 import { Button } from './ui/Button'
 import { StepService, type CartChip } from './steps/StepService'
@@ -1162,37 +1163,18 @@ export function BookingFlow({
     : []
 
   /**
-   * Reference-price lines behind the calendar's promotion badges. A badge carries
-   * no price, so the quote of the chosen slot answers first; before that, the
-   * business's promotion summary for each promoted position (a pinned worker's
-   * own promotion over the service's). Named only when there are several.
+   * The time step's promotion in the booking summary (#430, DESIGN.md §3.5). The
+   * badges answer carries the lowest marked total of THIS cart with its 30-day
+   * price; the picked hour's quote replaces it; an hour without the promotion keeps
+   * its own price and the summary names the promotion beside it.
    */
-  const appointmentPromoNotes: PromoNote[] = (() => {
-    if (quote?.advertised && quote.priorTotal != null) return [{ price: quote.priorTotal }]
-    if (!promotionSummary) return []
-    const found: Array<PromoNote & { name: string }> = []
-    for (const l of lines) {
-      const worker = lineWorker(l)
-      const own = worker != null
-        ? promotionSummary.staff.find((x) => x.resourceId === worker && x.businessServiceId === l.service.id)
-        : undefined
-      const svc = promotionSummary.services.find((x) => x.businessServiceId === l.service.id)
-      const anyStaff = worker == null ? promotionSummary.staff.filter((x) => x.businessServiceId === l.service.id) : []
-      if (own) found.push({ name: l.service.name, price: own.priorPrice })
-      else if (svc) found.push({ name: l.service.name, price: svc.priorPrice, isFrom: svc.priorPriceIsFrom })
-      else if (anyStaff.length) {
-        const prices = anyStaff.map((x) => x.priorPrice)
-        const min = Math.min(...prices)
-        found.push({ name: l.service.name, price: min, isFrom: prices.some((p) => p !== min) })
-      }
-      for (const id of l.addonIds) {
-        const addon = promotionSummary.addons.find((x) => x.addonId === id)
-        const name = addonNames(l.service, [id])[0]
-        if (addon && name) found.push({ name, price: addon.priorPrice })
-      }
-    }
-    return found.map(({ name, ...note }) => ({ ...note, label: found.length > 1 ? name : null }))
-  })()
+  const markedLowest = effKind === 'service' ? appointmentBadges?.lowest ?? null : null
+  const pickedPromo = slotKey && quote?.advertised && quote.total != null && quote.priorTotal != null
+    ? { total: quote.total, priorTotal: quote.priorTotal }
+    : null
+  const summaryPromo = stepId === 'time' && (pickedPromo ?? markedLowest)
+    ? { ...(pickedPromo ?? markedLowest)!, isFrom: !pickedPromo, offTerm: !pickedPromo && !!slotKey }
+    : null
 
   /** First numbered step of a family - used by the fork and by restart(). */
   const firstStepOf = (k: OfferingKind): SelStepId =>
@@ -1242,7 +1224,7 @@ export function BookingFlow({
       })()
     : []
 
-  /** The rental twin of appointmentPromoNotes: the quote first, then the summary. */
+  /** Reference-price lines behind the rental calendar's badges: the quote first, then the summary. */
   const rentalPromoNotes: PromoNote[] = (() => {
     if (quote?.advertised && quote.priorTotal != null) return [{ price: quote.priorTotal }]
     if (!rentalPick || !promotionSummary) return []
@@ -2603,7 +2585,6 @@ export function BookingFlow({
             emptyReason={emptyProbe === 'others' ? 'busy' : undefined}
             onCheckAll={checkAllSpecialists}
             promoBadges={appointmentBadges}
-            promoNotes={appointmentPromoNotes}
           />
         )}
 
@@ -2800,8 +2781,17 @@ export function BookingFlow({
                 <>
                   <div class="vz-cta-svc">{lines.map((l) => l.service.name).join(', ')}</div>
                   <div class="vz-cta-meta">
-                    <b>{ctaPrice}</b> · {positionsLabel(lines.length)} · {formatDuration(shownDuration)}
+                    <b>{summaryPromo && !summaryPromo.offTerm ? `${summaryPromo.isFrom ? 'od ' : ''}${formatPrice2(summaryPromo.total)}` : ctaPrice}</b> · {positionsLabel(lines.length)} · {formatDuration(shownDuration)}
                   </div>
+                  {summaryPromo && (
+                    summaryPromo.offTerm ? (
+                      <span class="vz-lowest-price">
+                        W oznaczonych terminach od {formatPrice2(summaryPromo.total)}. Najniższa cena z 30 dni przed obniżką: {formatPrice2(summaryPromo.priorTotal)}
+                      </span>
+                    ) : (
+                      <LowestPriceLine price={summaryPromo.priorTotal} />
+                    )
+                  )}
                   {lines.length === 1 && serviceHasOptions(lines[0]!.service) && (
                     <div class="vz-cta-cfg">
                       <button class="vz-link" onClick={() => setConfiguringId(lines[0]!.service.id)} type="button">Zmień wariant / dodatki</button>

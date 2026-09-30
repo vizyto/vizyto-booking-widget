@@ -188,7 +188,8 @@ export type CartItem = {
 
 // Public promotion contract. The widget intentionally keeps a local copy rather
 // than importing @vizyto/shared, because it is built and released independently.
-export type PromotionText = { amount: string; rest: string; note: string | null }
+/** `headline` is the first line of a worker's strip; absent from an older API. */
+export type PromotionText = { amount: string; headline?: string; rest: string; note: string | null }
 export type PromoPriceFields = { price: number; listPrice: number; priorPrice: number | null; advertised: boolean; badge: string | null }
 export type PriceQuoteLine = {
   kind: 'service' | 'addon' | 'group_class_entry' | 'enrollment_option' | 'rental'
@@ -214,7 +215,7 @@ export type PublicPromotionSummary = {
   maxSavePercent: number | null
   services: Array<{ businessServiceId: number; saveUpToPercent: number; priorPrice: number; priorPriceIsFrom: boolean }>
   addons: Array<{ addonId: number; saveUpToPercent: number; priorPrice: number }>
-  staff: Array<{ resourceId: number; businessServiceId: number; texts: PromotionText[]; priorPrice: number }>
+  staff: Array<{ resourceId: number; businessServiceId: number; variantMinutes?: number | null; texts: PromotionText[]; priorPrice: number }>
   groupClasses: Array<{ groupClassId: number; saveUpToPercent: number; priorPrice: number }>
   enrollmentOptions: Array<PromoPriceFields & { enrollmentOptionId: number; text: PromotionText }>
   rentals: Array<{ rentalTypeId: number | null; resourceId: number | null; saveUpToPercent: number; priorPrice: number; unitLabel: string }>
@@ -226,7 +227,30 @@ export type PromoBadgesRequest = {
   slots?: { date: string; times: string[] } | null
   bookedById?: number | null
 }
-export type PromoBadges = { days: Record<string, string | null>; slots: Record<string, string | null> }
+export type PromoBadges = {
+  days: Record<string, string | null>
+  slots: Record<string, string | null>
+  /** Lowest advertised total of the marked days and slots, with its 30-day price. Absent from an older API. */
+  lowest?: { total: number; priorTotal: number } | null
+}
+
+/**
+ * A worker's own promotion for one cart position (#430): the length preset is part
+ * of the match (null = a service without presets). A position that names no preset
+ * takes the worker's one strip for the service when there is exactly one.
+ * (Local twin of packages/shared findStaffPromotion.)
+ */
+export function findStaffPromotion(
+  summary: PublicPromotionSummary | null | undefined,
+  resourceId: number,
+  businessServiceId: number,
+  variantMinutes: number | null | undefined,
+): PublicPromotionSummary['staff'][number] | undefined {
+  const own = summary?.staff.filter((x) => x.resourceId === resourceId && x.businessServiceId === businessServiceId) ?? []
+  const exact = own.find((x) => (x.variantMinutes ?? null) === (variantMinutes ?? null))
+  if (exact) return exact
+  return variantMinutes == null && own.length === 1 ? own[0] : undefined
+}
 export type AppointmentQuoteRequest = { items: PromoBadgesCartItem[]; startDate: string; bookedById?: number | null }
 export type RentalQuoteRequest = {
   resourceId?: number | null

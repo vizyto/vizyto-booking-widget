@@ -1,6 +1,6 @@
 import { useState } from 'preact/hooks'
 import type { PublicPromotionSummary, Resource, Service } from '../api'
-import { configuredTotals, formatDuration, formatPrice2 } from '../api'
+import { configuredTotals, findStaffPromotion, formatDuration, formatPrice2 } from '../api'
 import { getResourcesForService, getStaffItems } from '../providerMode'
 import { SelectCard } from '../ui/SelectCard'
 import { ChevronDown, Shuffle } from '../ui/icons'
@@ -126,7 +126,7 @@ function ProviderOptions({
         onSelect={() => onPick(null)}
       />
       {candidates.map((c) => {
-        const promotion = promotionSummary?.staff.find((x) => x.resourceId === c.id && x.businessServiceId === item.service.id)
+        const promotion = findStaffPromotion(promotionSummary, c.id, item.service.id, item.variantDuration)
         const staffPromos = promotion ? shownStaffPromos([{ texts: promotion.texts, priorPrice: promotion.priorPrice }]) : []
         return (
           <SelectCard
