@@ -275,9 +275,9 @@ export function StepDateTime({
       {(dayMarks.any || slotMarked) && (
         <div class="vz-promo-foot">
           {dayMarks.common ? (
-            <div class="vz-promo-caption"><PromoBadge>{dayMarks.common}</PromoBadge> w każdym dostępnym dniu</div>
+            <div class="vz-promo-caption"><PromoBadge>{dayMarks.common}</PromoBadge> we wszystkie dostępne dni</div>
           ) : view === 'month' && dayMarks.any ? (
-            <div class="vz-promo-caption"><span class="vz-promo-dot" aria-hidden="true" /> Dzień z promocją</div>
+            <div class="vz-promo-caption"><span class="vz-promo-dot" aria-hidden="true" /> Dni z promocją</div>
           ) : null}
           <PromoNotes notes={promoNotes} />
         </div>

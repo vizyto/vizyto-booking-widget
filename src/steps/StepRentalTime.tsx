@@ -172,7 +172,7 @@ export function StepRentalTime({
       {(dayMarks.any || slotMarked) && (
         <div class="vz-promo-foot">
           {dayMarks.common && (
-            <div class="vz-promo-caption"><PromoBadge>{dayMarks.common}</PromoBadge> w każdym dostępnym dniu</div>
+            <div class="vz-promo-caption"><PromoBadge>{dayMarks.common}</PromoBadge> we wszystkie dostępne dni</div>
           )}
           {!lengthPromo && <PromoNotes notes={promoNotes} />}
         </div>
