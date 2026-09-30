@@ -5,6 +5,7 @@ import { Notice } from '../ui/Notice'
 import { Clock, Shuffle, Users } from '../ui/icons'
 import { ItemProviders } from './ItemProviders'
 import { StaffPromoBand, shownStaffPromos } from '../ui/PromoBadge'
+import { CdnImg } from '../ui/CdnImg'
 
 type ResChoice = number | 'any'
 
@@ -124,7 +125,7 @@ export function StepResource({
           if (mode === 'unit') {
             return (
               <SelectCard
-                avatar={p.image ? <img src={p.image} alt="" /> : p.name.charAt(0)}
+                avatar={p.image ? <CdnImg src={p.image} width={112} alt="" /> : p.name.charAt(0)}
                 title={p.name}
                 sub={p.position || undefined}
                 selected={selected === p.id}
@@ -145,7 +146,7 @@ export function StepResource({
           )
           return (
             <SelectCard
-              avatar={p.image ? <img src={p.image} alt="" /> : p.name.charAt(0)}
+              avatar={p.image ? <CdnImg src={p.image} width={112} alt="" /> : p.name.charAt(0)}
               title={p.name}
               sub={p.position || undefined}
               meta={
