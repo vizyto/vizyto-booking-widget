@@ -285,10 +285,8 @@ export const css = `
   background: var(--vz-surface); color: var(--vz-text-muted); font-size: 12.5px;
 }
 .vz-card-meta .vz-price { font-weight: 600; }
-.vz-card-meta .vz-lowest-price, .vz-card-meta .vz-staff-promo, .vz-card-meta .vz-staff-promo-group, .vz-card-meta .vz-promo-price-wrap { flex: 1 0 100%; }
-.vz-card-meta .vz-promo-price-wrap { align-items: flex-start; }
-.vz-staff-promo-group { display: block; width: 100%; }
-.vz-staff-promo-group > small { display: block; margin-top: 3px; color: var(--vz-text-muted); font-size: 10.5px; }
+/* Reference-price line and a worker's promotion take their own row under the meta. */
+.vz-card-meta .vz-lowest-price, .vz-card-meta .vz-staff-promo { flex: 1 0 100%; }
 /* Discreet "Dla stałych klientów" chip on whitelist-locked services. Not an
    error - logging in may unlock the service, so it stays calm and selectable. */
 .vz-lock-chip {
@@ -502,7 +500,7 @@ export const css = `
 
 .vz-days { display: flex; gap: 8px; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
 .vz-day {
-  position: relative; flex: 1 1 0; min-width: 0; max-width: 96px; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  flex: 1 1 0; min-width: 0; max-width: 96px; display: flex; flex-direction: column; align-items: center; gap: 4px;
   padding: 12px 8px 10px; border: 1.5px solid transparent; border-radius: var(--vz-r-md);
   background: var(--vz-surface-2); color: var(--vz-text); cursor: pointer; font-family: var(--vz-font);
   font-size: 18px; font-weight: 600; transition: border-color var(--vz-dur-out), background var(--vz-dur-out);
@@ -518,7 +516,7 @@ export const css = `
 .vz-month { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
 .vz-month-dow { text-align: center; font-size: 10.5px; font-weight: 600; color: var(--vz-text-muted); text-transform: uppercase; padding-bottom: 2px; }
 .vz-mcell {
-  position: relative; aspect-ratio: 1 / 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  aspect-ratio: 1 / 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
   border: 1.5px solid transparent; border-radius: var(--vz-r-sm); background: var(--vz-surface-2);
   color: var(--vz-text); cursor: pointer; font-family: var(--vz-font); font-size: 14px; font-weight: 600;
   transition: border-color var(--vz-dur-out), background var(--vz-dur-out);
@@ -547,11 +545,9 @@ export const css = `
 .vz-pill:active { transform: scale(.98); }
 .vz-pill.on { border-color: var(--vz-accent); background: var(--vz-selected); }
 .vz-pill.on small { color: var(--vz-text); }
-.vz-pill:has(.vz-promo-price-wrap) { display: inline-flex; flex-direction: column; align-items: flex-start; }
-.vz-pill .vz-promo-price-wrap { align-items: flex-start; margin-top: 3px; font-size: 11px; }
 .vz-slots { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
 .vz-slot {
-  position: relative; padding: 13px 0; border: 1.5px solid transparent; border-radius: var(--vz-r-md);
+  display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 13px 0; border: 1.5px solid transparent; border-radius: var(--vz-r-md);
   background: var(--vz-surface-2); color: var(--vz-text); cursor: pointer; font-family: var(--vz-font);
   font-size: 15px; font-weight: 600; text-align: center;
   transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
@@ -587,36 +583,49 @@ export const css = `
 .vz-row.total > span { font-weight: 600; font-size: 15px; }
 
 /* ---- PROMOTIONS -------------------------------------------------------- */
+/* Promotion badge in the .vz-chip idiom: text in the body colour, the brand only
+   as a background (hosts override the accent with anything). Always in flow,
+   never pinned over another label, never below 12px. */
 .vz-promo-badge {
   display: inline-flex; align-items: center; width: max-content; max-width: 100%;
-  padding: 2px 7px; border: 1px solid color-mix(in srgb, var(--vz-accent) 28%, transparent);
-  border-radius: var(--vz-r-pill); background: color-mix(in srgb, var(--vz-accent) 13%, var(--vz-surface));
-  color: var(--vz-accent-strong); font-size: 10.5px; font-weight: 700; line-height: 1.35; white-space: nowrap;
+  padding: 2px 8px; border-radius: var(--vz-r-pill);
+  background: color-mix(in srgb, var(--vz-accent) 20%, var(--vz-surface));
+  color: var(--vz-text); font-family: var(--vz-font); font-size: 12px; font-weight: 500; line-height: 1.4;
+  letter-spacing: 0; text-transform: none; white-space: nowrap;
 }
-.vz-promo-badge.floating { position: absolute; z-index: 1; top: -6px; right: -5px; pointer-events: none; }
-.vz-lowest-price { display: block; color: var(--vz-text-muted); font-size: 11px; font-weight: 400; line-height: 1.45; }
-.vz-card-main > .vz-lowest-price { margin-top: 2px; }
-.vz-promo-price-wrap { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 3px; }
-.vz-promo-price { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 5px; }
-.vz-slot .vz-promo-price-wrap { align-items: center; margin-top: 4px; font-size: 11px; font-weight: 500; }
-.vz-slot .vz-lowest-price { max-width: 120px; white-space: normal; }
+/* The reference-price line: helper text like .vz-opt-desc. */
+.vz-lowest-price { display: block; color: var(--vz-text-muted); font-size: 12px; font-weight: 400; line-height: 1.4; letter-spacing: 0; text-transform: none; }
+.vz-promo-value { display: inline-flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; gap: 0 6px; }
 .vz-price-before { color: var(--vz-text-muted); font-weight: 400; text-decoration: line-through; }
-.vz-staff-promo {
-  display: flex; flex-direction: column; gap: 4px; width: 100%; margin-top: 5px; padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--vz-accent) 24%, var(--vz-border)); border-radius: var(--vz-r-sm);
-  background: color-mix(in srgb, var(--vz-accent) 8%, var(--vz-surface)); color: var(--vz-text); font-size: 11.5px; line-height: 1.4;
-}
-.vz-staff-promo-text { display: flex; flex-direction: column; }
-.vz-staff-promo-text b { color: var(--vz-accent-strong); }
-.vz-staff-promo-text small { color: var(--vz-text-muted); font-size: 10.5px; }
-.vz-quote { padding: 9px 0 10px; border-top: 1px solid var(--vz-border); }
+/* A price row carrying a promotion: value + badge on the right, note under the row. */
+.vz-row-promo { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 8px; }
+.vz-row.has-note { flex-wrap: wrap; row-gap: 4px; }
+.vz-row.has-note > span:nth-child(2) { text-align: right; }
+.vz-row-note { flex: 1 0 100%; }
+.vz-quote { border-top: 1px solid var(--vz-border); }
 .vz-quote.first { border-top: 0; }
-.vz-quote-head { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 5px; color: var(--vz-text-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
-.vz-quote-line, .vz-quote-total { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 4px 0; }
-.vz-quote-line > span:first-child { min-width: 0; overflow-wrap: anywhere; }
-.vz-quote-value { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; white-space: nowrap; }
-.vz-quote-total { margin-top: 5px; padding-top: 8px; border-top: 1px solid var(--vz-border); font-size: 15px; font-weight: 600; }
-.vz-quote > .vz-lowest-price { margin-top: 5px; }
+.vz-quote-head { display: flex; align-items: center; gap: 8px; padding-top: 12px; font-size: 12.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--vz-text-muted); }
+.vz-quote-note { margin-top: -4px; padding-bottom: 10px; }
+/* Slot and day tiles: a mixed set carries the value as a second in-flow line. */
+.vz-slot .vz-promo-badge, .vz-day .vz-promo-badge { max-width: 100%; white-space: normal; justify-content: center; text-align: center; }
+/* Month cell: a tinted dot beside the free dot; the caption under the grid names it. */
+.vz-mcell-dots { display: flex; gap: 3px; }
+.vz-promo-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--vz-accent); }
+.vz-promo-foot { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.vz-promo-caption { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12px; color: var(--vz-text-muted); line-height: 1.4; }
+.vz-promo-caption .vz-promo-dot { width: 7px; height: 7px; }
+/* An add-on's promotion under its helper lines. */
+.vz-opt-promo { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 4px; }
+/* Promotion of the chosen rental length, under the pills. */
+.vz-pills-promo { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 8px; }
+/* Session list: the day's common value in the header, the price in .vz-price weight. */
+.vz-slot-group-promo { margin-left: -2px; letter-spacing: 0; text-transform: none; color: var(--vz-text); }
+.vz-session-note { margin: -4px 0 10px; }
+/* A worker's own promotion in a specialist card: badge + helper lines, no panel. */
+.vz-staff-promo { display: flex; flex-direction: column; gap: 4px; }
+.vz-staff-promo-text { display: flex; flex-direction: column; gap: 2px; }
+.vz-staff-promo-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.vz-staff-promo-name { font-size: 12px; font-weight: 500; color: var(--vz-text); }
 
 /* ---- FIELDS / INPUTS --------------------------------------------------- */
 .vz-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

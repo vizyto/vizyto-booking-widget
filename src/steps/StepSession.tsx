@@ -2,7 +2,7 @@ import type { GroupSession } from '../api'
 import { AvailabilityBadge } from '../ui/AvailabilityBadge'
 import { SelectCard } from '../ui/SelectCard'
 import { Clock } from '../ui/icons'
-import { PromotionalPrice } from '../ui/PromoBadge'
+import { LowestPriceLine, PromoBadge, PromoValue, commonBadge, commonValue } from '../ui/PromoBadge'
 
 /**
  * Pick a term from the timetable.
@@ -67,12 +67,24 @@ export function StepSession({
 
   return (
     <div class="vz-sessions">
-      {days.map(({ day, items }) => (
+      {days.map(({ day, items }) => {
+        // Promotion only where it discriminates: a badge every term of the day
+        // shares goes once in the day header, and so does a reference price they
+        // all share; a mixed day marks card by card. A full term is never marked.
+        const open = items.filter((s) => s.availability !== 'full')
+        const announced = open.filter((s) => s.promo?.advertised && s.promo.priorPrice != null)
+        const common = commonBadge(open.map((s) => (s.promo?.advertised ? s.promo.badge : null)))
+        const commonPrior = announced.length ? commonValue(announced.map((s) => s.promo!.priorPrice!)) : null
+        return (
         <div class="vz-slot-group" key={day}>
-          <div class="vz-slot-group-h">{dayLabel(day)}</div>
+          <div class="vz-slot-group-h">{dayLabel(day)}{common && <span class="vz-slot-group-promo">· {common}</span>}</div>
+          {commonPrior != null && <div class="vz-session-note"><LowestPriceLine price={commonPrior} /></div>}
           <div class="vz-list vz-stagger">
             {items.map((s) => {
               const full = s.availability === 'full'
+              const promo = s.promo ?? null
+              const ownBadge = !full && !common && promo?.advertised ? promo.badge : null
+              const ownPrior = !full && commonPrior == null && promo?.advertised ? promo.priorPrice : null
               return (
                 <SelectCard
                   key={s.id}
@@ -87,7 +99,13 @@ export function StepSession({
                     <>
                       <span class="vz-dur"><Clock size={14} /> {hour(s.startDate)} do {hour(s.endDate)}</span>
                       <AvailabilityBadge availability={s.availability} />
-                      {s.promo && <PromotionalPrice promo={s.promo} />}
+                      {promo && (
+                        <span class="vz-price">
+                          <PromoValue price={promo.price} priorPrice={promo.priorPrice} advertised={promo.advertised && !full} />
+                        </span>
+                      )}
+                      {ownBadge && <PromoBadge>{ownBadge}</PromoBadge>}
+                      {ownPrior != null && <LowestPriceLine price={ownPrior} />}
                     </>
                   }
                 />
@@ -95,7 +113,8 @@ export function StepSession({
             })}
           </div>
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }

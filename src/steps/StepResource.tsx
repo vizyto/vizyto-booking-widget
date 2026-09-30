@@ -148,11 +148,14 @@ export function StepResource({
                 <>
                   <span class="vz-dur"><Clock size={14} /> {formatDuration(totals.duration)}</span>
                   <span class="vz-price">{formatPrice2(totals.price)}</span>
-                  {staffPromotions.map(({ serviceName, promotion }) => (
-                    <span class="vz-staff-promo-group">
-                      {items.length > 1 && <small>{serviceName}</small>}
-                      <StaffPromotion texts={promotion.texts} priorPrice={promotion.priorPrice} />
-                    </span>
+                  {/* One entry per promoted position, named only when the card covers several. */}
+                  {staffPromotions.map(({ serviceName, promotion }, index) => (
+                    <StaffPromotion
+                      key={`${serviceName}-${index}`}
+                      texts={promotion.texts}
+                      priorPrice={promotion.priorPrice}
+                      label={items.length > 1 ? serviceName : null}
+                    />
                   ))}
                 </>
               }

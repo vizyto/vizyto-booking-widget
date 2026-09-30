@@ -166,11 +166,9 @@ export function StepService({
                    niż sama pozycja (tak samo hideMeta w kreatorze na stronie). */
                 meta={
                   entry?.hideMeta ? (
-                    <>
-                      {promotion && <PromoBadge>Zaoszczędź do {promotion.saveUpToPercent}%</PromoBadge>}
-                      {promotion && <LowestPriceLine price={promotion.priorPrice} isFrom={promotion.priorPriceIsFrom} />}
-                      {s.viewerAccess === 'locked' && <span class="vz-lock-chip"><Lock size={11} /> Dla stałych klientów</span>}
-                    </>
+                    // The price is hidden here (the recap chips carry it), so no
+                    // reduction is announced either - badge and note go with it.
+                    s.viewerAccess === 'locked' ? <span class="vz-lock-chip"><Lock size={11} /> Dla stałych klientów</span> : undefined
                   ) : (
                     <>
                       <span class="vz-dur"><Clock size={14} /> {formatDuration(s.duration)}</span>

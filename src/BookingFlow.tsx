@@ -71,6 +71,7 @@ import { Spinner } from './ui/Spinner'
 import { Powered } from './ui/Powered'
 import { ArrowLeft, ArrowRight, Close } from './ui/icons'
 import { SummaryCard, type SummaryRow } from './ui/SummaryCard'
+import type { PromoNote } from './ui/PromoBadge'
 import { AvatarStack } from './ui/AvatarStack'
 import { Button } from './ui/Button'
 import { StepService, type CartChip } from './steps/StepService'
@@ -1151,9 +1152,47 @@ export function BookingFlow({
         }),
         { label: providerRowLabel, value: providerName },
         { label: 'Termin', value: `${dayMonth(date)}, ${slotLabel(date, slotKey, business.timezone)}` },
-        ...(quote?.total != null ? [] : [{ label: 'Cena', value: priceLabel(shownPrice, showFrom), total: true }]),
+        // An advertised quote renders its own price block under the rows. Any
+        // other quote only makes the ordinary row exact: it is the price the
+        // booking sends as expectedTotal and the CTA bar already shows.
+        ...(quote?.advertised
+          ? []
+          : [{ label: 'Cena', value: quote?.total != null ? priceLabel(quote.total) : priceLabel(shownPrice, showFrom), total: true }]),
       ]
     : []
+
+  /**
+   * Reference-price lines behind the calendar's promotion badges. A badge carries
+   * no price, so the quote of the chosen slot answers first; before that, the
+   * business's promotion summary for each promoted position (a pinned worker's
+   * own promotion over the service's). Named only when there are several.
+   */
+  const appointmentPromoNotes: PromoNote[] = (() => {
+    if (quote?.advertised && quote.priorTotal != null) return [{ price: quote.priorTotal }]
+    if (!promotionSummary) return []
+    const found: Array<PromoNote & { name: string }> = []
+    for (const l of lines) {
+      const worker = lineWorker(l)
+      const own = worker != null
+        ? promotionSummary.staff.find((x) => x.resourceId === worker && x.businessServiceId === l.service.id)
+        : undefined
+      const svc = promotionSummary.services.find((x) => x.businessServiceId === l.service.id)
+      const anyStaff = worker == null ? promotionSummary.staff.filter((x) => x.businessServiceId === l.service.id) : []
+      if (own) found.push({ name: l.service.name, price: own.priorPrice })
+      else if (svc) found.push({ name: l.service.name, price: svc.priorPrice, isFrom: svc.priorPriceIsFrom })
+      else if (anyStaff.length) {
+        const prices = anyStaff.map((x) => x.priorPrice)
+        const min = Math.min(...prices)
+        found.push({ name: l.service.name, price: min, isFrom: prices.some((p) => p !== min) })
+      }
+      for (const id of l.addonIds) {
+        const addon = promotionSummary.addons.find((x) => x.addonId === id)
+        const name = addonNames(l.service, [id])[0]
+        if (addon && name) found.push({ name, price: addon.priorPrice })
+      }
+    }
+    return found.map(({ name, ...note }) => ({ ...note, label: found.length > 1 ? name : null }))
+  })()
 
   /** First numbered step of a family - used by the fork and by restart(). */
   const firstStepOf = (k: OfferingKind): SelStepId =>
@@ -1196,10 +1235,23 @@ export function BookingFlow({
           ...(rentalPick.head.rentalDeposit != null
             ? [{ label: 'Kaucja (na miejscu)', value: formatPrice2(rentalPick.head.rentalDeposit) }]
             : []),
-          ...(quote?.total == null && total != null ? [{ label: 'Kwota', value: formatPrice2(total), total: true }] : []),
+          ...(!quote?.advertised && (quote?.total ?? total) != null
+            ? [{ label: 'Kwota', value: formatPrice2((quote?.total ?? total)!), total: true }]
+            : []),
         ]
       })()
     : []
+
+  /** The rental twin of appointmentPromoNotes: the quote first, then the summary. */
+  const rentalPromoNotes: PromoNote[] = (() => {
+    if (quote?.advertised && quote.priorTotal != null) return [{ price: quote.priorTotal }]
+    if (!rentalPick || !promotionSummary) return []
+    const hit = promotionSummary.rentals.find((p) =>
+      (p.rentalTypeId != null && p.rentalTypeId === rentalPick.head.rentalTypeId)
+      || (p.resourceId != null && rentalPick.members.some((m) => m.id === p.resourceId)),
+    )
+    return hit ? [{ price: hit.priorPrice, suffix: hit.unitLabel }] : []
+  })()
 
   /**
    * Reserve a rental - the third create path, and again a sibling of book() rather
@@ -1291,7 +1343,8 @@ export function BookingFlow({
           : []),
         ...(chosenSession?.instructor?.name ? [{ label: 'Prowadzi', value: chosenSession.instructor.name }] : []),
         ...((): SummaryRow[] => {
-          if (quote?.total != null) return []
+          if (quote?.advertised) return []
+          if (quote?.total != null) return [{ label: 'Cena', value: priceLabel(quote.total), total: true }]
           const promo = chosenSession?.promo
           if (!promo) return [{ label: 'Cena', value: priceLabel(chosenSession?.priceOverride ?? classPick.service.price), total: true }]
           return [{
@@ -2311,7 +2364,7 @@ export function BookingFlow({
           : stepId === 'service' ? cartValid
             : stepId === 'provider' ? resourceValid
               : !!slotKey
-  const ctaPrice = lines.length ? (quote?.total != null ? formatPrice2(quote.total) : priceLabel(shownPrice, showFrom)) : ''
+  const ctaPrice = lines.length ? (quote?.total != null ? priceLabel(quote.total) : priceLabel(shownPrice, showFrom)) : ''
   // The time step has to show who the hours belong to - and let it be changed
   // without walking back a step. A pool cart keeps its own (single) answer.
   const showProviderChip = lines.length > 0 && !isUnit && !providerAuto && (hasResourceStep || pinnedPeople.length > 0)
@@ -2426,6 +2479,7 @@ export function BookingFlow({
               loading={rentalLoading}
               rangeOk={rentalRangeOk}
               promoBadges={rentalBadges}
+              promoNotes={rentalPromoNotes}
               quote={quote}
               onPickDate={(d) => { setBookingErr(''); setDate(d); setSlotKey('') }}
               onPickUnits={(u) => { setBookingErr(''); setRentalUnits(u); setSlotKey('') }}
@@ -2548,6 +2602,7 @@ export function BookingFlow({
             emptyReason={emptyProbe === 'others' ? 'busy' : undefined}
             onCheckAll={checkAllSpecialists}
             promoBadges={appointmentBadges}
+            promoNotes={appointmentPromoNotes}
           />
         )}
 
@@ -2638,9 +2693,13 @@ export function BookingFlow({
           (priceChanged && quote ? (
             <div class="vz-fade-in">
               <Notice title="Aktualizacja ceny" tone="plain">
-                Cena się zmieniła. Nowa cena rezerwacji: {quote.total != null ? formatPrice2(quote.total) : 'cena na miejscu'}.
+                Cena się zmieniła. Sprawdź nową cenę i potwierdź rezerwację.
               </Notice>
-              <SummaryCard rows={[]} quote={quote} />
+              {/* The new price once: the quote block when advertised, else one row. */}
+              <SummaryCard
+                rows={quote.advertised ? [] : [{ label: 'Cena', value: quote.total != null ? priceLabel(quote.total) : 'Cena na miejscu', total: true }]}
+                quote={quote}
+              />
               <button class="vz-btn mt" onClick={retryBooking} type="button">Potwierdź rezerwację</button>
             </div>
           ) : bookingErr ? (
@@ -2729,7 +2788,7 @@ export function BookingFlow({
                   <>
                     <div class="vz-cta-svc">{classPick.service.name}</div>
                     <div class="vz-cta-meta">
-                      <b>{formatPrice2(chosenSession?.promo?.price ?? classPick.service.price)}</b> · {formatDuration(classPick.service.duration)}
+                      <b>{priceLabel(chosenSession?.promo?.price ?? classPick.service.price)}</b> · {formatDuration(classPick.service.duration)}
                       {chosenSession?.instructor?.name ? ` · ${chosenSession.instructor.name}` : ''}
                     </div>
                   </>

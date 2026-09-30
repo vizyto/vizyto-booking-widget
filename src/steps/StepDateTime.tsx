@@ -6,7 +6,8 @@ import { DOW, dayNum, monthMatrix, monthOf, monthTitle, spanLabel, weekday } fro
 import { ChevronDown, ChevronLeft, ChevronRight, Calendar, Grid, Moon, Sun, Sunrise, Bell } from '../ui/icons'
 import { AvatarStack } from '../ui/AvatarStack'
 import { Spinner } from '../ui/Spinner'
-import { PromoBadge } from '../ui/PromoBadge'
+import type { PromoNote } from '../ui/PromoBadge'
+import { PromoBadge, PromoNotes, commonBadge, dayPromo } from '../ui/PromoBadge'
 
 // Day tiles flow to fill the available width: we measure the strip and show as
 // many whole tiles as fit (MIN_TILE = narrowest a tile may get), then paginate
@@ -36,6 +37,7 @@ export function StepDateTime({
   emptyReason,
   onCheckAll,
   promoBadges,
+  promoNotes = [],
 }: {
   days: string[]
   counts: DayCounts
@@ -75,7 +77,13 @@ export function StepDateTime({
   emptyReason?: 'busy'
   /** Drop every specialist pin and ask the day again. */
   onCheckAll?: () => void
+  /** Promotion badges per day and per slot key (fail-soft: null = none). */
   promoBadges?: PromoBadges | null
+  /**
+   * Reference-price lines for the cart. A badge is an announced reduction, so
+   * without its line no badge shows at all.
+   */
+  promoNotes?: PromoNote[]
 }) {
   const [view, setView] = useState<'week' | 'month'>('week')
   const [editingWho, setEditingWho] = useState(false)
@@ -146,6 +154,9 @@ export function StepDateTime({
 
   const safePage = Math.min(page, maxPage)
   const pageDays = days.slice(safePage * perPage, safePage * perPage + perPage)
+  // Promotion marks only where they discriminate (see dayPromo / commonBadge).
+  const badges = promoNotes.length ? promoBadges : null
+  const dayMarks = dayPromo(days, (d) => inHorizon.has(d) && free(d), badges?.days)
   const label =
     view === 'week'
       ? pageDays.length
@@ -192,6 +203,7 @@ export function StepDateTime({
     }
     return g.filter((x) => x.items.length)
   }, [slots, date, timezone])
+  const slotMarked = !!date && slots.some((k) => !!badges?.slots[k])
 
   return (
     <div class="vz-fade-in">
@@ -228,11 +240,11 @@ export function StepDateTime({
           {pageDays.map((d) => {
             const f = free(d)
             return (
-              <button class={`vz-day ${d === date ? 'active' : ''}${f ? '' : ' is-disabled'}`} aria-disabled={f ? undefined : 'true'} aria-current={d === date ? 'true' : undefined} onClick={() => { if (swiped.current) { swiped.current = false; return } if (f) onPickDate(d) }} type="button">
-                {promoBadges?.days[d] && <PromoBadge floating>{promoBadges.days[d]}</PromoBadge>}
+              <button class={`vz-day ${d === date ? 'active' : ''}${f ? '' : ' is-disabled'}`} aria-label={dayMarks.tile(d) ? `${weekday(d)} ${dayNum(d)}, promocja ${dayMarks.tile(d)}` : undefined} aria-disabled={f ? undefined : 'true'} aria-current={d === date ? 'true' : undefined} onClick={() => { if (swiped.current) { swiped.current = false; return } if (f) onPickDate(d) }} type="button">
                 <small>{weekday(d)}</small>
                 {dayNum(d)}
                 <span class={`vz-free${f ? '' : ' ghost'}`} />
+                {dayMarks.tile(d) && <PromoBadge>{dayMarks.tile(d)}</PromoBadge>}
               </button>
             )
           })}
@@ -245,14 +257,29 @@ export function StepDateTime({
               if (!d) return <div class="vz-mcell empty" />
               const bookable = inHorizon.has(d) && free(d)
               return (
-                <button class={`vz-mcell ${d === date ? 'active' : ''}`} disabled={!bookable} aria-current={d === date ? 'true' : undefined} onClick={() => onPickDate(d)} type="button">
-                  {promoBadges?.days[d] && <PromoBadge floating>{promoBadges.days[d]}</PromoBadge>}
+                <button class={`vz-mcell ${d === date ? 'active' : ''}`} disabled={!bookable} aria-label={dayMarks.tile(d) ? `${dayNum(d)}, promocja ${dayMarks.tile(d)}` : undefined} aria-current={d === date ? 'true' : undefined} onClick={() => onPickDate(d)} type="button">
                   {dayNum(d)}
-                  {bookable && <span class="vz-free" />}
+                  {bookable && (
+                    <span class="vz-mcell-dots">
+                      <span class="vz-free" />
+                      {dayMarks.tile(d) && <span class="vz-promo-dot" aria-hidden="true" />}
+                    </span>
+                  )}
                 </button>
               )
             })}
           </div>
+        </div>
+      )}
+
+      {(dayMarks.any || slotMarked) && (
+        <div class="vz-promo-foot">
+          {dayMarks.common ? (
+            <div class="vz-promo-caption"><PromoBadge>{dayMarks.common}</PromoBadge> w każdym dostępnym dniu</div>
+          ) : view === 'month' && dayMarks.any ? (
+            <div class="vz-promo-caption"><span class="vz-promo-dot" aria-hidden="true" /> Dzień z promocją</div>
+          ) : null}
+          <PromoNotes notes={promoNotes} />
         </div>
       )}
 
@@ -307,19 +334,32 @@ export function StepDateTime({
         </div>
       ) : (
         <>
-          {groups.map((g) => (
-            <div class="vz-slot-group">
-              <div class="vz-slot-group-h"><g.Icon size={16} /> {g.label}</div>
-              <div class="vz-slots vz-stagger">
-                {g.items.map(({ k, lab }) => (
-                  <button class={`vz-slot${k === selectedSlot ? ' selected' : ''}`} onClick={() => onPickSlot(k)} type="button">
-                    {promoBadges?.slots[k] && <PromoBadge floating>{promoBadges.slots[k]}</PromoBadge>}
-                    {lab}
-                  </button>
-                ))}
+          {groups.map((g) => {
+            // A value every slot of the section shares goes in its header; only a
+            // mixed section marks tile by tile, as a second line inside the tile.
+            const common = commonBadge(g.items.map(({ k }) => badges?.slots[k] ?? null))
+            return (
+              <div class="vz-slot-group">
+                <div class="vz-slot-group-h"><g.Icon size={16} /> {g.label}{common && <span class="vz-slot-group-promo">· {common}</span>}</div>
+                <div class="vz-slots vz-stagger">
+                  {g.items.map(({ k, lab }) => {
+                    const badge = common ? null : badges?.slots[k] ?? null
+                    return (
+                      <button
+                        class={`vz-slot${k === selectedSlot ? ' selected' : ''}`}
+                        aria-label={badge ? `${lab}, promocja ${badge}` : undefined}
+                        onClick={() => onPickSlot(k)}
+                        type="button"
+                      >
+                        {lab}
+                        {badge && <PromoBadge>{badge}</PromoBadge>}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
           {/* "Dowolny" + a picked hour: name the exact price by naming the person.
               The list is who the ENGINE reported free at that slot. */}
           {slotPicker && slotPicker.candidates.length > 1 && (
