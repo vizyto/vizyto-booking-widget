@@ -222,7 +222,7 @@ export type PublicPromotionSummary = {
 }
 export type PromoBadgesCartItem = { businessServiceId: number; resourceId?: number | null; addonIds?: number[]; durationMinutes?: number | null }
 export type PromoBadgesRequest = {
-  target: { kind: 'cart'; items: PromoBadgesCartItem[] } | { kind: 'rental'; resourceId?: number | null; rentalTypeId?: number | null }
+  target: { kind: 'cart'; items: PromoBadgesCartItem[] } | { kind: 'rental'; resourceId?: number | null; rentalTypeId?: number | null; units?: number | null }
   dates: string[]
   slots?: { date: string; times: string[] } | null
   bookedById?: number | null

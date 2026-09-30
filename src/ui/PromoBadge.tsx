@@ -43,6 +43,20 @@ export function LowestPriceLine({
   )
 }
 
+/**
+ * The 30-day note of the booking summary while the time step shows badges (#430):
+ * under the price they lead to; a picked term without the promotion keeps its own
+ * price, so the line names the marked terms first.
+ */
+export function SummaryPromoLine({ promo }: { promo: { total: number; priorTotal: number; offTerm: boolean } }) {
+  if (!promo.offTerm) return <LowestPriceLine price={promo.priorTotal} />
+  return (
+    <span class="vz-lowest-price">
+      W oznaczonych terminach od {formatPrice2(promo.total)}. Najniższa cena z 30 dni przed obniżką: {formatPrice2(promo.priorTotal)}
+    </span>
+  )
+}
+
 /** Sale-price idiom: the reference price struck and muted, then the price paid. */
 export function PromoValue({
   price,
@@ -130,19 +144,6 @@ export function StaffPromoBand({ entries }: { entries: StaffPromoEntry[] }) {
         ))}
       </span>
     </span>
-  )
-}
-
-/** One reference-price line of a step: its price, and the position when several. */
-export type PromoNote = { price: number; isFrom?: boolean; suffix?: string | null; label?: string | null }
-
-export function PromoNotes({ notes }: { notes: PromoNote[] }) {
-  return (
-    <>
-      {notes.map((n, index) => (
-        <LowestPriceLine key={`${n.label ?? ''}-${index}`} price={n.price} isFrom={n.isFrom} suffix={n.suffix} label={n.label} />
-      ))}
-    </>
   )
 }
 

@@ -279,9 +279,11 @@ export async function getPromoBadges(p: PromoBadgesRequest): Promise<PromoBadges
   if (p.slots && isPromoDay(p.slots.date)) {
     for (const time of p.slots.times) slots[time] = isPromoTime(time) ? MOCK_BADGE : null
   }
-  // A mock cart price: 20% off 50 zł, with the 30-day price of that cart.
+  // A mock price of the marked terms: 20% off 50 zł for the cart, 80 zł per rental unit.
   const marked = Object.values(days).some(Boolean) || Object.values(slots).some(Boolean)
-  return { days, slots, lowest: marked ? { total: 4000, priorTotal: 5000 } : null }
+  const units = p.target.kind === 'rental' ? p.target.units ?? 1 : 1
+  const lowest = p.target.kind === 'rental' ? { total: 6400 * units, priorTotal: 8000 * units } : { total: 4000, priorTotal: 5000 }
+  return { days, slots, lowest: marked ? lowest : null }
 }
 
 export async function quoteAppointment(p: AppointmentQuoteRequest): Promise<PriceQuote> {

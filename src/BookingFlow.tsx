@@ -71,8 +71,7 @@ import { Spinner } from './ui/Spinner'
 import { Powered } from './ui/Powered'
 import { ArrowLeft, ArrowRight, Close } from './ui/icons'
 import { SummaryCard, type SummaryRow } from './ui/SummaryCard'
-import type { PromoNote } from './ui/PromoBadge'
-import { LowestPriceLine } from './ui/PromoBadge'
+import { SummaryPromoLine } from './ui/PromoBadge'
 import { AvatarStack } from './ui/AvatarStack'
 import { Button } from './ui/Button'
 import { StepService, type CartChip } from './steps/StepService'
@@ -1017,7 +1016,8 @@ export function BookingFlow({
     const times = rentalSlots?.mode === 'slots' ? rentalSlots.slots.map((slot) => slot.start.slice(11, 16)) : []
     let cancelled = false
     getPromoBadges(cfg, {
-      target: { kind: 'rental', ...target },
+      // Priced for the chosen length: the answer's `lowest` is the summary's "od X".
+      target: { kind: 'rental', ...target, units: rentalUnits },
       dates: days,
       slots: date && times.length ? { date, times } : null,
       bookedById: auth?.userId,
@@ -1025,7 +1025,7 @@ export function BookingFlow({
       if (!cancelled) setRentalBadges(badges)
     })
     return () => { cancelled = true }
-  }, [effKind, rentalPick, date, rentalSlots, auth?.userId, auth?.token])
+  }, [effKind, rentalPick, date, rentalSlots, rentalUnits, auth?.userId, auth?.token])
 
   /**
    * Range mode has no grid to pick from, so the window itself has to be checked
@@ -1224,16 +1224,22 @@ export function BookingFlow({
       })()
     : []
 
-  /** Reference-price lines behind the rental calendar's badges: the quote first, then the summary. */
-  const rentalPromoNotes: PromoNote[] = (() => {
-    if (quote?.advertised && quote.priorTotal != null) return [{ price: quote.priorTotal }]
-    if (!rentalPick || !promotionSummary) return []
-    const hit = promotionSummary.rentals.find((p) =>
-      (p.rentalTypeId != null && p.rentalTypeId === rentalPick.head.rentalTypeId)
-      || (p.resourceId != null && rentalPick.members.some((m) => m.id === p.resourceId)),
-    )
-    return hit ? [{ price: hit.priorPrice, suffix: hit.unitLabel }] : []
-  })()
+  /**
+   * The rental time step's promotion in the booking summary (#430, DESIGN.md §3.5):
+   * the badges answer's lowest marked price of this length with its 30-day price,
+   * the chosen term's quote once picked; a term without the promotion keeps its own
+   * price and the summary names the promotion beside it.
+   */
+  // An hour grid needs its hour; a range term is the day itself.
+  const rentalTermChosen = !!rentalPick && (rentalSlots?.mode !== 'slots' || !!slotKey)
+    && !!rentalWindow(rentalPick, date, rentalUnits, slotKey)
+  const rentalPicked = rentalTermChosen && quote?.advertised && quote.total != null && quote.priorTotal != null
+    ? { total: quote.total, priorTotal: quote.priorTotal }
+    : null
+  const rentalMarked = rentalBadges?.lowest ?? null
+  const rentalSummaryPromo = effKind === 'rental' && stepId === 'rentalTime' && (rentalPicked ?? rentalMarked)
+    ? { ...(rentalPicked ?? rentalMarked)!, isFrom: !rentalPicked, offTerm: !rentalPicked && rentalTermChosen }
+    : null
 
   /**
    * Reserve a rental - the third create path, and again a sibling of book() rather
@@ -2461,7 +2467,6 @@ export function BookingFlow({
               loading={rentalLoading}
               rangeOk={rentalRangeOk}
               promoBadges={rentalBadges}
-              promoNotes={rentalPromoNotes}
               quote={quote}
               onPickDate={(d) => { setBookingErr(''); setDate(d); setSlotKey('') }}
               onPickUnits={(u) => { setBookingErr(''); setRentalUnits(u); setSlotKey('') }}
@@ -2756,11 +2761,15 @@ export function BookingFlow({
                     </div>
                     <div class="vz-cta-meta">
                       {(() => {
+                        if (rentalSummaryPromo && !rentalSummaryPromo.offTerm) {
+                          return <b>{rentalSummaryPromo.isFrom ? 'od ' : ''}{formatPrice2(rentalSummaryPromo.total)}</b>
+                        }
                         const t = quote?.total ?? rentalPrice(rentalPick.head, rentalUnits)
                         return t != null ? <b>{formatPrice2(t)}</b> : null
                       })()}
                       {' '}· {rentalUnitsLabel(rentalUnits, rentalPick.head.rentalUnit ?? 'hour')}
                     </div>
+                    {rentalSummaryPromo && <SummaryPromoLine promo={rentalSummaryPromo} />}
                   </>
                 ) : (
                   <div class="vz-cta-meta">{stepId === 'offering' ? 'Wybierz, co chcesz zarezerwować' : 'Wybierz przedmiot, aby kontynuować'}</div>
@@ -2783,15 +2792,7 @@ export function BookingFlow({
                   <div class="vz-cta-meta">
                     <b>{summaryPromo && !summaryPromo.offTerm ? `${summaryPromo.isFrom ? 'od ' : ''}${formatPrice2(summaryPromo.total)}` : ctaPrice}</b> · {positionsLabel(lines.length)} · {formatDuration(shownDuration)}
                   </div>
-                  {summaryPromo && (
-                    summaryPromo.offTerm ? (
-                      <span class="vz-lowest-price">
-                        W oznaczonych terminach od {formatPrice2(summaryPromo.total)}. Najniższa cena z 30 dni przed obniżką: {formatPrice2(summaryPromo.priorTotal)}
-                      </span>
-                    ) : (
-                      <LowestPriceLine price={summaryPromo.priorTotal} />
-                    )
-                  )}
+                  {summaryPromo && <SummaryPromoLine promo={summaryPromo} />}
                   {lines.length === 1 && serviceHasOptions(lines[0]!.service) && (
                     <div class="vz-cta-cfg">
                       <button class="vz-link" onClick={() => setConfiguringId(lines[0]!.service.id)} type="button">Zmień wariant / dodatki</button>

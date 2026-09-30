@@ -5,8 +5,7 @@ import { Spinner } from '../ui/Spinner'
 import { Notice } from '../ui/Notice'
 import { SummaryCard } from '../ui/SummaryCard'
 import { Calendar, Clock, Users } from '../ui/icons'
-import type { PromoNote } from '../ui/PromoBadge'
-import { LowestPriceLine, PromoBadge, PromoNotes, dayPromo } from '../ui/PromoBadge'
+import { LowestPriceLine, PromoBadge, dayPromo } from '../ui/PromoBadge'
 
 /**
  * "Kiedy" for a rental, in the two shapes the billing unit forces:
@@ -38,7 +37,6 @@ export function StepRentalTime({
   onPickSlot,
   promoBadges,
   quote,
-  promoNotes = [],
 }: {
   head: Resource
   pooled: boolean
@@ -57,10 +55,12 @@ export function StepRentalTime({
   onPickPartySize: (n: number) => void
   selectedSlot: string
   onPickSlot: (localKey: string) => void
+  /**
+   * A badge is an announced reduction: it shows only with the answer's `lowest`
+   * (this length's price and its 30-day price), which the booking summary carries.
+   */
   promoBadges?: PromoBadges | null
   quote?: PriceQuote | null
-  /** Reference-price lines; without them no badge shows (an announced reduction needs one). */
-  promoNotes?: PromoNote[]
 }) {
   const unit: RentalUnit = head.rentalUnit ?? 'hour'
   const isRange = slots?.mode === 'range'
@@ -74,12 +74,12 @@ export function StepRentalTime({
   const lengthPromo = selectedSlotPromo?.advertised && selectedSlotPromo.priorPrice != null ? selectedSlotPromo : null
 
   const free = (d: string) => (counts[d] ?? 0) > 0
-  const badges = promoNotes.length ? promoBadges : null
+  const badges = promoBadges?.lowest ? promoBadges : null
   const dayMarks = dayPromo(days, free, badges?.days)
   const slotBadge = (sl: { start: string; promo?: { advertised: boolean; badge: string | null } | null }): string | null =>
     (sl.promo?.advertised && sl.promo.badge ? sl.promo.badge : badges?.slots[sl.start.slice(11, 16)] ?? null)
   // Every promoted day and hour carries its corner badge (owner's mockup, #430).
-  const slotBadges = slots?.mode === 'slots' && promoNotes.length ? slots.slots.map(slotBadge) : []
+  const slotBadges = slots?.mode === 'slots' && badges ? slots.slots.map(slotBadge) : []
   const slotMarked = slotBadges.some(Boolean)
   const returnDate = (() => {
     if (!date) return null
@@ -168,12 +168,7 @@ export function StepRentalTime({
           )
         })}
       </div>
-      {/* One reference-price line on the step: the chosen length already carries it. */}
-      {(dayMarks.any || slotMarked) && !lengthPromo && (
-        <div class="vz-promo-foot">
-          <PromoNotes notes={promoNotes} />
-        </div>
-      )}
+      {/* The 30-day note of the marks sits in the booking summary, next to the price (#430). */}
 
       {loading ? (
         <div class="vz-center"><Spinner /></div>
