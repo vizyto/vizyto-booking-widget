@@ -18,6 +18,14 @@ import type {
   LoginResult,
   OtpSendResult,
   OtpVerifyResult,
+  AppointmentQuoteRequest,
+  PriceQuote,
+  PriceQuoteLine,
+  PromoBadges,
+  PromoBadgesRequest,
+  PromoPriceFields,
+  PublicPromotionSummary,
+  RentalQuoteRequest,
   ServiceCategory,
   Slots,
   WaitlistCheck,
@@ -27,6 +35,27 @@ import type {
 } from './api'
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+const MOCK_BADGE = '-20%'
+const isPromoDay = (date: string) => new Date(`${date.slice(0, 10)}T00:00:00Z`).getUTCDay() === 3
+const isPromoTime = (time: string) => time.slice(0, 5) >= '12:00' && time.slice(0, 5) < '15:00'
+const promoFields = (listPrice: number): PromoPriceFields => ({
+  price: Math.round(listPrice * 0.8),
+  listPrice,
+  priorPrice: listPrice,
+  advertised: true,
+  badge: MOCK_BADGE,
+})
+
+const quoteOf = (lines: PriceQuoteLine[]): PriceQuote => {
+  const total = lines.every((line) => line.price != null) ? lines.reduce((sum, line) => sum + (line.price ?? 0) * line.quantity, 0) : null
+  const listTotal = lines.every((line) => line.listPrice != null) ? lines.reduce((sum, line) => sum + (line.listPrice ?? 0) * line.quantity, 0) : null
+  const advertised = lines.some((line) => line.advertised)
+  const priorTotal = advertised && lines.every((line) => line.price != null)
+    ? lines.reduce((sum, line) => sum + (line.advertised ? (line.priorPrice ?? line.price ?? 0) : (line.price ?? 0)) * line.quantity, 0)
+    : null
+  return { lines, total, listTotal, priorTotal, advertised, badge: advertised ? MOCK_BADGE : null, assignedResourceId: null }
+}
 
 // Inline gradient thumbnail (data URI) so the service photo renders in mock mode
 // without a network fetch. Real businesses serve gallery images over the CDN.
@@ -223,6 +252,80 @@ export async function fetchBusiness(): Promise<Business> {
   return BUSINESS
 }
 
+export async function getPromotionSummary(_bookedById?: number | null): Promise<PublicPromotionSummary> {
+  await wait(120)
+  return {
+    maxSavePercent: 20,
+    services: [{ businessServiceId: 1, saveUpToPercent: 20, priorPrice: 5000, priorPriceIsFrom: true }],
+    addons: [{ addonId: 101, saveUpToPercent: 20, priorPrice: 1500 }],
+    staff: [{
+      resourceId: 11,
+      businessServiceId: 1,
+      texts: [{ amount: MOCK_BADGE, rest: 'w środę 12:00-15:00', note: 'Promocja przy wyborze Marka' }],
+      priorPrice: 5000,
+    }],
+    groupClasses: [{ groupClassId: 42, saveUpToPercent: 20, priorPrice: 5500 }],
+    enrollmentOptions: [],
+    rentals: [{ rentalTypeId: 7, resourceId: null, saveUpToPercent: 20, priorPrice: 8000, unitLabel: '/ godz.' }],
+  }
+}
+
+export async function getPromoBadges(p: PromoBadgesRequest): Promise<PromoBadges> {
+  await wait(100)
+  const days: Record<string, string | null> = {}
+  const slots: Record<string, string | null> = {}
+  for (const date of p.dates) days[date] = isPromoDay(date) ? MOCK_BADGE : null
+  if (p.slots && isPromoDay(p.slots.date)) {
+    for (const time of p.slots.times) slots[time] = isPromoTime(time) ? MOCK_BADGE : null
+  }
+  return { days, slots }
+}
+
+export async function quoteAppointment(p: AppointmentQuoteRequest): Promise<PriceQuote> {
+  await wait(150)
+  const promoted = isPromoDay(p.startDate) && isPromoTime(p.startDate.slice(11, 16))
+  const lines: PriceQuoteLine[] = []
+  for (const item of p.items) {
+    const service = BUSINESS.services.find((s) => s.id === item.businessServiceId)
+    if (!service) continue
+    const variant = service.durationOptions?.find((o) => o.durationMinutes === item.durationMinutes)
+    const listPrice = variant?.priceCents ?? service.price
+    const promo = promoted && service.id === 1 ? promoFields(listPrice) : null
+    lines.push({
+      kind: 'service', name: service.name, quantity: 1, listPrice,
+      price: promo?.price ?? listPrice, promotionId: promo ? 1 : null,
+      priorPrice: promo?.priorPrice ?? null, advertised: promo?.advertised ?? false, badge: promo?.badge ?? null,
+    })
+    for (const addon of (service.addonGroups ?? []).flatMap((g) => g.addons).filter((a) => (item.addonIds ?? []).includes(a.id))) {
+      const addonPromo = promoted && addon.id === 101 ? promoFields(addon.price) : null
+      lines.push({
+        kind: 'addon', name: addon.name, quantity: 1, listPrice: addon.price,
+        price: addonPromo?.price ?? addon.price, promotionId: addonPromo ? 1 : null,
+        priorPrice: addonPromo?.priorPrice ?? null, advertised: addonPromo?.advertised ?? false, badge: addonPromo?.badge ?? null,
+      })
+    }
+  }
+  return quoteOf(lines)
+}
+
+export async function quoteRental(p: RentalQuoteRequest): Promise<PriceQuote> {
+  await wait(150)
+  const resource = BUSINESS.resources.find((r) =>
+    p.resourceId != null ? r.id === p.resourceId : r.rentalTypeId === p.rentalTypeId,
+  )
+  const unitMs = { minute: 60_000, hour: 3_600_000, day: 86_400_000, week: 7 * 86_400_000, month: 30 * 86_400_000 }[resource?.rentalUnit ?? 'hour']
+  const units = Math.max(1, Math.round((new Date(p.endDate).getTime() - new Date(p.startDate).getTime()) / unitMs))
+  const tier = (resource?.pricingTiers ?? []).find((x) => units >= x.minUnits && (x.maxUnits == null || units <= x.maxUnits))
+  const listPrice = (tier?.unitPrice ?? resource?.rentalRate ?? 0) * units
+  const promoted = isPromoDay(p.startDate) && isPromoTime(p.startDate.slice(11, 16))
+  const promo = promoted ? promoFields(listPrice) : null
+  return quoteOf([{
+    kind: 'rental', name: resource?.rentalTypeName ?? resource?.name ?? 'Wynajem', quantity: 1, listPrice,
+    price: promo?.price ?? listPrice, promotionId: promo ? 1 : null,
+    priorPrice: promo?.priorPrice ?? null, advertised: promo?.advertised ?? false, badge: promo?.badge ?? null,
+  }])
+}
+
 export async function getServiceCategories(): Promise<ServiceCategory[]> {
   await wait(120)
   return [
@@ -390,7 +493,7 @@ export async function oauthLogin(provider: string): Promise<LoginResult> {
 }
 
 export async function createAppointment(
-  p: { startDate: string },
+  p: { startDate: string; expectedTotal?: number | null },
   token: string | null,
 ): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
   await wait(600)
@@ -427,19 +530,22 @@ export async function fetchTimetable(): Promise<GroupSession[]> {
     return d.toISOString().slice(0, 10)
   }
   const at = (offset: number, hhmm: string) => `${day(offset)}T${hhmm}:00.000Z`
+  const todayDow = new Date().getDay()
+  const nextWednesday = ((3 - todayDow + 7) % 7) || 7
   return [
     { id: 921, availability: 'available', groupClassId: 45, startDate: at(1, '14:00'), endDate: at(1, '15:00'), dateLocal: day(1), status: 'scheduled', capacity: 12, priceOverride: null, attendeeCount: 0 },
-    { id: 901, availability: 'available', groupClassId: 41, startDate: at(1, '16:00'), endDate: at(1, '17:00'), dateLocal: day(1), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 11, name: 'Marek', image: null }, attendeeCount: 3 },
-    { id: 902, availability: 'last_spots', groupClassId: 41, startDate: at(2, '16:00'), endDate: at(2, '17:00'), dateLocal: day(2), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 11, name: 'Marek', image: null }, attendeeCount: 11 },
+    { id: 901, availability: 'available', groupClassId: 41, startDate: at(1, '16:00'), endDate: at(1, '17:00'), dateLocal: day(1), status: 'scheduled', capacity: 12, priceOverride: null, promo: isPromoDay(day(1)) ? promoFields(5000) : null, instructor: { id: 11, name: 'Marek', image: null }, attendeeCount: 3 },
+    { id: 902, availability: 'last_spots', groupClassId: 41, startDate: at(2, '14:00'), endDate: at(2, '15:00'), dateLocal: day(2), status: 'scheduled', capacity: 12, priceOverride: null, promo: isPromoDay(day(2)) ? promoFields(5000) : null, instructor: { id: 11, name: 'Marek', image: null }, attendeeCount: 11 },
     { id: 903, availability: 'full', groupClassId: 41, startDate: at(3, '16:00'), endDate: at(3, '17:00'), dateLocal: day(3), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 13, name: 'Ola', image: null }, attendeeCount: 12 },
     { id: 911, availability: 'last_spots', groupClassId: 42, startDate: at(1, '18:30'), endDate: at(1, '20:00'), dateLocal: day(1), status: 'scheduled', capacity: 8, priceOverride: null, instructor: { id: 12, name: 'Kuba', image: null }, attendeeCount: 6 },
     { id: 912, availability: 'available', groupClassId: 42, startDate: at(4, '18:30'), endDate: at(4, '20:00'), dateLocal: day(4), status: 'scheduled', capacity: 8, priceOverride: 4000, instructor: { id: 12, name: 'Kuba', image: null }, attendeeCount: 0 },
+    { id: 913, availability: 'available', groupClassId: 42, startDate: at(nextWednesday, '14:00'), endDate: at(nextWednesday, '15:30'), dateLocal: day(nextWednesday), status: 'scheduled', capacity: 8, priceOverride: null, promo: promoFields(5500), instructor: { id: 12, name: 'Kuba', image: null }, attendeeCount: 1 },
   ]
 }
 
 /** Session 903 is full in the timetable above - reject it the way the server does. */
 export async function registerForSession(
-  p: { sessionId: number },
+  p: { sessionId: number; expectedTotal?: number | null },
   token: string | null,
 ): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
   await wait(600)
@@ -480,6 +586,7 @@ export async function getRentalDaySlots(p: { resourceId?: number; rentalTypeId?:
     start: `${p.date}T${hh}:00.000Z`,
     local: hh,
     resourceIds: [21, 22],
+    promo: isPromoDay(p.date) && isPromoTime(hh) ? promoFields(8000) : null,
   }))
   return { mode: 'slots', unit: 'hour', minUnits: 1, stepMinutes: 60, durationMinutes: 60, slots }
 }
@@ -491,7 +598,7 @@ export async function checkRentalRange(p: { startDate: string }): Promise<boolea
 }
 
 export async function createRental(
-  p: { startDate: string },
+  p: { startDate: string; expectedTotal?: number | null },
   token: string | null,
 ): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
   await wait(600)

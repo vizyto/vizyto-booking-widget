@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { VNode } from 'preact'
-import type { DayCounts, Slots } from '../api'
+import type { DayCounts, PromoBadges, Slots } from '../api'
 import { slotLabel } from '../api'
 import { DOW, dayNum, monthMatrix, monthOf, monthTitle, spanLabel, weekday } from '../dates'
 import { ChevronDown, ChevronLeft, ChevronRight, Calendar, Grid, Moon, Sun, Sunrise, Bell } from '../ui/icons'
 import { AvatarStack } from '../ui/AvatarStack'
 import { Spinner } from '../ui/Spinner'
+import { PromoBadge } from '../ui/PromoBadge'
 
 // Day tiles flow to fill the available width: we measure the strip and show as
 // many whole tiles as fit (MIN_TILE = narrowest a tile may get), then paginate
@@ -34,6 +35,7 @@ export function StepDateTime({
   providerChip,
   emptyReason,
   onCheckAll,
+  promoBadges,
 }: {
   days: string[]
   counts: DayCounts
@@ -73,6 +75,7 @@ export function StepDateTime({
   emptyReason?: 'busy'
   /** Drop every specialist pin and ask the day again. */
   onCheckAll?: () => void
+  promoBadges?: PromoBadges | null
 }) {
   const [view, setView] = useState<'week' | 'month'>('week')
   const [editingWho, setEditingWho] = useState(false)
@@ -226,6 +229,7 @@ export function StepDateTime({
             const f = free(d)
             return (
               <button class={`vz-day ${d === date ? 'active' : ''}${f ? '' : ' is-disabled'}`} aria-disabled={f ? undefined : 'true'} aria-current={d === date ? 'true' : undefined} onClick={() => { if (swiped.current) { swiped.current = false; return } if (f) onPickDate(d) }} type="button">
+                {promoBadges?.days[d] && <PromoBadge floating>{promoBadges.days[d]}</PromoBadge>}
                 <small>{weekday(d)}</small>
                 {dayNum(d)}
                 <span class={`vz-free${f ? '' : ' ghost'}`} />
@@ -242,6 +246,7 @@ export function StepDateTime({
               const bookable = inHorizon.has(d) && free(d)
               return (
                 <button class={`vz-mcell ${d === date ? 'active' : ''}`} disabled={!bookable} aria-current={d === date ? 'true' : undefined} onClick={() => onPickDate(d)} type="button">
+                  {promoBadges?.days[d] && <PromoBadge floating>{promoBadges.days[d]}</PromoBadge>}
                   {dayNum(d)}
                   {bookable && <span class="vz-free" />}
                 </button>
@@ -307,7 +312,10 @@ export function StepDateTime({
               <div class="vz-slot-group-h"><g.Icon size={16} /> {g.label}</div>
               <div class="vz-slots vz-stagger">
                 {g.items.map(({ k, lab }) => (
-                  <button class={`vz-slot${k === selectedSlot ? ' selected' : ''}`} onClick={() => onPickSlot(k)} type="button">{lab}</button>
+                  <button class={`vz-slot${k === selectedSlot ? ' selected' : ''}`} onClick={() => onPickSlot(k)} type="button">
+                    {promoBadges?.slots[k] && <PromoBadge floating>{promoBadges.slots[k]}</PromoBadge>}
+                    {lab}
+                  </button>
                 ))}
               </div>
             </div>

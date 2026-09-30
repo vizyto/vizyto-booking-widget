@@ -1,9 +1,10 @@
 import { useState } from 'preact/hooks'
-import type { Resource, Service } from '../api'
+import type { PublicPromotionSummary, Resource, Service } from '../api'
 import { configuredTotals, formatDuration, formatPrice2 } from '../api'
 import { getResourcesForService, getStaffItems } from '../providerMode'
 import { SelectCard } from '../ui/SelectCard'
 import { ChevronDown, Shuffle } from '../ui/icons'
+import { StaffPromotion } from '../ui/PromoBadge'
 
 export type AssignItem = {
   service: Service
@@ -24,11 +25,13 @@ export function ItemProviders({
   items,
   workers,
   onPick,
+  promotionSummary,
 }: {
   items: AssignItem[]
   /** Every bookable worker - the per-service candidates are filtered from these. */
   workers: Resource[]
   onPick: (serviceId: number, resourceId: number | null) => void
+  promotionSummary?: PublicPromotionSummary | null
 }) {
   const [openId, setOpenId] = useState<number | null>(null)
   const staffItems = getStaffItems(items)
@@ -73,23 +76,30 @@ export function ItemProviders({
                     setOpenId(null)
                   }}
                 />
-                {candidates.map((c) => (
-                  <SelectCard
-                    avatar={c.image ? <img src={c.image} alt="" /> : c.name.charAt(0)}
-                    title={c.name}
-                    sub={c.position || undefined}
-                    meta={
-                      <span class="vz-price">
-                        {formatPrice2(configuredTotals(it.service, it.variantDuration, it.addonIds, c.id).price)}
-                      </span>
-                    }
-                    selected={it.resourceId === c.id}
-                    onSelect={() => {
-                      onPick(it.service.id, c.id)
-                      setOpenId(null)
-                    }}
-                  />
-                ))}
+                {candidates.map((c) => {
+                  const promotion = promotionSummary?.staff.find((x) => x.resourceId === c.id && x.businessServiceId === it.service.id)
+                  return (
+                    <SelectCard
+                      key={c.id}
+                      avatar={c.image ? <img src={c.image} alt="" /> : c.name.charAt(0)}
+                      title={c.name}
+                      sub={c.position || undefined}
+                      meta={
+                        <>
+                          <span class="vz-price">
+                            {formatPrice2(configuredTotals(it.service, it.variantDuration, it.addonIds, c.id).price)}
+                          </span>
+                          {promotion && <StaffPromotion texts={promotion.texts} priorPrice={promotion.priorPrice} />}
+                        </>
+                      }
+                      selected={it.resourceId === c.id}
+                      onSelect={() => {
+                        onPick(it.service.id, c.id)
+                        setOpenId(null)
+                      }}
+                    />
+                  )
+                })}
               </div>
             )}
           </div>

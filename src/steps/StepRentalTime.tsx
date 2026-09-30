@@ -1,10 +1,11 @@
-import type { RentalDaySlots, RentalUnit, Resource } from '../api'
+import type { PriceQuote, PromoBadges, RentalDaySlots, RentalUnit, Resource } from '../api'
 import { formatPrice2, rentalPrice, rentalUnitsLabel } from '../api'
 import { dayNum, weekday } from '../dates'
 import { Spinner } from '../ui/Spinner'
 import { Notice } from '../ui/Notice'
 import { SummaryCard } from '../ui/SummaryCard'
 import { Calendar, Clock, Users } from '../ui/icons'
+import { PromoBadge, PromotionalPrice } from '../ui/PromoBadge'
 
 /**
  * "Kiedy" for a rental, in the two shapes the billing unit forces:
@@ -34,6 +35,8 @@ export function StepRentalTime({
   onPickPartySize,
   selectedSlot,
   onPickSlot,
+  promoBadges,
+  quote,
 }: {
   head: Resource
   pooled: boolean
@@ -52,11 +55,16 @@ export function StepRentalTime({
   onPickPartySize: (n: number) => void
   selectedSlot: string
   onPickSlot: (localKey: string) => void
+  promoBadges?: PromoBadges | null
+  quote?: PriceQuote | null
 }) {
   const unit: RentalUnit = head.rentalUnit ?? 'hour'
   const isRange = slots?.mode === 'range'
   const maxParty = head.rentalMaxPartySize ?? null
   const total = rentalPrice(head, units)
+  const selectedSlotPromo = slots?.mode === 'slots'
+    ? slots.slots.find((slot) => slot.local === selectedSlot)?.promo ?? null
+    : null
 
   const free = (d: string) => (counts[d] ?? 0) > 0
   const returnDate = (() => {
@@ -108,7 +116,9 @@ export function StepRentalTime({
                 type="button"
               >
                 {rentalUnitsLabel(u, unit)}
-                {p != null && <small> · {formatPrice2(p)}</small>}
+                {selectedSlotPromo && u === units
+                  ? <PromotionalPrice promo={selectedSlotPromo} />
+                  : p != null && <small> · {formatPrice2(p)}</small>}
               </button>
             )
           })}
@@ -129,6 +139,7 @@ export function StepRentalTime({
               onClick={() => { if (f) onPickDate(d) }}
               type="button"
             >
+              {promoBadges?.days[d] && <PromoBadge floating>{promoBadges.days[d]}</PromoBadge>}
               <small>{weekday(d)}</small>
               {dayNum(d)}
               <span class={`vz-free${f ? '' : ' ghost'}`} />
@@ -151,8 +162,9 @@ export function StepRentalTime({
               { label: 'Zwrot', value: returnDate ?? '-' },
               { label: 'Czas', value: rentalUnitsLabel(units, unit) },
               ...(head.rentalDeposit != null ? [{ label: 'Kaucja', value: formatPrice2(head.rentalDeposit) }] : []),
-              ...(total != null ? [{ label: 'Kwota', value: formatPrice2(total), total: true }] : []),
+              ...(quote?.total == null && total != null ? [{ label: 'Kwota', value: formatPrice2(total), total: true }] : []),
             ]}
+            quote={quote}
           />
           {head.rentalDeposit != null && (
             <div class="vz-muted" style="margin-top:8px;">Kaucja rozliczana na miejscu przy odbiorze.</div>
@@ -173,6 +185,13 @@ export function StepRentalTime({
                 aria-pressed={sl.local === selectedSlot ? 'true' : 'false'}
                 type="button"
               >
+                {(sl.promo?.advertised && sl.promo.badge
+                  ? sl.promo.badge
+                  : promoBadges?.slots[sl.start.slice(11, 16)]) && (
+                  <PromoBadge floating>
+                    {sl.promo?.advertised && sl.promo.badge ? sl.promo.badge : promoBadges?.slots[sl.start.slice(11, 16)]}
+                  </PromoBadge>
+                )}
                 {sl.local}
               </button>
             ))}

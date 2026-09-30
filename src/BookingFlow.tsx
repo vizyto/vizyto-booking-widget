@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import type { Business, CartItem, CartItemTime, Cfg, DayCounts, GroupClass, GroupSession, OAuthProvider, OtpMode, RentalDaySlots, Resource, Service, ServiceCategory, Slots } from './api'
+import type { Business, CartItem, CartItemTime, Cfg, DayCounts, GroupClass, GroupSession, OAuthProvider, OtpMode, PriceQuote, PromoBadges, PublicPromotionSummary, RentalDaySlots, Resource, Service, ServiceCategory, Slots } from './api'
 import {
   addonNames,
   addonTotals,
@@ -22,12 +22,16 @@ import {
   getCartCounts,
   getCartFirstFree,
   getCartSlots,
+  getPromoBadges,
+  getPromotionSummary,
   getServiceCategories,
   joinWaitlist,
   loginEmail,
   maskPhone,
   oauthLogin,
   priceRange,
+  quoteAppointment,
+  quoteRental,
   isRangeUnit,
   registerForSession,
   rentalPrice,
@@ -591,6 +595,10 @@ export function BookingFlow({
 
   // Service categories (optional grouping) fetched from a separate public endpoint.
   const [categories, setCategories] = useState<ServiceCategory[]>([])
+  const [promotionSummary, setPromotionSummary] = useState<PublicPromotionSummary | null>(null)
+  const [appointmentBadges, setAppointmentBadges] = useState<PromoBadges | null>(null)
+  const [rentalBadges, setRentalBadges] = useState<PromoBadges | null>(null)
+  const [quote, setQuote] = useState<PriceQuote | null>(null)
 
   // ---- whitelist gate (bookingAccess) ----
   // accessOk = the viewer is confirmed allowed to book at business level.
@@ -630,6 +638,7 @@ export function BookingFlow({
   const [loginErr, setLoginErr] = useState('')
   const [loginReason, setLoginReason] = useState('')
   const [bookingErr, setBookingErr] = useState('')
+  const [priceChanged, setPriceChanged] = useState(false)
   const booking = useRef(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const probedFor = useRef('')
@@ -687,6 +696,7 @@ export function BookingFlow({
   const cartKey = lines
     .map((l) => `${l.service.id}:${l.variantDuration ?? ''}:${l.addonIds.slice().sort((a, b) => a - b).join('.')}`)
     .join('|')
+  const quoteResourceKey = lines.map((l) => itemResourceId(l) ?? 'any').join(',')
   const days = useMemo(() => nextDays(HORIZON), [])
   // The cart-wide provider (worker or pool unit); undefined for "Bez preferencji",
   // per-position mode and auto.
@@ -723,6 +733,16 @@ export function BookingFlow({
       cancelled = true
     }
   }, [])
+
+  // One anonymous summary after the business loads, then a personalized refresh
+  // after login. Failure deliberately clears all promotion decoration.
+  useEffect(() => {
+    let cancelled = false
+    getPromotionSummary(cfg, auth?.userId, auth?.token).then((summary) => {
+      if (!cancelled) setPromotionSummary(summary)
+    })
+    return () => { cancelled = true }
+  }, [auth?.userId, auth?.token])
 
   // bookedById resolves the whitelist gate for the logged-in user (anonymously
   // a restricted business 403s), so both queries re-run after authentication.
@@ -777,6 +797,23 @@ export function BookingFlow({
       cancelled = true
     }
   }, [cartKey, availabilityResourceKey, date, refetch, auth?.userId])
+
+  useEffect(() => {
+    if (effKind !== 'service' || !lines.length) {
+      setAppointmentBadges(null)
+      return
+    }
+    let cancelled = false
+    getPromoBadges(cfg, {
+      target: { kind: 'cart', items: buildCartItems({ forAvailability: true }) },
+      dates: days,
+      slots: date ? { date, times: slots } : null,
+      bookedById: auth?.userId,
+    }, auth?.token).then((badges) => {
+      if (!cancelled) setAppointmentBadges(badges)
+    })
+    return () => { cancelled = true }
+  }, [effKind, cartKey, availabilityResourceKey, date, slots.join('|'), auth?.userId, auth?.token])
 
   // An empty day with somebody pinned has TWO possible causes, and they lead to
   // different ways out. The same cart asked once more with nobody pinned tells
@@ -969,6 +1006,25 @@ export function BookingFlow({
     return () => { cancelled = true }
   }, [effKind, rentalPick, date, rentalUnits, rentalParty, refetch])
 
+  useEffect(() => {
+    if (effKind !== 'rental' || !rentalPick) {
+      setRentalBadges(null)
+      return
+    }
+    const target = rentalTarget(rentalPick)
+    const times = rentalSlots?.mode === 'slots' ? rentalSlots.slots.map((slot) => slot.start.slice(11, 16)) : []
+    let cancelled = false
+    getPromoBadges(cfg, {
+      target: { kind: 'rental', ...target },
+      dates: days,
+      slots: date && times.length ? { date, times } : null,
+      bookedById: auth?.userId,
+    }, auth?.token).then((badges) => {
+      if (!cancelled) setRentalBadges(badges)
+    })
+    return () => { cancelled = true }
+  }, [effKind, rentalPick, date, rentalSlots, auth?.userId, auth?.token])
+
   /**
    * Range mode has no grid to pick from, so the window itself has to be checked
    * before the CTA unlocks - otherwise "Dalej" would walk the customer through
@@ -986,6 +1042,34 @@ export function BookingFlow({
     })
     return () => { cancelled = true }
   }, [effKind, rentalPick, date, rentalUnits, rentalSlots?.mode, refetch])
+
+  // The chosen start is the first moment the server can own the complete price.
+  // Every input that can change it invalidates the old answer; route failures
+  // simply leave quote null, preserving the legacy local-price flow.
+  useEffect(() => {
+    let cancelled = false
+    setQuote(null)
+    setPriceChanged(false)
+    if (effKind === 'service' && lines.length && date && slotKey) {
+      quoteAppointment(cfg, {
+        items: buildCartItems(),
+        startDate: slotStartDate(date, slotKey),
+        bookedById: auth?.userId,
+      }, auth?.token).then((next) => { if (!cancelled) setQuote(next) })
+    } else if (effKind === 'rental' && rentalPick && date) {
+      const ready = rentalSlots?.mode === 'range' ? rentalRangeOk === true : !!slotKey
+      const win = ready ? rentalWindow(rentalPick, date, rentalUnits, slotKey) : null
+      if (win) {
+        quoteRental(cfg, {
+          ...rentalTarget(rentalPick),
+          ...win,
+          partySize: rentalPick.head.rentalMaxPartySize != null ? rentalParty : null,
+          bookedById: auth?.userId,
+        }, auth?.token).then((next) => { if (!cancelled) setQuote(next) })
+      }
+    }
+    return () => { cancelled = true }
+  }, [effKind, cartKey, quoteResourceKey, date, slotKey, rentalPick ? rentalOptionKey(rentalPick) : '', rentalUnits, rentalParty, rentalSlots?.mode, rentalRangeOk, auth?.userId, auth?.token])
 
   /**
    * Clamp when the step on screen stops existing.
@@ -1067,7 +1151,7 @@ export function BookingFlow({
         }),
         { label: providerRowLabel, value: providerName },
         { label: 'Termin', value: `${dayMonth(date)}, ${slotLabel(date, slotKey, business.timezone)}` },
-        { label: 'Cena', value: priceLabel(shownPrice, showFrom), total: true },
+        ...(quote?.total != null ? [] : [{ label: 'Cena', value: priceLabel(shownPrice, showFrom), total: true }]),
       ]
     : []
 
@@ -1112,7 +1196,7 @@ export function BookingFlow({
           ...(rentalPick.head.rentalDeposit != null
             ? [{ label: 'Kaucja (na miejscu)', value: formatPrice2(rentalPick.head.rentalDeposit) }]
             : []),
-          ...(total != null ? [{ label: 'Kwota', value: formatPrice2(total), total: true }] : []),
+          ...(quote?.total == null && total != null ? [{ label: 'Kwota', value: formatPrice2(total), total: true }] : []),
         ]
       })()
     : []
@@ -1122,12 +1206,13 @@ export function BookingFlow({
    * than a branch inside it. A rental has no chain, no slot to lose in the visit
    * sense, and its own refusal vocabulary; what it shares is the envelope.
    */
-  async function reserveRental(a: Auth) {
+  async function reserveRental(a: Auth, pricing: PriceQuote | null = quote) {
     if (!rentalPick || booking.current) return
     const win = rentalWindow(rentalPick, date, rentalUnits, slotKey)
     if (!win) return
     booking.current = true
     setBookingErr('')
+    setPriceChanged(false)
     setPhase('confirming')
     const target = rentalTarget(rentalPick)
     const ctx = { rental: rentalOptionKey(rentalPick), units: rentalUnits, businessId: business.id }
@@ -1142,6 +1227,7 @@ export function BookingFlow({
         bookedById: a.userId,
         notes: trimmedNotes,
         partySize: rentalPick.head.rentalMaxPartySize != null ? rentalParty : null,
+        ...(pricing?.total != null ? { expectedTotal: pricing.total } : {}),
         idempotencyKey: `vzw-rnt-${business.id}-${win.startDate}-${target.resourceId ?? 't' + target.rentalTypeId}-${rentalUnits}-${a.userId}`,
       },
       a.token,
@@ -1154,9 +1240,15 @@ export function BookingFlow({
         ...ctx,
         userId: a.userId,
         rentalId: r.data?.id ?? null,
-        value: (rentalPrice(rentalPick.head, rentalUnits) ?? 0) / 100,
+        value: (pricing?.total ?? rentalPrice(rentalPick.head, rentalUnits) ?? 0) / 100,
         currency: 'PLN',
       })
+      return
+    }
+    if (r.code === 'PRICE_CHANGED' && r.pricing) {
+      setQuote(r.pricing)
+      setPriceChanged(true)
+      setPhase('confirming')
       return
     }
     if (r.code === 'BOOKED_BY_MISMATCH' || r.code === 'VERIFICATION_REQUIRED' || r.code === 'PHONE_VERIFICATION_REQUIRED') {
@@ -1198,7 +1290,19 @@ export function BookingFlow({
             ]
           : []),
         ...(chosenSession?.instructor?.name ? [{ label: 'Prowadzi', value: chosenSession.instructor.name }] : []),
-        { label: 'Cena', value: priceLabel(chosenSession?.priceOverride ?? classPick.service.price), total: true },
+        ...((): SummaryRow[] => {
+          if (quote?.total != null) return []
+          const promo = chosenSession?.promo
+          if (!promo) return [{ label: 'Cena', value: priceLabel(chosenSession?.priceOverride ?? classPick.service.price), total: true }]
+          return [{
+            label: 'Cena',
+            value: formatPrice2(promo.price),
+            total: true,
+            priorValue: promo.advertised && promo.priorPrice != null ? formatPrice2(promo.priorPrice) : null,
+            badge: promo.advertised ? promo.badge : null,
+            lowestPrice: promo.advertised ? promo.priorPrice : null,
+          }]
+        })(),
       ]
     : []
 
@@ -1346,10 +1450,11 @@ export function BookingFlow({
       return !cur || !def || cur.durationMinutes === def.durationMinutes
     })()
 
-  async function book(a: Auth, key = slotKey) {
+  async function book(a: Auth, key = slotKey, pricing: PriceQuote | null = quote) {
     if (!lines.length || !date || !key || booking.current) return
     booking.current = true
     setBookingErr('')
+    setPriceChanged(false)
     setPhase('confirming')
     const ctx = bookingCtx(key)
     emit('booking_submitted', { ...ctx, userId: a.userId })
@@ -1363,6 +1468,7 @@ export function BookingFlow({
         startDate,
         bookedById: a.userId,
         notes: trimmedNotes,
+        ...(pricing?.total != null ? { expectedTotal: pricing.total } : {}),
         idempotencyKey: bookingIdempotencyKey({ businessId: business.id, startDate, items, bookedById: a.userId, notes: trimmedNotes }),
       },
       a.token,
@@ -1376,9 +1482,15 @@ export function BookingFlow({
         userId: a.userId,
         appointmentId: r.data?.id ?? null,
         // GA4-ecommerce convenience: value in major units (PLN), price is grosze.
-        value: selectedPrice / 100,
+        value: (pricing?.total ?? selectedPrice) / 100,
         currency: 'PLN',
       })
+      return
+    }
+    if (r.code === 'PRICE_CHANGED' && r.pricing) {
+      setQuote(r.pricing)
+      setPriceChanged(true)
+      setPhase('confirming')
       return
     }
     // PHONE_VERIFICATION_REQUIRED: the account's phoneVerified flag dropped
@@ -1419,10 +1531,11 @@ export function BookingFlow({
    * shared is the envelope - identity, Idempotency-Key, the "verify your phone"
    * recovery and the whitelist backstop - so those read the same in both.
    */
-  async function register(a: Auth, id: number) {
+  async function register(a: Auth, id: number, pricing: PriceQuote | null = quote) {
     if (!id || booking.current) return
     booking.current = true
     setBookingErr('')
+    setPriceChanged(false)
     setPhase('confirming')
     const ctx = { groupClassId: classPick?.cls.id ?? null, sessionId: id, businessId: business.id }
     emit('booking_submitted', { ...ctx, userId: a.userId })
@@ -1433,6 +1546,9 @@ export function BookingFlow({
         sessionId: id,
         bookedById: a.userId,
         notes: trimmedNotes,
+        ...((pricing?.total ?? chosenSession?.promo?.price) != null
+          ? { expectedTotal: pricing?.total ?? chosenSession?.promo?.price }
+          : {}),
         // Deterministic from the payload, like the appointment key: it must survive
         // a remount and the phone-verification detour without minting a new one.
         idempotencyKey: `vzw-gc-${business.id}-${id}-${a.userId}-${(trimmedNotes ?? '').length}`,
@@ -1447,9 +1563,15 @@ export function BookingFlow({
         ...ctx,
         userId: a.userId,
         attendeeId: r.data?.id ?? null,
-        value: (classPick?.service.price ?? 0) / 100,
+        value: (pricing?.total ?? chosenSession?.promo?.price ?? classPick?.service.price ?? 0) / 100,
         currency: 'PLN',
       })
+      return
+    }
+    if (r.code === 'PRICE_CHANGED' && r.pricing) {
+      setQuote(r.pricing)
+      setPriceChanged(true)
+      setPhase('confirming')
       return
     }
     if (r.code === 'BOOKED_BY_MISMATCH' || r.code === 'VERIFICATION_REQUIRED' || r.code === 'PHONE_VERIFICATION_REQUIRED') {
@@ -1515,19 +1637,55 @@ export function BookingFlow({
     return true
   }
 
-  // After authentication, either book the chosen slot or join the waitlist.
-  // No slot yet (access-check login from the banner / locked calendar): the
-  // viewer is confirmed - just resume selection where they left off.
-  function complete(a: Auth) {
+  async function refreshQuoteFor(a: Auth): Promise<PriceQuote | null> {
+    let fresh: PriceQuote | null = null
+    if (effKind === 'service' && lines.length && date && slotKey) {
+      fresh = await quoteAppointment(cfg, {
+        items: buildCartItems(),
+        startDate: slotStartDate(date, slotKey),
+        bookedById: a.userId,
+      }, a.token)
+    } else if (effKind === 'rental' && rentalPick) {
+      const win = rentalWindow(rentalPick, date, rentalUnits, slotKey)
+      if (win) {
+        fresh = await quoteRental(cfg, {
+          ...rentalTarget(rentalPick),
+          ...win,
+          partySize: rentalPick.head.rentalMaxPartySize != null ? rentalParty : null,
+          bookedById: a.userId,
+        }, a.token)
+      }
+    }
+    setQuote(fresh)
+    return fresh
+  }
+
+  // After authentication, refresh customer-specific pricing before the write.
+  // A failed new route returns null and the booking proceeds without
+  // expectedTotal, exactly like a widget released before promotions.
+  async function complete(a: Auth) {
     if (intent === 'waitlist') void submitWaitlist(a)
     else if (effKind === 'class') {
       if (chosenSession) void register(a, chosenSession.id)
       else setPhase('select')
     } else if (effKind === 'rental') {
-      if (rentalReady) void reserveRental(a)
+      if (rentalReady) {
+        const fresh = await refreshQuoteFor(a)
+        void reserveRental(a, fresh)
+      }
       else setPhase('select')
-    } else if (lines.length && date && slotKey) void book(a)
+    } else if (lines.length && date && slotKey) {
+      const fresh = await refreshQuoteFor(a)
+      void book(a, slotKey, fresh)
+    }
     else setPhase('select')
+  }
+
+  function retryBooking() {
+    if (!auth) return
+    if (effKind === 'class' && chosenSession) void register(auth, chosenSession.id, quote)
+    else if (effKind === 'rental') void reserveRental(auth, quote)
+    else void book(auth, slotKey, quote)
   }
 
   const waitlistErrorMsg = (code: string) =>
@@ -1962,7 +2120,7 @@ export function BookingFlow({
       emit('authenticated', { method: r.mode === 'login' ? 'otp-login' : 'otp', userId: a.userId })
       const allowed = await ensureBookingAccess(a)
       setVerifying(false)
-      if (allowed) complete(a)
+      if (allowed) void complete(a)
       return
     }
     setVerifying(false)
@@ -2006,7 +2164,7 @@ export function BookingFlow({
     emit('authenticated', { method: 'password', userId: a.userId })
     const allowed = await ensureBookingAccess(a)
     setLoggingIn(false)
-    if (allowed) complete(a)
+    if (allowed) void complete(a)
   }
   async function onOAuth(provider: OAuthProvider) {
     if (oauthBusy || loggingIn) return
@@ -2028,7 +2186,7 @@ export function BookingFlow({
     emit('authenticated', { method: provider, userId: a.userId })
     const allowed = await ensureBookingAccess(a)
     setOauthBusy(null)
-    if (allowed) complete(a)
+    if (allowed) void complete(a)
   }
   function goLogin() {
     setLoginReason('')
@@ -2088,6 +2246,10 @@ export function BookingFlow({
     setRentalCounts({})
     setRentalSlots(null)
     setRentalRangeOk(null)
+    setAppointmentBadges(null)
+    setRentalBadges(null)
+    setQuote(null)
+    setPriceChanged(false)
     if (kinds.length > 1) { setKind(null); setStepId('offering') }
     setContact(emptyContact)
     setNotes('')
@@ -2149,7 +2311,7 @@ export function BookingFlow({
           : stepId === 'service' ? cartValid
             : stepId === 'provider' ? resourceValid
               : !!slotKey
-  const ctaPrice = lines.length ? priceLabel(shownPrice, showFrom) : ''
+  const ctaPrice = lines.length ? (quote?.total != null ? formatPrice2(quote.total) : priceLabel(shownPrice, showFrom)) : ''
   // The time step has to show who the hours belong to - and let it be changed
   // without walking back a step. A pool cart keeps its own (single) answer.
   const showProviderChip = lines.length > 0 && !isUnit && !providerAuto && (hasResourceStep || pinnedPeople.length > 0)
@@ -2201,6 +2363,7 @@ export function BookingFlow({
             variantDuration={configuringLine.variantDuration}
             addonIds={configuringLine.addonIds}
             workerId={lineWorker(configuringLine)}
+            promotionSummary={promotionSummary}
             onPickVariant={pickVariant}
             onToggleAddon={toggleAddon}
             onDone={confirmConfigure}
@@ -2211,6 +2374,7 @@ export function BookingFlow({
             service={detailsService}
             workers={workers}
             selected={lines.some((l) => l.service.id === detailsService.id)}
+            promotionSummary={promotionSummary}
             onToggle={() => {
               toggleService(detailsService)
               setDetailsId(null)
@@ -2230,6 +2394,7 @@ export function BookingFlow({
         {phase === 'select' && stepId === 'rental' && (
           <StepRentalItem
             options={rentalOptions}
+            promotionSummary={promotionSummary}
             selectedKey={rentalPick ? rentalOptionKey(rentalPick) : null}
             onPick={(o) => {
               setRentalPick(o)
@@ -2260,6 +2425,8 @@ export function BookingFlow({
               slots={rentalSlots}
               loading={rentalLoading}
               rangeOk={rentalRangeOk}
+              promoBadges={rentalBadges}
+              quote={quote}
               onPickDate={(d) => { setBookingErr(''); setDate(d); setSlotKey('') }}
               onPickUnits={(u) => { setBookingErr(''); setRentalUnits(u); setSlotKey('') }}
               onPickPartySize={(n) => { setBookingErr(''); setRentalParty(n); setSlotKey('') }}
@@ -2274,6 +2441,7 @@ export function BookingFlow({
             : (
               <StepClass
                 options={classOptions}
+                promotionSummary={promotionSummary}
                 selectedId={classPick?.cls.id ?? null}
                 onPick={(o) => { setClassPick(o); setSessionId(null); setStepId('session') }}
               />
@@ -2301,6 +2469,7 @@ export function BookingFlow({
               services={services}
               workers={workers}
               categories={categories}
+              promotionSummary={promotionSummary}
               cart={lines.map((l) => ({
                 serviceId: l.service.id,
                 chips: lineChips(l),
@@ -2328,6 +2497,7 @@ export function BookingFlow({
             onPickPerItem={pickPerItemMode}
             onPickItemResource={pickItemResource}
             performers={noSoloCandidate ? performersByService : undefined}
+            promotionSummary={promotionSummary}
           />
         )}
         {phase === 'select' && !configuring && stepId === 'time' && lines.length > 0 && calRestricted && (
@@ -2372,11 +2542,12 @@ export function BookingFlow({
               label: providerName,
               people: pinnedPeople.map((p) => ({ name: p.name, image: p.image })),
               editor: canEditProviders
-                ? <ItemProviders items={lines} workers={workers} onPick={pickItemResource} />
+                ? <ItemProviders items={lines} workers={workers} onPick={pickItemResource} promotionSummary={promotionSummary} />
                 : undefined,
             } : undefined}
             emptyReason={emptyProbe === 'others' ? 'busy' : undefined}
             onCheckAll={checkAllSpecialists}
+            promoBadges={appointmentBadges}
           />
         )}
 
@@ -2411,6 +2582,7 @@ export function BookingFlow({
                   : effKind === 'rental' ? rentalSummaryRows
                     : slotKey ? summaryRows : []
             }
+            quote={intent === 'book' ? quote : null}
             contact={contact}
             onChange={onContactChange}
             notes={intent === 'waitlist' || !slotKey ? undefined : notes}
@@ -2463,10 +2635,18 @@ export function BookingFlow({
           />
         )}
         {phase === 'confirming' &&
-          (bookingErr ? (
+          (priceChanged && quote ? (
+            <div class="vz-fade-in">
+              <Notice title="Aktualizacja ceny" tone="plain">
+                Cena się zmieniła. Nowa cena rezerwacji: {quote.total != null ? formatPrice2(quote.total) : 'cena na miejscu'}.
+              </Notice>
+              <SummaryCard rows={[]} quote={quote} />
+              <button class="vz-btn mt" onClick={retryBooking} type="button">Potwierdź rezerwację</button>
+            </div>
+          ) : bookingErr ? (
             <div class="vz-fade-in">
               <div class="vz-err" role="alert">{bookingErr}</div>
-              <button class="vz-btn mt" onClick={() => auth && book(auth)} type="button">Spróbuj ponownie</button>
+              <button class="vz-btn mt" onClick={retryBooking} type="button">Spróbuj ponownie</button>
             </div>
           ) : (
             <div class="vz-center" style="flex-direction:column;gap:14px;"><Spinner /> Rezerwuję Twoją wizytę…</div>
@@ -2502,6 +2682,7 @@ export function BookingFlow({
         {phase === 'done' && (
           <StepDone
             rows={effKind === 'class' ? classSummaryRows : effKind === 'rental' ? rentalSummaryRows : summaryRows}
+            quote={quote}
             status={bookedStatus}
             email={contact.email}
             kind={effKind === 'rental' ? 'rental' : effKind}
@@ -2534,7 +2715,7 @@ export function BookingFlow({
                     </div>
                     <div class="vz-cta-meta">
                       {(() => {
-                        const t = rentalPrice(rentalPick.head, rentalUnits)
+                        const t = quote?.total ?? rentalPrice(rentalPick.head, rentalUnits)
                         return t != null ? <b>{formatPrice2(t)}</b> : null
                       })()}
                       {' '}· {rentalUnitsLabel(rentalUnits, rentalPick.head.rentalUnit ?? 'hour')}
@@ -2548,7 +2729,7 @@ export function BookingFlow({
                   <>
                     <div class="vz-cta-svc">{classPick.service.name}</div>
                     <div class="vz-cta-meta">
-                      <b>{priceLabel(classPick.service.price)}</b> · {formatDuration(classPick.service.duration)}
+                      <b>{formatPrice2(chosenSession?.promo?.price ?? classPick.service.price)}</b> · {formatDuration(classPick.service.duration)}
                       {chosenSession?.instructor?.name ? ` · ${chosenSession.instructor.name}` : ''}
                     </div>
                   </>

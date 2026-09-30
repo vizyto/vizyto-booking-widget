@@ -1,9 +1,10 @@
-import type { Resource, Service } from '../api'
+import type { PublicPromotionSummary, Resource, Service } from '../api'
 import { configuredTotals, formatDuration, formatPrice2, workerOffersService } from '../api'
 import { SelectCard } from '../ui/SelectCard'
 import { Notice } from '../ui/Notice'
 import { Clock, Shuffle, Users } from '../ui/icons'
 import { ItemProviders } from './ItemProviders'
+import { StaffPromotion } from '../ui/PromoBadge'
 
 type ResChoice = number | 'any'
 
@@ -28,6 +29,7 @@ export function StepResource({
   onPickPerItem,
   onPickItemResource,
   performers,
+  promotionSummary,
 }: {
   providers: Resource[]
   /** The whole cart, in chain order - WITH each position's variant and add-ons. */
@@ -48,6 +50,7 @@ export function StepResource({
   onPickItemResource: (serviceId: number, resourceId: number | null) => void
   /** Set only when nobody performs the whole cart: who can take each position. */
   performers?: { serviceName: string; names: string[] }[]
+  promotionSummary?: PublicPromotionSummary | null
 }) {
   // What this person would charge for the WHOLE cart, and how long they'd take.
   // configuredTotals (not effectiveForWorker) - otherwise the chosen variant and
@@ -113,7 +116,7 @@ export function StepResource({
               selected={perItem}
               onSelect={onPickPerItem}
             />
-            {perItem && <ItemProviders items={items} workers={workers} onPick={onPickItemResource} />}
+            {perItem && <ItemProviders items={items} workers={workers} onPick={onPickItemResource} promotionSummary={promotionSummary} />}
           </>
         )}
 
@@ -130,6 +133,12 @@ export function StepResource({
             )
           }
           const totals = totalsFor(p.id)
+          const staffPromotions = items
+            .map((item) => ({
+              serviceName: item.service.name,
+              promotion: promotionSummary?.staff.find((x) => x.resourceId === p.id && x.businessServiceId === item.service.id),
+            }))
+            .filter((x): x is { serviceName: string; promotion: NonNullable<typeof x.promotion> } => !!x.promotion)
           return (
             <SelectCard
               avatar={p.image ? <img src={p.image} alt="" /> : p.name.charAt(0)}
@@ -139,6 +148,12 @@ export function StepResource({
                 <>
                   <span class="vz-dur"><Clock size={14} /> {formatDuration(totals.duration)}</span>
                   <span class="vz-price">{formatPrice2(totals.price)}</span>
+                  {staffPromotions.map(({ serviceName, promotion }) => (
+                    <span class="vz-staff-promo-group">
+                      {items.length > 1 && <small>{serviceName}</small>}
+                      <StaffPromotion texts={promotion.texts} priorPrice={promotion.priorPrice} />
+                    </span>
+                  ))}
                 </>
               }
               selected={!perItem && selected === p.id}

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'preact/hooks'
-import type { Service } from '../api'
+import type { PublicPromotionSummary, Service } from '../api'
 import { formatDuration, priceLabel, richTextToPlain, serviceBaseRange } from '../api'
 import type { Resource } from '../api'
 import { ChevronLeft, ChevronRight, Clock, Close } from '../ui/icons'
+import { LowestPriceLine, PromoBadge } from '../ui/PromoBadge'
 
 /**
  * Szczegóły usługi - ten sam ekran co arkusz "service/Details" na profilu
@@ -16,12 +17,14 @@ export function StepDetails({
   service,
   workers,
   selected,
+  promotionSummary,
   onToggle,
 }: {
   service: Service
   workers: Resource[]
   /** Czy usługa jest już w koszyku - CTA mówi wtedy o usunięciu. */
   selected: boolean
+  promotionSummary?: PublicPromotionSummary | null
   onToggle: () => void
 }) {
   const images = (service.images ?? []).map((i) => i.url).filter(Boolean)
@@ -34,6 +37,7 @@ export function StepDetails({
   const at = zoom ? shots.indexOf(zoom) : -1
   const desc = richTextToPlain(service.description)
   const { min, from } = serviceBaseRange(service, workers)
+  const promotion = promotionSummary?.services.find((p) => p.businessServiceId === service.id)
 
   const step = (d: number) => {
     if (at < 0 || shots.length < 2) return
@@ -88,6 +92,8 @@ export function StepDetails({
         <div class="vz-det-foot-t">
           <span class="vz-det-price">{priceLabel(min, from)}</span>
           <span class="vz-det-dur"><Clock size={13} /> {formatDuration(service.duration)}</span>
+          {promotion && <span style="display:block;margin-top:5px;"><PromoBadge>Zaoszczędź do {promotion.saveUpToPercent}%</PromoBadge></span>}
+          {promotion && <LowestPriceLine price={promotion.priorPrice} isFrom={promotion.priorPriceIsFrom} />}
         </div>
         <button type="button" class={`vz-btn${selected ? ' ghost' : ''} vz-det-cta`} onClick={onToggle}>
           {selected ? 'Usuń z wizyty' : 'Dodaj do wizyty'}

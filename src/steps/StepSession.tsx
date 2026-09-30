@@ -2,6 +2,7 @@ import type { GroupSession } from '../api'
 import { AvailabilityBadge } from '../ui/AvailabilityBadge'
 import { SelectCard } from '../ui/SelectCard'
 import { Clock } from '../ui/icons'
+import { PromotionalPrice } from '../ui/PromoBadge'
 
 /**
  * Pick a term from the timetable.
@@ -86,6 +87,7 @@ export function StepSession({
                     <>
                       <span class="vz-dur"><Clock size={14} /> {hour(s.startDate)} do {hour(s.endDate)}</span>
                       <AvailabilityBadge availability={s.availability} />
+                      {s.promo && <PromotionalPrice promo={s.promo} />}
                     </>
                   }
                 />
