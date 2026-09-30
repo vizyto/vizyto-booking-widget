@@ -5,7 +5,7 @@ import { Spinner } from '../ui/Spinner'
 import { Notice } from '../ui/Notice'
 import { SummaryCard } from '../ui/SummaryCard'
 import { Calendar, Clock, Users } from '../ui/icons'
-import { LowestPriceLine, PromoBadge, dayPromo } from '../ui/PromoBadge'
+import { PromoBadge, dayPromo } from '../ui/PromoBadge'
 
 /**
  * "Kiedy" for a rental, in the two shapes the billing unit forces:
@@ -69,9 +69,10 @@ export function StepRentalTime({
   const selectedSlotPromo = slots?.mode === 'slots'
     ? slots.slots.find((slot) => slot.local === selectedSlot)?.promo ?? null
     : null
-  // The chosen length at the chosen hour is on promotion: the pill keeps its
-  // "units · price" shape, badge and reference price go under the pill list.
-  const lengthPromo = selectedSlotPromo?.advertised && selectedSlotPromo.priorPrice != null ? selectedSlotPromo : null
+  // The chosen hour's promotion is priced for the minimum length: that pill shows the
+  // price paid, plain - its reduction and note live in the summary (#430).
+  const lengthPromo = selectedSlotPromo?.advertised ? selectedSlotPromo : null
+  const minUnits = Math.max(1, head.rentalMinUnits ?? 1)
 
   const free = (d: string) => (counts[d] ?? 0) > 0
   const badges = promoBadges?.lowest ? promoBadges : null
@@ -130,19 +131,13 @@ export function StepRentalTime({
                 type="button"
               >
                 {rentalUnitsLabel(u, unit)}
-                {lengthPromo && u === units ? (
-                  <small> · <span class="vz-price-before">{formatPrice2(lengthPromo.priorPrice!)}</span> {formatPrice2(lengthPromo.price)}</small>
+                {lengthPromo && u === minUnits ? (
+                  <small> · {formatPrice2(lengthPromo.price)}</small>
                 ) : p != null && <small> · {formatPrice2(p)}</small>}
               </button>
             )
           })}
         </div>
-        {lengthPromo && (
-          <div class="vz-pills-promo">
-            {lengthPromo.badge && <PromoBadge>{lengthPromo.badge}</PromoBadge>}
-            <LowestPriceLine price={lengthPromo.priorPrice!} />
-          </div>
-        )}
       </div>
 
       <div class="vz-cal-head">

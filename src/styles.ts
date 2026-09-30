@@ -673,7 +673,6 @@ export const css = `
 /* An add-on's promotion under its helper lines. */
 .vz-opt-promo { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 4px; }
 /* Promotion of the chosen rental length, under the pills. */
-.vz-pills-promo { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 8px; }
 /* Session list: the day's common value in the header, the price in .vz-price weight. */
 .vz-slot-group-promo { margin-left: -2px; letter-spacing: 0; text-transform: none; color: var(--vz-text); }
 .vz-session-note { margin: -4px 0 10px; }
