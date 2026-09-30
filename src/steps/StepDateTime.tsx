@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks'
 import type { VNode } from 'preact'
-import type { DayCounts, Slots } from '../api'
+import type { DayCounts, PromoBadges, Slots } from '../api'
 import { slotLabel } from '../api'
 import { DOW, dayNum, monthMatrix, monthOf, monthTitle, spanLabel, weekday } from '../dates'
-import { ChevronDown, ChevronLeft, ChevronRight, Calendar, Grid, Moon, Sun, Sunrise, Bell } from '../ui/icons'
+import { ChevronDown, ChevronLeft, ChevronRight, Calendar, CalendarDays, Grid, Moon, Sun, Sunrise, Bell } from '../ui/icons'
 import { AvatarStack } from '../ui/AvatarStack'
 import { Spinner } from '../ui/Spinner'
+import { PromoBadge, dayPromo } from '../ui/PromoBadge'
 
 // Day tiles flow to fill the available width: we measure the strip and show as
 // many whole tiles as fit (MIN_TILE = narrowest a tile may get), then paginate
@@ -34,6 +35,7 @@ export function StepDateTime({
   providerChip,
   emptyReason,
   onCheckAll,
+  promoBadges,
 }: {
   days: string[]
   counts: DayCounts
@@ -67,12 +69,21 @@ export function StepDateTime({
   providerChip?: {
     label: string
     people: { name: string; image: string | null }[]
-    editor?: VNode | null
+    /** Two answers (several people, or a person + "bez preferencji"): "Specjaliści". */
+    plural?: boolean
+    /** Renders the editor; `close` folds the field after a pick. */
+    editor?: ((close: () => void) => VNode) | null
   }
   /** Why the day came back empty: 'busy' = these people are, others are not. */
   emptyReason?: 'busy'
   /** Drop every specialist pin and ask the day again. */
   onCheckAll?: () => void
+  /** Promotion badges per day and per slot key (fail-soft: null = none). */
+  /**
+   * A badge is an announced reduction: it shows only with the answer's `lowest`
+   * (the cart's price and its 30-day price), which the booking summary carries.
+   */
+  promoBadges?: PromoBadges | null
 }) {
   const [view, setView] = useState<'week' | 'month'>('week')
   const [editingWho, setEditingWho] = useState(false)
@@ -143,6 +154,14 @@ export function StepDateTime({
 
   const safePage = Math.min(page, maxPage)
   const pageDays = days.slice(safePage * perPage, safePage * perPage + perPage)
+  // Promotion marks (owner's mockup, #430): a corner badge on every bookable day
+  // and time tile that has one, a dot in the month grid - never on a disabled day.
+  const badges = promoBadges?.lowest ? promoBadges : null
+  const dayMarks = dayPromo(days, (d) => inHorizon.has(d) && free(d), badges?.days)
+  // Only a page that shows a badge leaves room above its row for it.
+  const weekMarked = pageDays.some((d) => !!dayMarks.tile(d))
+  const monthCells = useMemo(() => monthMatrix(months[mIdx]?.year ?? 0, months[mIdx]?.month ?? 0).flat(), [months, mIdx])
+  const monthMarked = monthCells.some((d) => !!d && !!dayMarks.tile(d))
   const label =
     view === 'week'
       ? pageDays.length
@@ -189,11 +208,13 @@ export function StepDateTime({
     }
     return g.filter((x) => x.items.length)
   }, [slots, date, timezone])
+  const slotMarked = !!date && slots.some((k) => !!badges?.slots[k])
 
   return (
     <div class="vz-fade-in">
       {providerChip && (
         <div class="vz-who">
+          {/* Whose hours these are: a full-width field like the period bar under it. */}
           <button
             type="button"
             class={`vz-who-chip${editingWho ? ' on' : ''}`}
@@ -202,33 +223,50 @@ export function StepDateTime({
             onClick={() => providerChip.editor && setEditingWho((v) => !v)}
           >
             <AvatarStack people={providerChip.people} max={3} />
-            <span class="vz-who-label">{providerChip.label}</span>
+            <span class="vz-who-text">
+              <span class="vz-who-cap">{providerChip.plural ? 'Specjaliści' : 'Specjalista'}</span>
+              <span class="vz-who-label">{providerChip.label}</span>
+            </span>
             {providerChip.editor && <ChevronDown size={16} class="vz-chip-cv" />}
           </button>
-          {editingWho && providerChip.editor}
+          {editingWho && providerChip.editor?.(() => setEditingWho(false))}
         </div>
       )}
 
-      <div class="vz-cal-head">
-        <span class="vz-cal-month"><Calendar size={16} /> {label}</span>
-        <button class="vz-cal-nav" onClick={goPrev} disabled={prevDisabled} aria-label="Poprzedni" type="button"><ChevronLeft size={18} /></button>
-        <button class="vz-cal-nav" onClick={goNext} disabled={nextDisabled} aria-label="Następny" type="button"><ChevronRight size={18} /></button>
+      {/* "< label >" like the app's period bar: the arrows page the view and the
+          label opens the month grid - the widget's calendar. In month view the
+          grid is already open, so the label is the same shape without an action. */}
+      <div class="vz-period">
+        <button class="vz-period-nav" onClick={goPrev} disabled={prevDisabled} aria-label={view === 'week' ? 'Poprzedni tydzień' : 'Poprzedni miesiąc'} type="button"><ChevronLeft size={18} /></button>
+        {view === 'week' ? (
+          <button class="vz-period-label" onClick={() => setView('month')} aria-label={`${label}. Otwórz kalendarz`} type="button">
+            <CalendarDays size={18} class="vz-period-ic" />
+            <span>{label}</span>
+          </button>
+        ) : (
+          <div class="vz-period-label is-static">
+            <CalendarDays size={18} class="vz-period-ic" />
+            <span>{label}</span>
+          </div>
+        )}
+        <button class="vz-period-nav" onClick={goNext} disabled={nextDisabled} aria-label={view === 'week' ? 'Następny tydzień' : 'Następny miesiąc'} type="button"><ChevronRight size={18} /></button>
       </div>
 
-      <div class="vz-toggle" role="tablist">
-        <button class={view === 'week' ? 'on' : ''} onClick={() => setView('week')} type="button"><Calendar size={15} /> Tydzień</button>
-        <button class={view === 'month' ? 'on' : ''} onClick={() => setView('month')} type="button"><Grid size={15} /> Miesiąc</button>
+      <div class="vz-tabs" role="tablist" aria-label="Widok kalendarza">
+        <button class={`vz-tab${view === 'week' ? ' on' : ''}`} role="tab" aria-selected={view === 'week'} onClick={() => setView('week')} type="button"><Calendar size={16} /> Tydzień</button>
+        <button class={`vz-tab${view === 'month' ? ' on' : ''}`} role="tab" aria-selected={view === 'month'} onClick={() => setView('month')} type="button"><Grid size={16} /> Miesiąc</button>
       </div>
 
       {view === 'week' ? (
-        <div class="vz-days" ref={stripRef} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+        <div class={`vz-days${weekMarked ? ' has-promo' : ''}`} ref={stripRef} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
           {pageDays.map((d) => {
             const f = free(d)
             return (
-              <button class={`vz-day ${d === date ? 'active' : ''}${f ? '' : ' is-disabled'}`} aria-disabled={f ? undefined : 'true'} aria-current={d === date ? 'true' : undefined} onClick={() => { if (swiped.current) { swiped.current = false; return } if (f) onPickDate(d) }} type="button">
+              <button class={`vz-day ${d === date ? 'active' : ''}${f ? '' : ' is-disabled'}`} aria-label={dayMarks.tile(d) ? `${weekday(d)} ${dayNum(d)}, promocja ${dayMarks.tile(d)}` : undefined} aria-disabled={f ? undefined : 'true'} aria-current={d === date ? 'true' : undefined} onClick={() => { if (swiped.current) { swiped.current = false; return } if (f) onPickDate(d) }} type="button">
                 <small>{weekday(d)}</small>
                 {dayNum(d)}
                 <span class={`vz-free${f ? '' : ' ghost'}`} />
+                {dayMarks.tile(d) && <PromoBadge corner>{dayMarks.tile(d)}</PromoBadge>}
               </button>
             )
           })}
@@ -237,17 +275,29 @@ export function StepDateTime({
         <div>
           <div class="vz-month">
             {DOW.map((d) => <div class="vz-month-dow">{d}</div>)}
-            {monthMatrix(months[mIdx]?.year ?? 0, months[mIdx]?.month ?? 0).flat().map((d) => {
+            {monthCells.map((d) => {
               if (!d) return <div class="vz-mcell empty" />
               const bookable = inHorizon.has(d) && free(d)
               return (
-                <button class={`vz-mcell ${d === date ? 'active' : ''}`} disabled={!bookable} aria-current={d === date ? 'true' : undefined} onClick={() => onPickDate(d)} type="button">
+                <button class={`vz-mcell ${d === date ? 'active' : ''}`} disabled={!bookable} aria-label={dayMarks.tile(d) ? `${dayNum(d)}, promocja ${dayMarks.tile(d)}` : undefined} aria-current={d === date ? 'true' : undefined} onClick={() => onPickDate(d)} type="button">
                   {dayNum(d)}
-                  {bookable && <span class="vz-free" />}
+                  {bookable && (
+                    <span class="vz-mcell-dots">
+                      <span class="vz-free" />
+                      {dayMarks.tile(d) && <span class="vz-promo-dot" aria-hidden="true" />}
+                    </span>
+                  )}
                 </button>
               )
             })}
           </div>
+        </div>
+      )}
+
+      {/* The 30-day note sits in the booking summary, next to the price (#430). */}
+      {view === 'month' && monthMarked && (
+        <div class="vz-promo-foot">
+          <div class="vz-promo-caption"><span class="vz-promo-dot" aria-hidden="true" /> Dni z promocją</div>
         </div>
       )}
 
@@ -302,16 +352,32 @@ export function StepDateTime({
         </div>
       ) : (
         <>
-          {groups.map((g) => (
-            <div class="vz-slot-group">
-              <div class="vz-slot-group-h"><g.Icon size={16} /> {g.label}</div>
-              <div class="vz-slots vz-stagger">
-                {g.items.map(({ k, lab }) => (
-                  <button class={`vz-slot${k === selectedSlot ? ' selected' : ''}`} onClick={() => onPickSlot(k)} type="button">{lab}</button>
-                ))}
+          {groups.map((g) => {
+            // Each promoted slot carries its corner badge; a section with one
+            // leaves room above its rows for it.
+            const marked = g.items.some(({ k }) => !!badges?.slots[k])
+            return (
+              <div class="vz-slot-group">
+                <div class="vz-slot-group-h"><g.Icon size={16} /> {g.label}</div>
+                <div class={`vz-slots vz-stagger${marked ? ' has-promo' : ''}`}>
+                  {g.items.map(({ k, lab }) => {
+                    const badge = badges?.slots[k] ?? null
+                    return (
+                      <button
+                        class={`vz-slot${k === selectedSlot ? ' selected' : ''}`}
+                        aria-label={badge ? `${lab}, promocja ${badge}` : undefined}
+                        onClick={() => onPickSlot(k)}
+                        type="button"
+                      >
+                        {lab}
+                        {badge && <PromoBadge corner>{badge}</PromoBadge>}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
           {/* "Dowolny" + a picked hour: name the exact price by naming the person.
               The list is who the ENGINE reported free at that slot. */}
           {slotPicker && slotPicker.candidates.length > 1 && (

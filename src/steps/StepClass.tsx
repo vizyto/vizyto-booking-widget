@@ -1,8 +1,9 @@
-import type { GroupClass, Service } from '../api'
+import type { GroupClass, PublicPromotionSummary, Service } from '../api'
 import { priceLabel, formatDuration, richTextToPlain } from '../api'
 import { AvailabilityBadge } from '../ui/AvailabilityBadge'
 import { SelectCard } from '../ui/SelectCard'
 import { Clock } from '../ui/icons'
+import { LowestPriceLine, PromoBadge } from '../ui/PromoBadge'
 
 export type ClassOption = { cls: GroupClass; service: Service }
 
@@ -19,10 +20,12 @@ export function StepClass({
   options,
   selectedId,
   onPick,
+  promotionSummary,
 }: {
   options: ClassOption[]
   selectedId: number | null
   onPick: (o: ClassOption) => void
+  promotionSummary?: PublicPromotionSummary | null
 }) {
   if (options.length === 0) {
     return (
@@ -33,8 +36,9 @@ export function StepClass({
   }
   return (
     <div class="vz-list vz-stagger" role="radiogroup" aria-label="Wybierz zajęcia">
-      {options.map(({ cls, service }) => (
-        <SelectCard
+      {options.map(({ cls, service }) => {
+        const promotion = promotionSummary?.groupClasses.find((p) => p.groupClassId === cls.id)
+        return <SelectCard
           key={cls.id}
           thumb={service.image ?? null}
           title={service.name}
@@ -47,10 +51,12 @@ export function StepClass({
               <span class="vz-dur"><Clock size={14} /> {formatDuration(service.duration)}</span>
               <AvailabilityBadge availability={cls.availability} />
               <span class="vz-price">{priceLabel(service.price)}</span>
+              {promotion && <PromoBadge>Zaoszczędź do {promotion.saveUpToPercent}%</PromoBadge>}
+              {promotion && <LowestPriceLine price={promotion.priorPrice} />}
             </>
           }
         />
-      ))}
+      })}
     </div>
   )
 }

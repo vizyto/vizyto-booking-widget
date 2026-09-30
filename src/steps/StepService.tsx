@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'preact/hooks'
-import type { Resource, Service, ServiceCategory } from '../api'
+import type { PublicPromotionSummary, Resource, Service, ServiceCategory } from '../api'
 import { formatDuration, priceLabel, richTextToPlain, serviceBaseRange } from '../api'
 import { SelectCard } from '../ui/SelectCard'
+import { LowestPriceLine, PromoBadge } from '../ui/PromoBadge'
 import { Clock, Lock, Pencil, Plus, Search, Trash } from '../ui/icons'
 
 /** Jedna plakietka konfiguracji pozycji: wariant albo dodatek. */
@@ -24,6 +25,7 @@ export function StepService({
   services,
   workers,
   categories = [],
+  promotionSummary,
   cart,
   onToggle,
   onEdit,
@@ -35,6 +37,7 @@ export function StepService({
   workers: Resource[]
   // Optional category grouping; when present, a tab bar filters the list.
   categories?: ServiceCategory[]
+  promotionSummary?: PublicPromotionSummary | null
   /** Cart contents - a service in here renders as selected. */
   cart: CartEntry[]
   onToggle: (s: Service) => void
@@ -111,6 +114,7 @@ export function StepService({
           const { min, from } = serviceBaseRange(s, workers)
           const desc = richTextToPlain(s.description)
           const entry = entryOf(s.id)
+          const promotion = promotionSummary?.services.find((p) => p.businessServiceId === s.id)
           return (
             <div class="vz-cart-row" key={s.id}>
               <SelectCard
@@ -162,11 +166,15 @@ export function StepService({
                    niż sama pozycja (tak samo hideMeta w kreatorze na stronie). */
                 meta={
                   entry?.hideMeta ? (
+                    // The price is hidden here (the recap chips carry it), so no
+                    // reduction is announced either - badge and note go with it.
                     s.viewerAccess === 'locked' ? <span class="vz-lock-chip"><Lock size={11} /> Dla stałych klientów</span> : undefined
                   ) : (
                     <>
                       <span class="vz-dur"><Clock size={14} /> {formatDuration(s.duration)}</span>
                       <span class="vz-price">{priceLabel(min, from)}</span>
+                      {promotion && <PromoBadge>Zaoszczędź do {promotion.saveUpToPercent}%</PromoBadge>}
+                      {promotion && <LowestPriceLine price={promotion.priorPrice} isFrom={promotion.priorPriceIsFrom} />}
                       {/* Whitelist-locked: still selectable - logging in may unlock it. */}
                       {s.viewerAccess === 'locked' && (
                         <span class="vz-lock-chip"><Lock size={11} /> Dla stałych klientów</span>

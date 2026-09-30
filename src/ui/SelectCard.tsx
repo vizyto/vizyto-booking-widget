@@ -30,6 +30,7 @@ export function SelectCard({
   onSelect,
   multi,
   control,
+  foot,
 }: {
   // Circular avatar (workers / "Dowolny"). Mutually exclusive with `thumb`.
   avatar?: VNode | string
@@ -52,6 +53,12 @@ export function SelectCard({
    * przełącza kartę w układ dwustrefowy - bez niego zostaje kółko lub kwadracik.
    */
   control?: ComponentChildren
+  /**
+   * A band across the card's foot, edge to edge (a worker's promotion). Only
+   * the radio card takes it: the card then clips it and the body keeps its
+   * padding in a row of its own above.
+   */
+  foot?: ComponentChildren
 }) {
   // A broken/unreachable photo degrades to the same letter placeholder as null.
   const [imgOk, setImgOk] = useState(true)
@@ -92,17 +99,24 @@ export function SelectCard({
     )
   }
 
+  const radio = <span class={`vz-radio${multi ? ' square' : ''}${selected ? ' on' : ''}`}>{selected && <Check size={15} />}</span>
   return (
     <div
-      class={`vz-card${selected ? ' selected' : ''}${disabled ? ' is-disabled' : ''}`}
+      class={`vz-card${foot ? ' has-foot' : ''}${selected ? ' selected' : ''}${disabled ? ' is-disabled' : ''}`}
       role={multi ? 'checkbox' : 'radio'}
       aria-checked={selected}
       tabIndex={disabled ? -1 : 0} aria-disabled={disabled || undefined}
       onClick={select}
       onKeyDown={activate}
     >
-      {body}
-      <span class={`vz-radio${multi ? ' square' : ''}${selected ? ' on' : ''}`}>{selected && <Check size={15} />}</span>
+      {foot ? (
+        <>
+          <span class="vz-card-row">{body}{radio}</span>
+          {foot}
+        </>
+      ) : (
+        <>{body}{radio}</>
+      )}
     </div>
   )
 }

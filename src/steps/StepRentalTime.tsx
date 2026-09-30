@@ -1,10 +1,11 @@
-import type { RentalDaySlots, RentalUnit, Resource } from '../api'
+import type { PriceQuote, PromoBadges, RentalDaySlots, RentalUnit, Resource } from '../api'
 import { formatPrice2, rentalPrice, rentalUnitsLabel } from '../api'
 import { dayNum, weekday } from '../dates'
 import { Spinner } from '../ui/Spinner'
 import { Notice } from '../ui/Notice'
 import { SummaryCard } from '../ui/SummaryCard'
 import { Calendar, Clock, Users } from '../ui/icons'
+import { PromoBadge, dayPromo } from '../ui/PromoBadge'
 
 /**
  * "Kiedy" for a rental, in the two shapes the billing unit forces:
@@ -34,6 +35,8 @@ export function StepRentalTime({
   onPickPartySize,
   selectedSlot,
   onPickSlot,
+  promoBadges,
+  quote,
 }: {
   head: Resource
   pooled: boolean
@@ -52,13 +55,33 @@ export function StepRentalTime({
   onPickPartySize: (n: number) => void
   selectedSlot: string
   onPickSlot: (localKey: string) => void
+  /**
+   * A badge is an announced reduction: it shows only with the answer's `lowest`
+   * (this length's price and its 30-day price), which the booking summary carries.
+   */
+  promoBadges?: PromoBadges | null
+  quote?: PriceQuote | null
 }) {
   const unit: RentalUnit = head.rentalUnit ?? 'hour'
   const isRange = slots?.mode === 'range'
   const maxParty = head.rentalMaxPartySize ?? null
   const total = rentalPrice(head, units)
+  const selectedSlotPromo = slots?.mode === 'slots'
+    ? slots.slots.find((slot) => slot.local === selectedSlot)?.promo ?? null
+    : null
+  // The chosen hour's promotion is priced for the minimum length: that pill shows the
+  // price paid, plain - its reduction and note live in the summary (#430).
+  const lengthPromo = selectedSlotPromo?.advertised ? selectedSlotPromo : null
+  const minUnits = Math.max(1, head.rentalMinUnits ?? 1)
 
   const free = (d: string) => (counts[d] ?? 0) > 0
+  const badges = promoBadges?.lowest ? promoBadges : null
+  const dayMarks = dayPromo(days, free, badges?.days)
+  const slotBadge = (sl: { start: string; promo?: { advertised: boolean; badge: string | null } | null }): string | null =>
+    (sl.promo?.advertised && sl.promo.badge ? sl.promo.badge : badges?.slots[sl.start.slice(11, 16)] ?? null)
+  // Every promoted day and hour carries its corner badge (owner's mockup, #430).
+  const slotBadges = slots?.mode === 'slots' && badges ? slots.slots.map(slotBadge) : []
+  const slotMarked = slotBadges.some(Boolean)
   const returnDate = (() => {
     if (!date) return null
     const ms = { minute: 60_000, hour: 3_600_000, day: 86_400_000, week: 7 * 86_400_000, month: 30 * 86_400_000 }[unit]
@@ -108,7 +131,9 @@ export function StepRentalTime({
                 type="button"
               >
                 {rentalUnitsLabel(u, unit)}
-                {p != null && <small> · {formatPrice2(p)}</small>}
+                {lengthPromo && u === minUnits ? (
+                  <small> · {formatPrice2(lengthPromo.price)}</small>
+                ) : p != null && <small> · {formatPrice2(p)}</small>}
               </button>
             )
           })}
@@ -118,12 +143,13 @@ export function StepRentalTime({
       <div class="vz-cal-head">
         <span class="vz-cal-month"><Calendar size={16} /> {isRange ? 'Odbiór' : 'Termin'}</span>
       </div>
-      <div class="vz-days">
+      <div class={`vz-days scroll${dayMarks.any ? ' has-promo' : ''}`}>
         {days.map((d) => {
           const f = free(d)
           return (
             <button
               class={`vz-day ${d === date ? 'active' : ''}${f ? '' : ' is-disabled'}`}
+              aria-label={dayMarks.tile(d) ? `${weekday(d)} ${dayNum(d)}, promocja ${dayMarks.tile(d)}` : undefined}
               aria-disabled={f ? undefined : 'true'}
               aria-current={d === date ? 'true' : undefined}
               onClick={() => { if (f) onPickDate(d) }}
@@ -132,10 +158,12 @@ export function StepRentalTime({
               <small>{weekday(d)}</small>
               {dayNum(d)}
               <span class={`vz-free${f ? '' : ' ghost'}`} />
+              {dayMarks.tile(d) && <PromoBadge corner>{dayMarks.tile(d)}</PromoBadge>}
             </button>
           )
         })}
       </div>
+      {/* The 30-day note of the marks sits in the booking summary, next to the price (#430). */}
 
       {loading ? (
         <div class="vz-center"><Spinner /></div>
@@ -151,8 +179,13 @@ export function StepRentalTime({
               { label: 'Zwrot', value: returnDate ?? '-' },
               { label: 'Czas', value: rentalUnitsLabel(units, unit) },
               ...(head.rentalDeposit != null ? [{ label: 'Kaucja', value: formatPrice2(head.rentalDeposit) }] : []),
-              ...(total != null ? [{ label: 'Kwota', value: formatPrice2(total), total: true }] : []),
+              // An advertised quote brings its own price block; otherwise the
+              // server's total (when there is one) fills the ordinary row.
+              ...(!quote?.advertised && (quote?.total ?? total) != null
+                ? [{ label: 'Kwota', value: formatPrice2((quote?.total ?? total)!), total: true }]
+                : []),
             ]}
+            quote={quote}
           />
           {head.rentalDeposit != null && (
             <div class="vz-muted" style="margin-top:8px;">Kaucja rozliczana na miejscu przy odbiorze.</div>
@@ -165,17 +198,22 @@ export function StepRentalTime({
       ) : slots && slots.mode === 'slots' ? (
         <div class="vz-slot-group">
           <div class="vz-slot-group-h">Godzina odbioru</div>
-          <div class="vz-slots">
-            {slots.slots.map((sl) => (
-              <button
-                class={`vz-slot${sl.local === selectedSlot ? ' selected' : ''}`}
-                onClick={() => onPickSlot(sl.local)}
-                aria-pressed={sl.local === selectedSlot ? 'true' : 'false'}
-                type="button"
-              >
-                {sl.local}
-              </button>
-            ))}
+          <div class={`vz-slots${slotMarked ? ' has-promo' : ''}`}>
+            {slots.slots.map((sl, index) => {
+              const badge = slotBadges[index] ?? null
+              return (
+                <button
+                  class={`vz-slot${sl.local === selectedSlot ? ' selected' : ''}`}
+                  aria-label={badge ? `${sl.local}, promocja ${badge}` : undefined}
+                  onClick={() => onPickSlot(sl.local)}
+                  aria-pressed={sl.local === selectedSlot ? 'true' : 'false'}
+                  type="button"
+                >
+                  {sl.local}
+                  {badge && <PromoBadge corner>{badge}</PromoBadge>}
+                </button>
+              )
+            })}
           </div>
         </div>
       ) : null}

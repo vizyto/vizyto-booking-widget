@@ -99,6 +99,16 @@ export const KeyRound = ({ size = 18, ...p }: P) => (
 export const Sparkles = ({ size = 18, ...p }: P) => (
   <svg {...base(size)} {...p}><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" /></svg>
 )
+// Promotion band of a specialist card (lucide "tag").
+export const Tag = ({ size = 18, ...p }: P) => (
+  <svg {...base(size)} {...p}><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" /><circle cx="7.5" cy="7.5" r=".5" fill="currentColor" /></svg>
+)
+// Calendar with day dots - the label of the period bar (lucide "calendar-days").
+export const CalendarDays = ({ size = 18, ...p }: P) => (
+  <svg {...base(size)} {...p}>
+    <rect width="18" height="18" x="3" y="4" rx="2" /><path d="M16 2v4M8 2v4M3 10h18M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01M16 18h.01" />
+  </svg>
+)
 
 // Brand glyphs (own fills, not stroke-based).
 export const GoogleG = ({ size = 18 }: { size?: number }) => (

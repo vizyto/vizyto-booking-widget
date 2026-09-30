@@ -1,6 +1,7 @@
-import type { Service } from '../api'
+import type { PublicPromotionSummary, Service } from '../api'
 import { addonsValid, configuredTotals, formatDuration, formatPrice2, resolveVariant } from '../api'
 import { Check } from '../ui/icons'
+import { LowestPriceLine, PromoBadge } from '../ui/PromoBadge'
 
 // Configure sub-step: pick a length variant and add-ons for the chosen service.
 // Mirrors the web wizard's ServiceAddons surface. Owns its own "Gotowe" button
@@ -11,6 +12,7 @@ export function StepConfigure({
   variantDuration,
   addonIds,
   workerId,
+  promotionSummary,
   onPickVariant,
   onToggleAddon,
   onDone,
@@ -20,6 +22,7 @@ export function StepConfigure({
   addonIds: number[]
   // Pinned worker (per-employee price/duration), when one is already chosen.
   workerId?: number
+  promotionSummary?: PublicPromotionSummary | null
   onPickVariant: (durationMinutes: number) => void
   onToggleAddon: (id: number) => void
   onDone: () => void
@@ -75,6 +78,7 @@ export function StepConfigure({
               {g.addons.map((a) => {
                 const on = chosen.has(a.id)
                 const locked = !on && atMax
+                const promotion = promotionSummary?.addons.find((p) => p.addonId === a.id)
                 return (
                   <button
                     type="button"
@@ -92,6 +96,12 @@ export function StepConfigure({
                       <span class="vz-opt-name">{a.name}</span>
                       {a.description && <span class="vz-opt-desc">{a.description}</span>}
                       {a.extraDurationMinutes > 0 && <span class="vz-opt-desc">+{formatDuration(a.extraDurationMinutes)}</span>}
+                      {promotion && (
+                        <span class="vz-opt-promo">
+                          <PromoBadge>Zaoszczędź do {promotion.saveUpToPercent}%</PromoBadge>
+                          <LowestPriceLine price={promotion.priorPrice} />
+                        </span>
+                      )}
                     </span>
                     <span class="vz-opt-price">{a.price > 0 ? `+${formatPrice2(a.price)}` : 'gratis'}</span>
                     <span class={`vz-opt-tick square${on ? ' on' : ''}`}>{on && <Check size={14} />}</span>

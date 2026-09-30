@@ -151,6 +151,10 @@ export const css = `
 .vz-card:not(.is-disabled):active { transform: scale(.99); }
 .vz-card.is-disabled { cursor: not-allowed; color: var(--vz-text-muted); filter: grayscale(1); }
 .vz-card.selected { background: var(--vz-selected); border-color: var(--vz-accent); }
+/* A card with a band across its foot (a worker's promotion): the card clips the
+   band edge to edge and its body keeps the padding in a row of its own. */
+.vz-card.has-foot { flex-direction: column; align-items: stretch; gap: 0; padding: 0; overflow: hidden; }
+.vz-card-row { display: flex; align-items: center; gap: 12px; padding: 16px; }
 /* Karta usługi ma DWIE strefy: klikalną treść (szczegóły) i sterowanie obok.
    Wciska się więc sama treść - gdyby skalowała się cała karta, plus uciekałby
    spod palca w trakcie dotknięcia. */
@@ -223,6 +227,8 @@ export const css = `
    mniej, a sterowanie schodzi o krok - wciąż powyżej progu dotyku. */
 @media (max-width: 400px) {
   .vz-card { padding: 13px; gap: 10px; }
+  .vz-card.has-foot { padding: 0; gap: 0; }
+  .vz-card-row { padding: 13px; gap: 10px; }
   .vz-card-hit { gap: 10px; }
   .vz-card-thumb { width: 64px; height: 64px; font-size: 22px; }
   .vz-card-add, .vz-card-icon { width: 36px; height: 36px; }
@@ -285,6 +291,8 @@ export const css = `
   background: var(--vz-surface); color: var(--vz-text-muted); font-size: 12.5px;
 }
 .vz-card-meta .vz-price { font-weight: 600; }
+/* A reference-price line takes its own row under the meta. */
+.vz-card-meta .vz-lowest-price { flex: 1 0 100%; }
 /* Discreet "Dla stałych klientów" chip on whitelist-locked services. Not an
    error - logging in may unlock the service, so it stays calm and selectable. */
 .vz-lock-chip {
@@ -403,18 +411,24 @@ export const css = `
 }
 .vz-avstack .vz-card-av + .vz-card-av { margin-left: -10px; }
 
-/* Summary chip above the calendar - who the hours belong to. */
-.vz-who { margin-bottom: 14px; }
+/* Who the hours belong to, above the calendar: a full-width field in the shape
+   of the period bar under it - avatars, a muted "Specjalista" over the name, a
+   chevron to change it. */
+.vz-who { margin-bottom: 10px; }
 .vz-who-chip {
-  display: flex; align-items: center; gap: 9px; width: 100%;
-  padding: 7px 12px 7px 7px; border: 1.5px solid var(--vz-border); border-radius: var(--vz-r-pill);
-  background: var(--vz-surface); color: var(--vz-text); font-family: inherit; font-size: 13.5px; font-weight: 500;
-  cursor: pointer; text-align: left; transition: border-color var(--vz-dur-out), background var(--vz-dur-out);
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px;
+  padding: 8px 12px; border: 1px solid var(--vz-border); border-radius: var(--vz-r-md);
+  background: var(--vz-surface); color: var(--vz-text); font-family: inherit;
+  cursor: pointer; text-align: left; transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
 }
+.vz-who-chip:not([disabled]):active { transform: scale(.99); }
+.vz-who-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vz-who-cap { font-size: 12px; font-weight: 400; line-height: 1.3; color: var(--vz-text-muted); }
 .vz-who-chip:not([disabled]):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
 .vz-who-chip[disabled] { cursor: default; }
 .vz-who-chip.on { border-color: var(--vz-accent); background: var(--vz-selected); }
-.vz-who-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vz-who-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; line-height: 1.35; }
+.vz-who-chip .vz-avstack .vz-card-av { width: 32px; height: 32px; font-size: 13px; background: var(--vz-surface-2); }
 .vz-who .vz-assign { margin-top: 10px; }
 
 /* Chain plan under the picked slot ("10:00 Strzyżenie, 10:45 Broda"). */
@@ -479,26 +493,49 @@ export const css = `
   padding: 11px 14px; border-radius: var(--vz-r-md); background: var(--vz-surface-2);
   font-size: 14px; font-weight: 600; color: var(--vz-text);
 }
-.vz-cal-nav {
-  width: 40px; height: 40px; flex: 0 0 auto; border: 1px solid var(--vz-border); background: var(--vz-surface);
-  border-radius: var(--vz-r-md); cursor: pointer; color: var(--vz-text);
-  display: flex; align-items: center; justify-content: center; transition: background var(--vz-dur-out), opacity var(--vz-dur-out);
+/* Period bar "< label >" (the app's shape): two 44px square arrows with a border
+   and the label button between them - an accent calendar icon and a label that
+   wraps rather than truncates. */
+.vz-period { display: flex; align-items: stretch; gap: 8px; margin-bottom: 12px; }
+.vz-period-nav {
+  width: 44px; height: 44px; flex: 0 0 auto; border: 1px solid var(--vz-border); background: var(--vz-surface);
+  border-radius: var(--vz-r-md); cursor: pointer; color: var(--vz-text); padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: background var(--vz-dur-out), opacity var(--vz-dur-out), transform var(--vz-dur-out);
 }
-.vz-cal-nav:hover { background: var(--vz-surface-2); }
-.vz-cal-nav[disabled] { opacity: .35; cursor: default; }
+.vz-period-nav:not([disabled]):hover { background: var(--vz-surface-2); }
+.vz-period-nav:not([disabled]):active { transform: scale(.95); }
+.vz-period-nav[disabled] { opacity: .35; cursor: default; }
+.vz-period-label {
+  flex: 1 1 auto; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 10px;
+  padding: 4px 12px; border: 1px solid var(--vz-border); border-radius: var(--vz-r-md);
+  background: var(--vz-surface); color: var(--vz-text); cursor: pointer; text-align: left;
+  font-family: var(--vz-font); font-size: 14px; font-weight: 500; line-height: 1.25;
+  transition: background var(--vz-dur-out), transform var(--vz-dur-out);
+}
+.vz-period-label:not(.is-static):hover { background: var(--vz-surface-2); }
+.vz-period-label:not(.is-static):active { transform: scale(.99); }
+.vz-period-label.is-static { cursor: default; }
+.vz-period-label > span { min-width: 0; overflow-wrap: anywhere; }
+.vz-period-ic { flex: 0 0 auto; color: var(--vz-accent); }
+.vz-period-nav:focus-visible, .vz-period-label:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
 
-.vz-toggle { display: flex; gap: 6px; padding: 4px; background: var(--vz-surface-2); border-radius: var(--vz-r-md); margin-bottom: 16px; }
-.vz-toggle button {
-  flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  padding: 9px; border: 0; border-radius: var(--vz-r-sm); background: transparent; cursor: pointer;
-  font-family: var(--vz-font); font-size: 13.5px; font-weight: 600; color: var(--vz-text-muted);
-  transition: background var(--vz-dur-out), color var(--vz-dur-out);
+/* Week / month switch: underline tabs - the active one in accent with a 2px
+   accent underline, the other muted, over one hairline. */
+.vz-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--vz-border); margin-bottom: 16px; }
+.vz-tab {
+  display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 2px; margin-bottom: -1px;
+  border: 0; border-bottom: 2px solid transparent; background: transparent; cursor: pointer;
+  font-family: var(--vz-font); font-size: 14px; font-weight: 500; color: var(--vz-text-muted);
+  transition: color var(--vz-dur-out), border-color var(--vz-dur-out);
 }
-.vz-toggle button.on { background: var(--vz-surface); color: var(--vz-text); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.vz-tab:hover { color: var(--vz-text); }
+.vz-tab.on { color: var(--vz-accent); border-bottom-color: var(--vz-accent); }
+.vz-tab:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; border-radius: 4px; }
 
 .vz-days { display: flex; gap: 8px; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
 .vz-day {
-  flex: 1 1 0; min-width: 0; max-width: 96px; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  position: relative; flex: 1 1 0; min-width: 0; max-width: 96px; display: flex; flex-direction: column; align-items: center; gap: 4px;
   padding: 12px 8px 10px; border: 1.5px solid transparent; border-radius: var(--vz-r-md);
   background: var(--vz-surface-2); color: var(--vz-text); cursor: pointer; font-family: var(--vz-font);
   font-size: 18px; font-weight: 600; transition: border-color var(--vz-dur-out), background var(--vz-dur-out);
@@ -509,6 +546,15 @@ export const css = `
 .vz-day small { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; color: var(--vz-text-muted); }
 .vz-day .vz-free { width: 7px; height: 7px; border-radius: 50%; background: var(--vz-success); }
 .vz-day .vz-free.ghost { background: transparent; }
+/* A strip with a promoted day: room above the row for the corner badges and the
+   day label pushed clear of them. */
+.vz-days.has-promo { padding-top: 10px; }
+.vz-days.has-promo .vz-day { padding-top: 16px; }
+/* The rental strip lists the whole horizon: it scrolls sideways with tiles at
+   the width the visit strip pages by, instead of squeezing every day into one row. */
+.vz-days.scroll { overflow-x: auto; touch-action: auto; scrollbar-width: none; padding-bottom: 2px; }
+.vz-days.scroll::-webkit-scrollbar { display: none; }
+.vz-days.scroll .vz-day { flex: 0 0 60px; }
 
 /* month grid */
 .vz-month { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
@@ -545,7 +591,7 @@ export const css = `
 .vz-pill.on small { color: var(--vz-text); }
 .vz-slots { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
 .vz-slot {
-  padding: 13px 0; border: 1.5px solid transparent; border-radius: var(--vz-r-md);
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 13px 0; border: 1.5px solid transparent; border-radius: var(--vz-r-md);
   background: var(--vz-surface-2); color: var(--vz-text); cursor: pointer; font-family: var(--vz-font);
   font-size: 15px; font-weight: 600; text-align: center;
   transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
@@ -553,6 +599,10 @@ export const css = `
 .vz-slot:hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
 .vz-slot:active { transform: scale(.97); }
 .vz-slot.selected { border-color: var(--vz-accent); background: var(--vz-selected); }
+/* A grid with a promoted slot: room above the first row and between rows for
+   the corner badges, the time pushed clear of them. */
+.vz-slots.has-promo { padding-top: 10px; row-gap: 16px; }
+.vz-slots.has-promo .vz-slot { padding-top: 16px; padding-bottom: 12px; }
 
 /* ---- STICKY CTA BAR ---------------------------------------------------- */
 .vz-cta { flex: 0 0 auto; border-top: 1px solid var(--vz-border); background: var(--vz-surface); padding: 12px 16px 14px; }
@@ -579,6 +629,73 @@ export const css = `
 .vz-row > span:first-child { color: var(--vz-text-muted); }
 .vz-row > span:last-child { font-weight: 500; text-align: right; }
 .vz-row.total > span { font-weight: 600; font-size: 15px; }
+
+/* ---- PROMOTIONS -------------------------------------------------------- */
+/* Promotion badge in the .vz-chip idiom: text in the body colour, the brand only
+   as a background (hosts override the accent with anything). Always in flow,
+   never pinned over another label, never below 12px. */
+.vz-promo-badge {
+  display: inline-flex; align-items: center; width: max-content; max-width: 100%;
+  padding: 2px 8px; border-radius: var(--vz-r-pill);
+  background: color-mix(in srgb, var(--vz-accent) 20%, var(--vz-surface));
+  color: var(--vz-text); font-family: var(--vz-font); font-size: 12px; font-weight: 500; line-height: 1.4;
+  letter-spacing: 0; text-transform: none; white-space: nowrap;
+}
+/* The reference-price line: helper text like .vz-opt-desc. */
+.vz-lowest-price { display: block; color: var(--vz-text-muted); font-size: 12px; font-weight: 400; line-height: 1.4; letter-spacing: 0; text-transform: none; }
+.vz-promo-value { display: inline-flex; flex-wrap: wrap; align-items: baseline; justify-content: flex-end; gap: 0 6px; }
+.vz-price-before { color: var(--vz-text-muted); font-weight: 400; text-decoration: line-through; }
+/* A price row carrying a promotion: value + badge on the right, note under the row. */
+.vz-row-promo { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 8px; }
+.vz-row.has-note { flex-wrap: wrap; row-gap: 4px; }
+.vz-row.has-note > span:nth-child(2) { text-align: right; }
+.vz-row-note { flex: 1 0 100%; }
+.vz-quote { border-top: 1px solid var(--vz-border); }
+.vz-quote.first { border-top: 0; }
+.vz-quote-head { display: flex; align-items: center; gap: 8px; padding-top: 12px; font-size: 12.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--vz-text-muted); }
+.vz-quote-note { margin-top: -4px; padding-bottom: 10px; }
+/* Day and time tiles (owner's mockup): the badge sits on the tile's top-right
+   edge, straddling the border, opaque so the border does not run through it.
+   It grows leftwards and never truncates the value. */
+.vz-promo-badge.corner {
+  position: absolute; top: -9px; right: 6px; z-index: 1; max-width: none; pointer-events: none;
+  padding: 0 6px; line-height: 16px;
+  background: color-mix(in srgb, var(--vz-accent) 15%, var(--vz-surface));
+  border: 1px solid color-mix(in srgb, var(--vz-accent) 35%, var(--vz-surface));
+  color: var(--vz-text); font-size: 12px; font-weight: 500; letter-spacing: 0;
+}
+/* Month cell: a tinted dot beside the free dot; the caption under the grid names it. */
+.vz-mcell-dots { display: flex; gap: 3px; }
+.vz-promo-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--vz-accent); }
+.vz-promo-foot { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.vz-promo-caption { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12px; color: var(--vz-text-muted); line-height: 1.4; }
+.vz-promo-caption .vz-promo-dot { width: 7px; height: 7px; }
+/* An add-on's promotion under its helper lines. */
+.vz-opt-promo { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 4px; }
+/* Promotion of the chosen rental length, under the pills. */
+/* Session list: the day's common value in the header, the price in .vz-price weight. */
+.vz-slot-group-promo { margin-left: -2px; letter-spacing: 0; text-transform: none; color: var(--vz-text); }
+.vz-session-note { margin: -4px 0 10px; }
+/* A worker's own promotion: a band across the specialist card's foot (owner's
+   mockup) - accent hairline on top, an accent tint a step stronger than the
+   selected card's wash, a tag icon, the headline in 500, when it applies plain
+   on its own line, the note and the reference price in 12px. Text stays in the
+   body colours. */
+.vz-staff-band {
+  display: flex; align-items: flex-start; gap: 10px; padding: 11px 16px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--vz-accent) 25%, var(--vz-surface));
+  background: color-mix(in srgb, var(--vz-accent) 12%, var(--vz-surface));
+  color: var(--vz-text); font-size: 13.5px; line-height: 1.4;
+}
+.vz-card.selected .vz-staff-band { background: color-mix(in srgb, var(--vz-accent) 20%, var(--vz-surface)); }
+.vz-staff-band-icon { flex: 0 0 auto; margin-top: 2px; color: var(--vz-accent); }
+.vz-staff-band-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.vz-staff-band-entry, .vz-staff-band-text { display: flex; flex-direction: column; gap: 2px; }
+.vz-staff-band-line { font-weight: 500; }
+.vz-staff-band-note { font-size: 12px; color: color-mix(in srgb, var(--vz-text-muted) 70%, var(--vz-text)); }
+@media (max-width: 400px) {
+  .vz-staff-band { padding: 10px 13px 11px; }
+}
 
 /* ---- FIELDS / INPUTS --------------------------------------------------- */
 .vz-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

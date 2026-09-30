@@ -1,6 +1,7 @@
 import { SummaryCard, type SummaryRow } from '../ui/SummaryCard'
 import { Button } from '../ui/Button'
 import { Check, Clock } from '../ui/icons'
+import type { PriceQuote } from '../api'
 
 /**
  * Success screen. Status-aware: a business with manual confirmation returns the
@@ -12,6 +13,7 @@ import { Check, Clock } from '../ui/icons'
  */
 export function StepDone({
   rows,
+  quote,
   status,
   email,
   kind = 'service',
@@ -19,6 +21,7 @@ export function StepDone({
   onRestart,
 }: {
   rows: SummaryRow[]
+  quote?: PriceQuote | null
   status: string | null
   email: string
   /** A class sign-up is never "pending" and is not called a "rezerwacja". */
@@ -51,7 +54,7 @@ export function StepDone({
         )}
       </div>
       <div style="margin-top:18px;text-align:left;">
-        <SummaryCard rows={rows} />
+        <SummaryCard rows={rows} quote={quote} />
       </div>
       {onClose ? <Button onClick={onClose}>Gotowe</Button> : <Button variant="ghost" onClick={onRestart}>{isClass ? 'Nowy zapis' : 'Nowa rezerwacja'}</Button>}
     </div>

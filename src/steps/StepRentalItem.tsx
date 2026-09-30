@@ -1,7 +1,8 @@
-import type { Resource } from '../api'
+import type { PublicPromotionSummary, Resource } from '../api'
 import { formatPrice2, rentalUnitsLabel } from '../api'
 import { SelectCard } from '../ui/SelectCard'
 import { Users } from '../ui/icons'
+import { LowestPriceLine, PromoBadge } from '../ui/PromoBadge'
 
 /** One card = one rentable OFFER, which is not the same as one row in the database. */
 export type RentalOption = {
@@ -46,10 +47,12 @@ export function StepRentalItem({
   options,
   selectedKey,
   onPick,
+  promotionSummary,
 }: {
   options: RentalOption[]
   selectedKey: string | null
   onPick: (o: RentalOption) => void
+  promotionSummary?: PublicPromotionSummary | null
 }) {
   if (options.length === 0) {
     return (
@@ -65,6 +68,10 @@ export function StepRentalItem({
         const min = Math.max(1, o.head.rentalMinUnits ?? 1)
         const tier = (o.head.pricingTiers ?? [])[0]
         const rate = tier?.unitPrice ?? o.head.rentalRate ?? null
+        const promotion = promotionSummary?.rentals.find((p) =>
+          (p.rentalTypeId != null && p.rentalTypeId === o.head.rentalTypeId)
+          || (p.resourceId != null && o.members.some((member) => member.id === p.resourceId)),
+        )
         return (
           <SelectCard
             key={rentalOptionKey(o)}
@@ -83,6 +90,8 @@ export function StepRentalItem({
                 {o.head.rentalMaxPartySize != null && (
                   <span class="vz-dur"><Users size={14} /> do {o.head.rentalMaxPartySize} os.</span>
                 )}
+                {promotion && <PromoBadge>Zaoszczędź do {promotion.saveUpToPercent}%</PromoBadge>}
+                {promotion && <LowestPriceLine price={promotion.priorPrice} suffix={promotion.unitLabel} />}
               </>
             }
           />

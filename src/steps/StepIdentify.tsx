@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks'
-import type { BookingPolicy } from '../api'
+import type { BookingPolicy, PriceQuote } from '../api'
 import { isLikelyPhone } from '../data/countries'
 import { StepHeader } from '../ui/StepHeader'
 import { Notice } from '../ui/Notice'
@@ -42,6 +42,7 @@ function cancellationText(p: BookingPolicy): string {
 
 export function StepIdentify({
   summary,
+  quote,
   contact,
   onChange,
   notes,
@@ -58,6 +59,7 @@ export function StepIdentify({
   onTurnstile,
 }: {
   summary: SummaryRow[]
+  quote?: PriceQuote | null
   contact: Contact
   onChange: (c: Contact) => void
   // Optional appointment note ("Notatki") - only rendered when onNotes is passed.
@@ -96,7 +98,7 @@ export function StepIdentify({
     <div class="vz-fade-in">
       <StepHeader title="Twoje dane" />
       {/* No rows = access-check login before any slot is chosen - skip the card. */}
-      {summary.length > 0 && <SummaryCard rows={summary} />}
+      {summary.length > 0 && <SummaryCard rows={summary} quote={quote} />}
 
       {!emailExists && (
         <div class="vz-vizyto-card">

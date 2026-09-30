@@ -186,6 +186,84 @@ export type CartItem = {
   durationMinutes?: number | null
 }
 
+// Public promotion contract. The widget intentionally keeps a local copy rather
+// than importing @vizyto/shared, because it is built and released independently.
+/** `headline` is the first line of a worker's strip; absent from an older API. */
+export type PromotionText = { amount: string; headline?: string; rest: string; note: string | null }
+export type PromoPriceFields = { price: number; listPrice: number; priorPrice: number | null; advertised: boolean; badge: string | null }
+export type PriceQuoteLine = {
+  kind: 'service' | 'addon' | 'group_class_entry' | 'enrollment_option' | 'rental'
+  name: string
+  quantity: number
+  listPrice: number | null
+  price: number | null
+  promotionId: number | null
+  priorPrice: number | null
+  advertised: boolean
+  badge: string | null
+}
+export type PriceQuote = {
+  lines: PriceQuoteLine[]
+  total: number | null
+  listTotal: number | null
+  priorTotal: number | null
+  advertised: boolean
+  badge: string | null
+  assignedResourceId: number | null
+}
+export type PublicPromotionSummary = {
+  maxSavePercent: number | null
+  services: Array<{ businessServiceId: number; saveUpToPercent: number; priorPrice: number; priorPriceIsFrom: boolean }>
+  addons: Array<{ addonId: number; saveUpToPercent: number; priorPrice: number }>
+  staff: Array<{ resourceId: number; businessServiceId: number; variantMinutes?: number | null; texts: PromotionText[]; priorPrice: number }>
+  groupClasses: Array<{ groupClassId: number; saveUpToPercent: number; priorPrice: number }>
+  enrollmentOptions: Array<PromoPriceFields & { enrollmentOptionId: number; text: PromotionText }>
+  rentals: Array<{ rentalTypeId: number | null; resourceId: number | null; saveUpToPercent: number; priorPrice: number; unitLabel: string }>
+}
+export type PromoBadgesCartItem = { businessServiceId: number; resourceId?: number | null; addonIds?: number[]; durationMinutes?: number | null }
+export type PromoBadgesRequest = {
+  target: { kind: 'cart'; items: PromoBadgesCartItem[] } | { kind: 'rental'; resourceId?: number | null; rentalTypeId?: number | null; units?: number | null }
+  dates: string[]
+  slots?: { date: string; times: string[] } | null
+  bookedById?: number | null
+}
+export type PromoBadges = {
+  days: Record<string, string | null>
+  slots: Record<string, string | null>
+  /** Lowest advertised total of the marked days and slots, with its 30-day price. Absent from an older API. */
+  lowest?: { total: number; priorTotal: number } | null
+}
+
+/**
+ * A worker's own promotion for one cart position (#430): the length preset is part
+ * of the match (null = a service without presets). A position that names no preset
+ * takes the worker's one strip for the service when there is exactly one.
+ * (Local twin of packages/shared findStaffPromotion.)
+ */
+export function findStaffPromotion(
+  summary: PublicPromotionSummary | null | undefined,
+  resourceId: number,
+  businessServiceId: number,
+  variantMinutes: number | null | undefined,
+): PublicPromotionSummary['staff'][number] | undefined {
+  const own = summary?.staff.filter((x) => x.resourceId === resourceId && x.businessServiceId === businessServiceId) ?? []
+  const exact = own.find((x) => (x.variantMinutes ?? null) === (variantMinutes ?? null))
+  if (exact) return exact
+  return variantMinutes == null && own.length === 1 ? own[0] : undefined
+}
+export type AppointmentQuoteRequest = { items: PromoBadgesCartItem[]; startDate: string; bookedById?: number | null }
+export type RentalQuoteRequest = {
+  resourceId?: number | null
+  rentalTypeId?: number | null
+  startDate: string
+  endDate: string
+  addons?: Array<{ addonId: number; quantity?: number }>
+  partySize?: number | null
+  bookedById?: number | null
+}
+export type PriceChangedError = { code: 'PRICE_CHANGED'; message: string; pricing: PriceQuote }
+export type BookingWriteResult = { ok: true; data: any } | { ok: false; code: string; pricing?: PriceQuote }
+
 // mode: 'login' = the phone already belongs to a Vizyto account and the SAME
 // code will log the customer into it (no duplicate guest account); 'guest' =
 // the classic guest-signup path.
@@ -264,6 +342,8 @@ export type GroupSession = {
   instructor?: { id: number; name: string; image: string | null } | null
   /** seats already taken (registered + auto-enrolled members) */
   attendeeCount?: number
+  /** Server-priced promotion for this entry. Absent on older APIs. */
+  promo?: PromoPriceFields | null
 }
 
 export async function fetchGroupClasses(cfg: Cfg): Promise<GroupClass[]> {
@@ -322,6 +402,7 @@ export async function fetchTimetable(cfg: Cfg, p: { from: string; to: string }):
         priceOverride: s.priceOverride ?? null,
         instructor: s.instructor ?? null,
         attendeeCount: s.attendeeCount ?? s.effectiveAttendeeCount ?? 0,
+        promo: s.promo ?? null,
       }))
       .filter((s: GroupSession) => s.status !== 'cancelled')
   } catch {
@@ -336,10 +417,10 @@ export async function fetchTimetable(cfg: Cfg, p: { from: string; to: string }):
  */
 export async function registerForSession(
   cfg: Cfg,
-  p: { sessionId: number; bookedById: number; notes?: string; idempotencyKey: string },
+  p: { sessionId: number; bookedById: number; notes?: string; idempotencyKey: string; expectedTotal?: number | null },
   token: string | null,
-): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
-  if (cfg.mock) return mock.registerForSession({ sessionId: p.sessionId }, token)
+): Promise<BookingWriteResult> {
+  if (cfg.mock) return mock.registerForSession({ sessionId: p.sessionId, expectedTotal: p.expectedTotal }, token)
   try {
     const extra: Record<string, string> = { 'Idempotency-Key': p.idempotencyKey }
     if (token) extra.authorization = `Bearer ${token}`
@@ -348,11 +429,11 @@ export async function registerForSession(
       {
         method: 'POST',
         headers: headers(cfg, extra),
-        body: JSON.stringify({ bookedById: p.bookedById, notes: p.notes }),
+        body: JSON.stringify({ bookedById: p.bookedById, notes: p.notes, ...(p.expectedTotal !== undefined ? { expectedTotal: p.expectedTotal } : {}) }),
       },
     )
     const data = await r.json().catch(() => ({}))
-    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}` }
+    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}`, pricing: data?.code === 'PRICE_CHANGED' ? normalizeQuote(data?.pricing) ?? undefined : undefined }
     return { ok: true, data }
   } catch {
     return { ok: false, code: 'NETWORK' }
@@ -383,7 +464,7 @@ function resolveAvailability(value: {
 // Pretending a week is a "slot" would give a calendar that lies, so the time step
 // renders one of two bodies.
 
-export type RentalDaySlot = { start: string; local: string; resourceIds: number[] }
+export type RentalDaySlot = { start: string; local: string; resourceIds: number[]; promo?: PromoPriceFields | null }
 export type RentalDaySlots =
   | { mode: 'slots'; unit: RentalUnit; minUnits: number; stepMinutes: number; durationMinutes: number; slots: RentalDaySlot[] }
   | { mode: 'range' }
@@ -453,10 +534,10 @@ export async function checkRentalRange(
 
 export async function createRental(
   cfg: Cfg,
-  p: RentalTarget & { startDate: string; endDate: string; bookedById: number; notes?: string; partySize?: number | null; idempotencyKey: string },
+  p: RentalTarget & { startDate: string; endDate: string; bookedById: number; notes?: string; partySize?: number | null; idempotencyKey: string; expectedTotal?: number | null },
   token: string | null,
-): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
-  if (cfg.mock) return mock.createRental({ startDate: p.startDate }, token)
+): Promise<BookingWriteResult> {
+  if (cfg.mock) return mock.createRental({ startDate: p.startDate, expectedTotal: p.expectedTotal }, token)
   try {
     const extra: Record<string, string> = { 'Idempotency-Key': p.idempotencyKey }
     if (token) extra.authorization = `Bearer ${token}`
@@ -471,10 +552,11 @@ export async function createRental(
         bookedById: p.bookedById,
         notes: p.notes,
         partySize: p.partySize ?? null,
+        ...(p.expectedTotal !== undefined ? { expectedTotal: p.expectedTotal } : {}),
       }),
     })
     const data = await r.json().catch(() => ({}))
-    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}` }
+    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}`, pricing: data?.code === 'PRICE_CHANGED' ? normalizeQuote(data?.pricing) ?? undefined : undefined }
     return { ok: true, data }
   } catch {
     return { ok: false, code: 'NETWORK' }
@@ -587,6 +669,108 @@ async function isAccessRestricted(r: Response): Promise<boolean> {
 // calls carry the Bearer; bookedById stays in the body for APIs released before.
 const viewerHeaders = (cfg: Cfg, token?: string | null) =>
   headers(cfg, token ? { authorization: `Bearer ${token}` } : undefined)
+
+const normalizeSummary = (value: any): PublicPromotionSummary => ({
+  maxSavePercent: typeof value?.maxSavePercent === 'number' ? value.maxSavePercent : null,
+  services: Array.isArray(value?.services) ? value.services : [],
+  addons: Array.isArray(value?.addons) ? value.addons : [],
+  staff: Array.isArray(value?.staff) ? value.staff : [],
+  groupClasses: Array.isArray(value?.groupClasses) ? value.groupClasses : [],
+  enrollmentOptions: Array.isArray(value?.enrollmentOptions) ? value.enrollmentOptions : [],
+  rentals: Array.isArray(value?.rentals) ? value.rentals : [],
+})
+
+const normalizeQuote = (value: any): PriceQuote | null => {
+  if (!value || typeof value !== 'object') return null
+  return {
+    lines: Array.isArray(value.lines) ? value.lines : [],
+    total: typeof value.total === 'number' ? value.total : null,
+    listTotal: typeof value.listTotal === 'number' ? value.listTotal : null,
+    priorTotal: typeof value.priorTotal === 'number' ? value.priorTotal : null,
+    advertised: value.advertised === true,
+    badge: typeof value.badge === 'string' ? value.badge : null,
+    assignedResourceId: typeof value.assignedResourceId === 'number' ? value.assignedResourceId : null,
+  }
+}
+
+// Promotion reads are all fail-soft. A cached widget can spend a day talking to
+// an older API, so an absent route must look exactly like the pre-promotion UI.
+export async function getPromotionSummary(
+  cfg: Cfg,
+  bookedById?: number | null,
+  token?: string | null,
+): Promise<PublicPromotionSummary | null> {
+  if (cfg.mock) return mock.getPromotionSummary(bookedById)
+  try {
+    const q = bookedById != null ? `?bookedById=${encodeURIComponent(String(bookedById))}` : ''
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/promotions/summary${q}`, {
+      headers: viewerHeaders(cfg, token),
+    })
+    return r.ok ? normalizeSummary(await r.json()) : null
+  } catch {
+    return null
+  }
+}
+
+export async function getPromoBadges(
+  cfg: Cfg,
+  p: PromoBadgesRequest,
+  token?: string | null,
+): Promise<PromoBadges | null> {
+  if (cfg.mock) return mock.getPromoBadges(p)
+  try {
+    const owner = p.target.kind === 'rental' ? 'rentals' : 'appointments'
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/${owner}/promo-badges`, {
+      method: 'POST',
+      headers: viewerHeaders(cfg, token),
+      body: JSON.stringify(p),
+    })
+    if (!r.ok) return null
+    const data = await r.json()
+    return {
+      days: data?.days && typeof data.days === 'object' ? data.days : {},
+      slots: data?.slots && typeof data.slots === 'object' ? data.slots : {},
+    }
+  } catch {
+    return null
+  }
+}
+
+export async function quoteAppointment(
+  cfg: Cfg,
+  p: AppointmentQuoteRequest,
+  token?: string | null,
+): Promise<PriceQuote | null> {
+  if (cfg.mock) return mock.quoteAppointment(p)
+  try {
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/appointments/quote`, {
+      method: 'POST',
+      headers: viewerHeaders(cfg, token),
+      body: JSON.stringify(p),
+    })
+    return r.ok ? normalizeQuote(await r.json()) : null
+  } catch {
+    return null
+  }
+}
+
+export async function quoteRental(
+  cfg: Cfg,
+  p: RentalQuoteRequest,
+  token?: string | null,
+): Promise<PriceQuote | null> {
+  if (cfg.mock) return mock.quoteRental(p)
+  try {
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/rentals/quote`, {
+      method: 'POST',
+      headers: viewerHeaders(cfg, token),
+      body: JSON.stringify(p),
+    })
+    return r.ok ? normalizeQuote(await r.json()) : null
+  } catch {
+    return null
+  }
+}
 
 // Per-day free-slot counts over a range, via the cart contract (POST). A single
 // item is still a 1-element cart, so variants/add-ons that lengthen the chain are
@@ -906,10 +1090,10 @@ export async function joinWaitlist(cfg: Cfg, p: WaitlistParams, token: string | 
 
 export async function createAppointment(
   cfg: Cfg,
-  p: { items: CartItem[]; startDate: string; bookedById: number; notes?: string; idempotencyKey: string },
+  p: { items: CartItem[]; startDate: string; bookedById: number; notes?: string; idempotencyKey: string; expectedTotal?: number | null },
   token: string | null,
-): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
-  if (cfg.mock) return mock.createAppointment({ startDate: p.startDate }, token)
+): Promise<BookingWriteResult> {
+  if (cfg.mock) return mock.createAppointment({ startDate: p.startDate, expectedTotal: p.expectedTotal }, token)
   try {
     const extra: Record<string, string> = { 'Idempotency-Key': p.idempotencyKey }
     if (token) extra.authorization = `Bearer ${token}`
@@ -918,10 +1102,16 @@ export async function createAppointment(
       headers: headers(cfg, extra),
       // Cart contract: array order = chain order. Each item carries its own
       // resourceId (null = Dowolny), add-ons and chosen variant length.
-      body: JSON.stringify({ bookedById: p.bookedById, items: p.items, startDate: p.startDate, notes: p.notes }),
+      body: JSON.stringify({
+        bookedById: p.bookedById,
+        items: p.items,
+        startDate: p.startDate,
+        notes: p.notes,
+        ...(p.expectedTotal !== undefined ? { expectedTotal: p.expectedTotal } : {}),
+      }),
     })
     const data = await r.json().catch(() => ({}))
-    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}` }
+    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}`, pricing: data?.code === 'PRICE_CHANGED' ? normalizeQuote(data?.pricing) ?? undefined : undefined }
     return { ok: true, data }
   } catch {
     return { ok: false, code: 'NETWORK' }
