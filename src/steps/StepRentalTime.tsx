@@ -6,7 +6,7 @@ import { Notice } from '../ui/Notice'
 import { SummaryCard } from '../ui/SummaryCard'
 import { Calendar, Clock, Users } from '../ui/icons'
 import type { PromoNote } from '../ui/PromoBadge'
-import { LowestPriceLine, PromoBadge, PromoNotes, commonBadge, dayPromo } from '../ui/PromoBadge'
+import { LowestPriceLine, PromoBadge, PromoNotes, dayPromo } from '../ui/PromoBadge'
 
 /**
  * "Kiedy" for a rental, in the two shapes the billing unit forces:
@@ -78,8 +78,8 @@ export function StepRentalTime({
   const dayMarks = dayPromo(days, free, badges?.days)
   const slotBadge = (sl: { start: string; promo?: { advertised: boolean; badge: string | null } | null }): string | null =>
     (sl.promo?.advertised && sl.promo.badge ? sl.promo.badge : badges?.slots[sl.start.slice(11, 16)] ?? null)
+  // Every promoted day and hour carries its corner badge (owner's mockup, #430).
   const slotBadges = slots?.mode === 'slots' && promoNotes.length ? slots.slots.map(slotBadge) : []
-  const commonSlot = commonBadge(slotBadges)
   const slotMarked = slotBadges.some(Boolean)
   const returnDate = (() => {
     if (!date) return null
@@ -148,7 +148,7 @@ export function StepRentalTime({
       <div class="vz-cal-head">
         <span class="vz-cal-month"><Calendar size={16} /> {isRange ? 'Odbiór' : 'Termin'}</span>
       </div>
-      <div class="vz-days">
+      <div class={`vz-days scroll${dayMarks.any ? ' has-promo' : ''}`}>
         {days.map((d) => {
           const f = free(d)
           return (
@@ -163,18 +163,15 @@ export function StepRentalTime({
               <small>{weekday(d)}</small>
               {dayNum(d)}
               <span class={`vz-free${f ? '' : ' ghost'}`} />
-              {dayMarks.tile(d) && <PromoBadge>{dayMarks.tile(d)}</PromoBadge>}
+              {dayMarks.tile(d) && <PromoBadge corner>{dayMarks.tile(d)}</PromoBadge>}
             </button>
           )
         })}
       </div>
       {/* One reference-price line on the step: the chosen length already carries it. */}
-      {(dayMarks.any || slotMarked) && (
+      {(dayMarks.any || slotMarked) && !lengthPromo && (
         <div class="vz-promo-foot">
-          {dayMarks.common && (
-            <div class="vz-promo-caption"><PromoBadge>{dayMarks.common}</PromoBadge> we wszystkie dostępne dni</div>
-          )}
-          {!lengthPromo && <PromoNotes notes={promoNotes} />}
+          <PromoNotes notes={promoNotes} />
         </div>
       )}
 
@@ -210,10 +207,10 @@ export function StepRentalTime({
         </div>
       ) : slots && slots.mode === 'slots' ? (
         <div class="vz-slot-group">
-          <div class="vz-slot-group-h">Godzina odbioru{commonSlot && <span class="vz-slot-group-promo">· {commonSlot}</span>}</div>
-          <div class="vz-slots">
+          <div class="vz-slot-group-h">Godzina odbioru</div>
+          <div class={`vz-slots${slotMarked ? ' has-promo' : ''}`}>
             {slots.slots.map((sl, index) => {
-              const badge = commonSlot ? null : slotBadges[index] ?? null
+              const badge = slotBadges[index] ?? null
               return (
                 <button
                   class={`vz-slot${sl.local === selectedSlot ? ' selected' : ''}`}
@@ -223,7 +220,7 @@ export function StepRentalTime({
                   type="button"
                 >
                   {sl.local}
-                  {badge && <PromoBadge>{badge}</PromoBadge>}
+                  {badge && <PromoBadge corner>{badge}</PromoBadge>}
                 </button>
               )
             })}

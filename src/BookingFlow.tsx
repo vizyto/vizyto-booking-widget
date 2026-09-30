@@ -2595,6 +2595,7 @@ export function BookingFlow({
             providerChip={showProviderChip ? {
               label: providerName,
               people: pinnedPeople.map((p) => ({ name: p.name, image: p.image })),
+              plural: pinnedPeople.length > 1 || (pinnedPeople.length > 0 && someUnassigned),
               editor: canEditProviders
                 ? <ItemProviders items={lines} workers={workers} onPick={pickItemResource} promotionSummary={promotionSummary} />
                 : undefined,

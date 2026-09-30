@@ -4,7 +4,7 @@ import { configuredTotals, formatDuration, formatPrice2 } from '../api'
 import { getResourcesForService, getStaffItems } from '../providerMode'
 import { SelectCard } from '../ui/SelectCard'
 import { ChevronDown, Shuffle } from '../ui/icons'
-import { StaffPromotion } from '../ui/PromoBadge'
+import { StaffPromoBand, shownStaffPromos } from '../ui/PromoBadge'
 
 export type AssignItem = {
   service: Service
@@ -78,6 +78,7 @@ export function ItemProviders({
                 />
                 {candidates.map((c) => {
                   const promotion = promotionSummary?.staff.find((x) => x.resourceId === c.id && x.businessServiceId === it.service.id)
+                  const staffPromos = promotion ? shownStaffPromos([{ texts: promotion.texts, priorPrice: promotion.priorPrice }]) : []
                   return (
                     <SelectCard
                       key={c.id}
@@ -85,13 +86,11 @@ export function ItemProviders({
                       title={c.name}
                       sub={c.position || undefined}
                       meta={
-                        <>
-                          <span class="vz-price">
-                            {formatPrice2(configuredTotals(it.service, it.variantDuration, it.addonIds, c.id).price)}
-                          </span>
-                          {promotion && <StaffPromotion texts={promotion.texts} priorPrice={promotion.priorPrice} />}
-                        </>
+                        <span class="vz-price">
+                          {formatPrice2(configuredTotals(it.service, it.variantDuration, it.addonIds, c.id).price)}
+                        </span>
                       }
+                      foot={staffPromos.length ? <StaffPromoBand entries={staffPromos} /> : undefined}
                       selected={it.resourceId === c.id}
                       onSelect={() => {
                         onPick(it.service.id, c.id)

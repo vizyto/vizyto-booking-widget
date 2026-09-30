@@ -4,7 +4,7 @@ import { SelectCard } from '../ui/SelectCard'
 import { Notice } from '../ui/Notice'
 import { Clock, Shuffle, Users } from '../ui/icons'
 import { ItemProviders } from './ItemProviders'
-import { StaffPromotion } from '../ui/PromoBadge'
+import { StaffPromoBand, shownStaffPromos } from '../ui/PromoBadge'
 
 type ResChoice = number | 'any'
 
@@ -133,12 +133,16 @@ export function StepResource({
             )
           }
           const totals = totalsFor(p.id)
-          const staffPromotions = items
-            .map((item) => ({
-              serviceName: item.service.name,
-              promotion: promotionSummary?.staff.find((x) => x.resourceId === p.id && x.businessServiceId === item.service.id),
-            }))
-            .filter((x): x is { serviceName: string; promotion: NonNullable<typeof x.promotion> } => !!x.promotion)
+          // One entry per promoted position, named only when the card covers several.
+          const staffPromos = shownStaffPromos(
+            items
+              .map((item) => ({
+                label: items.length > 1 ? item.service.name : null,
+                promotion: promotionSummary?.staff.find((x) => x.resourceId === p.id && x.businessServiceId === item.service.id),
+              }))
+              .filter((x) => !!x.promotion)
+              .map(({ label, promotion }) => ({ label, texts: promotion!.texts, priorPrice: promotion!.priorPrice })),
+          )
           return (
             <SelectCard
               avatar={p.image ? <img src={p.image} alt="" /> : p.name.charAt(0)}
@@ -148,17 +152,10 @@ export function StepResource({
                 <>
                   <span class="vz-dur"><Clock size={14} /> {formatDuration(totals.duration)}</span>
                   <span class="vz-price">{formatPrice2(totals.price)}</span>
-                  {/* One entry per promoted position, named only when the card covers several. */}
-                  {staffPromotions.map(({ serviceName, promotion }, index) => (
-                    <StaffPromotion
-                      key={`${serviceName}-${index}`}
-                      texts={promotion.texts}
-                      priorPrice={promotion.priorPrice}
-                      label={items.length > 1 ? serviceName : null}
-                    />
-                  ))}
                 </>
               }
+              // The worker's own promotion (#430) as a band across the card's foot.
+              foot={staffPromos.length ? <StaffPromoBand entries={staffPromos} /> : undefined}
               selected={!perItem && selected === p.id}
               onSelect={() => onPick(p.id)}
             />
