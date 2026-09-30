@@ -87,6 +87,7 @@ import { StepOtp } from './steps/StepOtp'
 import { StepDone } from './steps/StepDone'
 import { Notice } from './ui/Notice'
 import { Bell, Lock, Phone } from './ui/icons'
+import { CdnImg } from './ui/CdnImg'
 
 const HORIZON = 42
 const OTP_RESEND_MS = 60_000
@@ -2806,7 +2807,7 @@ export function BookingFlow({
             {effKind === 'service' && stepId !== 'service' && (eachMode || cartResource != null) && (
               <div class="vz-cta-who">
                 {pinnedResource && !eachMode ? (
-                  <span class="vz-card-av">{pinnedResource.image ? <img src={pinnedResource.image} alt="" /> : pinnedResource.name.charAt(0)}</span>
+                  <span class="vz-card-av">{pinnedResource.image ? <CdnImg src={pinnedResource.image} width={112} alt="" /> : pinnedResource.name.charAt(0)}</span>
                 ) : (
                   <AvatarStack people={pinnedPeople.map((p) => ({ name: p.name, image: p.image }))} max={2} />
                 )}

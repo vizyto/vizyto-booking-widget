@@ -4,6 +4,7 @@ import { formatDuration, priceLabel, richTextToPlain, serviceBaseRange } from '.
 import type { Resource } from '../api'
 import { ChevronLeft, ChevronRight, Clock, Close } from '../ui/icons'
 import { LowestPriceLine, PromoBadge } from '../ui/PromoBadge'
+import { CdnImg } from '../ui/CdnImg'
 
 /**
  * Szczegóły usługi - ten sam ekran co arkusz "service/Details" na profilu
@@ -75,7 +76,7 @@ export function StepDetails({
               aria-label={`Powiększ zdjęcie ${i + 1} z ${shots.length}`}
               onClick={() => setZoom(url)}
             >
-              <img src={url} alt="" loading="lazy" onError={() => setBroken((b) => ({ ...b, [url]: true }))} />
+              <CdnImg src={url} width={224} alt="" loading="lazy" onError={() => setBroken((b) => ({ ...b, [url]: true }))} />
             </button>
           ))}
         </div>
@@ -108,7 +109,7 @@ export function StepDetails({
           aria-label={`Zdjęcie ${at + 1} z ${shots.length}: ${service.name}`}
           onClick={() => setZoom(null)}
         >
-          <img class="vz-lb-img" src={shots[at]} alt={service.name} onClick={(e) => e.stopPropagation()} />
+          <CdnImg class="vz-lb-img" src={shots[at]} width={1600} square={false} alt={service.name} onClick={(e) => e.stopPropagation()} />
           <button type="button" class="vz-lb-btn close" aria-label="Zamknij zdjęcie" onClick={() => setZoom(null)}>
             <Close size={20} />
           </button>

@@ -5,6 +5,7 @@ import { getResourcesForService, getStaffItems } from '../providerMode'
 import { SelectCard } from '../ui/SelectCard'
 import { ChevronDown, Shuffle } from '../ui/icons'
 import { StaffPromoBand, shownStaffPromos } from '../ui/PromoBadge'
+import { CdnImg } from '../ui/CdnImg'
 
 export type AssignItem = {
   service: Service
@@ -82,7 +83,7 @@ export function ItemProviders({
               onClick={() => candidates.length && setOpenId(open ? null : it.service.id)}
             >
               <span class="vz-chip-av">
-                {picked ? picked.image ? <img src={picked.image} alt="" /> : picked.name.charAt(0) : <Shuffle size={13} />}
+                {picked ? picked.image ? <CdnImg src={picked.image} width={64} alt="" /> : picked.name.charAt(0) : <Shuffle size={13} />}
               </span>
               <span class="vz-chip-name">{picked?.name ?? 'Bez preferencji'}</span>
               {candidates.length > 0 && <ChevronDown size={15} class="vz-chip-cv" />}
@@ -131,7 +132,7 @@ function ProviderOptions({
         return (
           <SelectCard
             key={c.id}
-            avatar={c.image ? <img src={c.image} alt="" /> : c.name.charAt(0)}
+            avatar={c.image ? <CdnImg src={c.image} width={112} alt="" /> : c.name.charAt(0)}
             title={c.name}
             sub={c.position || undefined}
             meta={

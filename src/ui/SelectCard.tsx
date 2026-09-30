@@ -1,6 +1,7 @@
 import { useState } from 'preact/hooks'
 import type { ComponentChildren, VNode } from 'preact'
 import { Check } from './icons'
+import { CdnImg } from './CdnImg'
 
 // Full-width choice card (service, specialist) matching the app: optional
 // avatar/thumbnail, title + subtitle + description + meta, and a control on the
@@ -75,7 +76,7 @@ export function SelectCard({
     <>
       {thumb !== undefined && (
         <span class="vz-card-thumb">
-          {thumb && imgOk ? <img src={thumb} alt="" loading="lazy" onError={() => setImgOk(false)} /> : title.charAt(0)}
+          {thumb && imgOk ? <CdnImg src={thumb} width={160} alt="" loading="lazy" onError={() => setImgOk(false)} /> : title.charAt(0)}
         </span>
       )}
       {avatar !== undefined && <span class="vz-card-av">{avatar}</span>}

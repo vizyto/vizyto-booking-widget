@@ -1,4 +1,5 @@
 import { Shuffle } from './icons'
+import { CdnImg } from './CdnImg'
 
 /**
  * The people pinned across the cart, as overlapping avatars. Empty = nobody is
@@ -17,7 +18,7 @@ export function AvatarStack({ people, max = 3 }: { people: { name: string; image
   return (
     <span class="vz-avstack">
       {shown.map((p) => (
-        <span class="vz-card-av">{p.image ? <img src={p.image} alt="" /> : p.name.charAt(0)}</span>
+        <span class="vz-card-av">{p.image ? <CdnImg src={p.image} width={112} alt="" /> : p.name.charAt(0)}</span>
       ))}
       {rest > 0 && <span class="vz-card-av">+{rest}</span>}
     </span>
