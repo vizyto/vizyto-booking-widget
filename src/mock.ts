@@ -514,11 +514,11 @@ export async function fetchGroupClasses(): Promise<GroupClass[]> {
   await wait(200)
   return [
     // Available via period enrollment, but never bookable as a single entry.
-    { id: 45, businessServiceId: 34, entryEnabled: false, availability: 'available', capacity: 12, attendanceMode: 'open', cancellationCutoffHours: null },
-    { id: 41, entryEnabled: true, businessServiceId: 31, availability: 'available', capacity: 12, attendanceMode: 'open', cancellationCutoffHours: 12 },
-    { id: 42, entryEnabled: true, businessServiceId: 32, availability: 'last_spots', capacity: 8, attendanceMode: 'open', cancellationCutoffHours: null },
-    { id: 44, entryEnabled: true, businessServiceId: 33, availability: 'full', capacity: 8, attendanceMode: 'open', cancellationCutoffHours: null },
-    { id: 43, entryEnabled: true, businessServiceId: 32, availability: 'full', capacity: 6, attendanceMode: 'fixed', cancellationCutoffHours: null },
+    { id: 45, businessServiceId: 34, entryEnabled: false, availability: 'available', capacity: 12, spotsLeft: null, attendanceMode: 'open', cancellationCutoffHours: null },
+    { id: 41, entryEnabled: true, businessServiceId: 31, availability: 'available', capacity: 12, spotsLeft: 9, attendanceMode: 'open', cancellationCutoffHours: 12 },
+    { id: 42, entryEnabled: true, businessServiceId: 32, availability: 'last_spots', capacity: 8, spotsLeft: 2, attendanceMode: 'open', cancellationCutoffHours: null },
+    { id: 44, entryEnabled: true, businessServiceId: 33, availability: 'full', capacity: 8, spotsLeft: 0, attendanceMode: 'open', cancellationCutoffHours: null },
+    { id: 43, entryEnabled: true, businessServiceId: 32, availability: 'full', capacity: 6, spotsLeft: 0, attendanceMode: 'fixed', cancellationCutoffHours: null },
   ]
 }
 
@@ -538,13 +538,13 @@ export async function fetchTimetable(): Promise<GroupSession[]> {
   const todayDow = new Date().getDay()
   const nextWednesday = ((3 - todayDow + 7) % 7) || 7
   return [
-    { id: 921, availability: 'available', groupClassId: 45, startDate: at(1, '14:00'), endDate: at(1, '15:00'), dateLocal: day(1), status: 'scheduled', capacity: 12, priceOverride: null, attendeeCount: 0 },
-    { id: 901, availability: 'available', groupClassId: 41, startDate: at(1, '16:00'), endDate: at(1, '17:00'), dateLocal: day(1), status: 'scheduled', capacity: 12, priceOverride: null, promo: isPromoDay(day(1)) ? promoFields(5000) : null, instructor: { id: 11, name: 'Marek', image: null }, attendeeCount: 3 },
-    { id: 902, availability: 'last_spots', groupClassId: 41, startDate: at(2, '14:00'), endDate: at(2, '15:00'), dateLocal: day(2), status: 'scheduled', capacity: 12, priceOverride: null, promo: isPromoDay(day(2)) ? promoFields(5000) : null, instructor: { id: 11, name: 'Marek', image: null }, attendeeCount: 11 },
-    { id: 903, availability: 'full', groupClassId: 41, startDate: at(3, '16:00'), endDate: at(3, '17:00'), dateLocal: day(3), status: 'scheduled', capacity: 12, priceOverride: null, instructor: { id: 13, name: 'Ola', image: null }, attendeeCount: 12 },
-    { id: 911, availability: 'last_spots', groupClassId: 42, startDate: at(1, '18:30'), endDate: at(1, '20:00'), dateLocal: day(1), status: 'scheduled', capacity: 8, priceOverride: null, instructor: { id: 12, name: 'Kuba', image: null }, attendeeCount: 6 },
-    { id: 912, availability: 'available', groupClassId: 42, startDate: at(4, '18:30'), endDate: at(4, '20:00'), dateLocal: day(4), status: 'scheduled', capacity: 8, priceOverride: 4000, instructor: { id: 12, name: 'Kuba', image: null }, attendeeCount: 0 },
-    { id: 913, availability: 'available', groupClassId: 42, startDate: at(nextWednesday, '14:00'), endDate: at(nextWednesday, '15:30'), dateLocal: day(nextWednesday), status: 'scheduled', capacity: 8, priceOverride: null, promo: promoFields(5500), instructor: { id: 12, name: 'Kuba', image: null }, attendeeCount: 1 },
+    { id: 921, availability: 'available', groupClassId: 45, startDate: at(1, '14:00'), endDate: at(1, '15:00'), dateLocal: day(1), status: 'scheduled', priceOverride: null },
+    { id: 901, availability: 'available', groupClassId: 41, startDate: at(1, '16:00'), endDate: at(1, '17:00'), dateLocal: day(1), status: 'scheduled', priceOverride: null, promo: isPromoDay(day(1)) ? promoFields(5000) : null, instructor: { id: 11, name: 'Marek', image: null } },
+    { id: 902, availability: 'last_spots', groupClassId: 41, startDate: at(2, '14:00'), endDate: at(2, '15:00'), dateLocal: day(2), status: 'scheduled', priceOverride: null, promo: isPromoDay(day(2)) ? promoFields(5000) : null, instructor: { id: 11, name: 'Marek', image: null } },
+    { id: 903, availability: 'full', groupClassId: 41, startDate: at(3, '16:00'), endDate: at(3, '17:00'), dateLocal: day(3), status: 'scheduled', priceOverride: null, instructor: { id: 13, name: 'Ola', image: null } },
+    { id: 911, availability: 'last_spots', groupClassId: 42, startDate: at(1, '18:30'), endDate: at(1, '20:00'), dateLocal: day(1), status: 'scheduled', priceOverride: null, instructor: { id: 12, name: 'Kuba', image: null } },
+    { id: 912, availability: 'available', groupClassId: 42, startDate: at(4, '18:30'), endDate: at(4, '20:00'), dateLocal: day(4), status: 'scheduled', priceOverride: 4000, instructor: { id: 12, name: 'Kuba', image: null } },
+    { id: 913, availability: 'available', groupClassId: 42, startDate: at(nextWednesday, '14:00'), endDate: at(nextWednesday, '15:30'), dateLocal: day(nextWednesday), status: 'scheduled', priceOverride: null, promo: promoFields(5500), instructor: { id: 12, name: 'Kuba', image: null } },
   ]
 }
 

@@ -49,7 +49,7 @@ export function StepClass({
           meta={
             <>
               <span class="vz-dur"><Clock size={14} /> {formatDuration(service.duration)}</span>
-              <AvailabilityBadge availability={cls.availability} />
+              <AvailabilityBadge availability={cls.availability} spotsLeft={cls.spotsLeft} />
               <span class="vz-price">{priceLabel(service.price)}</span>
               {promotion && <PromoBadge>Zaoszczędź do {promotion.saveUpToPercent}%</PromoBadge>}
               {promotion && <LowestPriceLine price={promotion.priorPrice} />}

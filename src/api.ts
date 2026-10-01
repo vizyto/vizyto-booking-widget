@@ -310,9 +310,11 @@ export type Availability = 'available' | 'last_spots' | 'full'
 export type GroupClass = {
   id: number
   businessServiceId: number
-  /** null = no limit */
   availability: Availability
+  /** null = no limit */
   capacity: number | null
+  /** Free seats of the term that limits the earliest entry; null = no limit. */
+  spotsLeft: number | null
   /** Whether a single-session entry can be booked. Older APIs default to true. */
   entryEnabled: boolean
   attendanceMode: 'open' | 'fixed'
@@ -336,13 +338,10 @@ export type GroupSession = {
   dateLocal: string
   status: string
   availability: Availability
-  capacity: number | null
   /** grosze; null = use the class price */
   priceOverride: number | null
   instructor?: { id: number; name: string; image: string | null } | null
-  /** seats already taken (registered + auto-enrolled members) */
-  attendeeCount?: number
-  /** Server-priced promotion for this entry. Absent on older APIs. */
+  /** Server-priced promotion for this entry. */
   promo?: PromoPriceFields | null
 }
 
@@ -361,7 +360,8 @@ export async function fetchGroupClasses(cfg: Cfg): Promise<GroupClass[]> {
         id: c.id,
         businessServiceId: c.businessServiceId,
         capacity: c.capacity ?? null,
-        availability: resolveAvailability(c),
+        spotsLeft: c.spotsLeft ?? null,
+        availability: c.availability ?? 'available',
         entryEnabled: c.entryEnabled ?? true,
         attendanceMode: c.attendanceMode ?? 'open',
         cancellationCutoffHours: c.cancellationCutoffHours ?? null,
@@ -397,11 +397,9 @@ export async function fetchTimetable(cfg: Cfg, p: { from: string; to: string }):
         endDate: s.endDate,
         dateLocal: s.dateLocal,
         status: s.status,
-        capacity: s.capacity ?? null,
-        availability: resolveAvailability(s),
+        availability: s.availability ?? 'available',
         priceOverride: s.priceOverride ?? null,
         instructor: s.instructor ?? null,
-        attendeeCount: s.attendeeCount ?? s.effectiveAttendeeCount ?? 0,
         promo: s.promo ?? null,
       }))
       .filter((s: GroupSession) => s.status !== 'cancelled')
@@ -438,19 +436,6 @@ export async function registerForSession(
   } catch {
     return { ok: false, code: 'NETWORK' }
   }
-}
-
-function resolveAvailability(value: {
-  availability?: Availability
-  capacity?: number | null
-  attendeeCount?: number | null
-  effectiveAttendeeCount?: number | null
-}): Availability {
-  if (value.availability != null) return value.availability
-  // Tymczasowy fallback dla starego API. Usunąć po wydaniu API z availability.
-  if (value.capacity == null) return 'available'
-  const remaining = value.capacity - (value.attendeeCount ?? value.effectiveAttendeeCount ?? 0)
-  return remaining <= 0 ? 'full' : remaining <= 3 ? 'last_spots' : 'available'
 }
 
 // ---- rentals ---------------------------------------------------------------
