@@ -5,17 +5,16 @@ import type { Cfg } from './api'
 import type { Prefill } from './BookingFlow'
 import { createEmitter, off, on, type EventHandler } from './events'
 
-type ThemePref = 'light' | 'dark' | 'auto'
+import { fontFaceCss, resolveSiteStyles, siteStylesFromDataset, type FontManifest, type SiteStyleConfig, type ThemePref } from './site-styles'
 
-export type MountConfig = {
+declare const __VIZYTO_FONT_MANIFEST__: FontManifest
+
+export type MountConfig = SiteStyleConfig & {
   businessId: number
   siteKey?: string
   turnstileKey?: string // Cloudflare Turnstile PUBLIC site key (gates the SMS-OTP path)
   apiBase?: string // origin, or "mock" for the offline dev backend
-  accent?: string
   label?: string
-  theme?: ThemePref
-  font?: 'on' | 'off'
   token?: string
   userId?: number
   inline?: boolean | string | HTMLElement // selector/element to mount into, or true (no <div> needed)
@@ -35,18 +34,17 @@ const resolveDark = (pref: ThemePref) => pref === 'dark' || (pref === 'auto' && 
 const applyTheme = (root: HTMLElement, pref: ThemePref) =>
   root.setAttribute('data-theme', resolveDark(pref) ? 'dark' : 'light')
 
-// Poppins (the Vizyto app font) is registered at the document level - an
-// @font-face inside a Shadow DOM <style> is unreliable across browsers. Injected
-// once, guarded by a marker; opt out with font:'off'.
-function injectFont() {
-  if (document.querySelector('link[data-vizyto-fonts]')) return
-  const pre1 = Object.assign(document.createElement('link'), { rel: 'preconnect', href: 'https://fonts.googleapis.com' })
-  const pre2 = Object.assign(document.createElement('link'), { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossOrigin: 'anonymous' })
-  const sheet = document.createElement('link')
-  sheet.rel = 'stylesheet'
-  sheet.setAttribute('data-vizyto-fonts', '')
-  sheet.href = 'https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap'
-  document.head.append(pre1, pre2, sheet)
+// Register fonts at document level: @font-face inside a Shadow DOM <style>
+// is unreliable across browsers. Each instance still sets its explicit --vz-font.
+// Deduplicate per pack and manifest so multiple instances and releases can coexist.
+function injectFont(styles: ReturnType<typeof resolveSiteStyles>) {
+  if (styles.font === 'off') return
+  const marker = `${__VIZYTO_FONT_MANIFEST__.hash}:${styles.fontPackId}`
+  if (document.querySelector(`style[data-vizyto-fonts="${marker}"]`)) return
+  const sheet = document.createElement('style')
+  sheet.setAttribute('data-vizyto-fonts', marker)
+  sheet.textContent = fontFaceCss(styles, __VIZYTO_FONT_MANIFEST__)
+  document.head.appendChild(sheet)
 }
 
 const instances: { host: HTMLElement; root: HTMLElement; cleanup?: () => void; controller?: WidgetController }[] = []
@@ -68,11 +66,11 @@ export function mount(config: MountConfig): HTMLElement | null {
     token: config.token || undefined,
     mock,
   }
-  const accent = config.accent || '#fd9320'
+  const siteStyles = resolveSiteStyles(config)
   const label = config.label || 'Zarezerwuj wizytę'
-  const themePref = (['light', 'dark', 'auto'].includes(config.theme || '') ? config.theme : 'light') as ThemePref
+  const themePref = siteStyles.theme
   const preAuth = cfg.token && config.userId ? { userId: config.userId, token: cfg.token } : undefined
-  if (config.font !== 'off') injectFont()
+  injectFont(siteStyles)
 
   let target: HTMLElement | null = null
   let inline = false
@@ -105,7 +103,7 @@ export function mount(config: MountConfig): HTMLElement | null {
 
   const root = document.createElement('div')
   root.className = 'vz-root'
-  root.style.setProperty('--vz-accent', accent)
+  for (const [token, value] of Object.entries(siteStyles.tokens)) root.style.setProperty(token, value)
   applyTheme(root, themePref)
   shadow.appendChild(root)
 
@@ -176,10 +174,8 @@ function mountFromScript() {
     siteKey: ds.vizytoKey,
     turnstileKey: ds.vizytoTurnstile,
     apiBase: ds.vizytoApi,
-    accent: ds.vizytoAccent,
+    ...siteStylesFromDataset(ds),
     label: ds.vizytoLabel,
-    theme: ds.vizytoTheme as ThemePref,
-    font: ds.vizytoFont === 'off' ? 'off' : 'on',
     token: ds.vizytoToken,
     userId: Number(ds.vizytoUser) || undefined,
     inline: inlineTarget || ds.vizytoInline != null,
