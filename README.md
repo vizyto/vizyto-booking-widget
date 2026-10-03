@@ -134,10 +134,15 @@ The build reads the installed approved `@fontsource` packages, uses only normal
 WOFF2 files for `latin` and `latin-ext`, and sets `font-display: swap`. Static
 weights are 400, 500, 600 and 700. Existing CSS weight 650 uses browser matching
 to 700; there is no extra 650 file. Polish letters are covered by the two subsets.
-OFL-1.1 license files are distributed alongside the fonts. Font URLs use
-`https://widget.vizyto.com/fonts/<family-slug>/<sha256>.woff2`, including during
-local development. A new font hash becomes available on that CDN after release;
-local tests verify the generated files without contacting production.
+OFL-1.1 license files are distributed alongside the fonts. Font URLs use the
+widget script's origin: `<widget-origin>/fonts/<family-slug>/<sha256>.woff2`.
+The origin is captured from `document.currentScript.src` during classic script
+execution, including dynamically inserted scripts, and retained for later mounts.
+Only `http:` and `https:` are accepted; a missing or invalid script URL falls back
+to `https://widget.vizyto.com`. Production, staging and local servers must serve
+the generated `deploy/fonts/` assets alongside the widget. For example, a script
+loaded from `http://127.0.0.1:4391/v1/widget.js` requests fonts from
+`http://127.0.0.1:4391/fonts/`, matching CSP `font-src` for that widget origin.
 
 `pnpm build:cdn` emits:
 

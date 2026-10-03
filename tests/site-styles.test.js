@@ -4,7 +4,7 @@ import { collectFontAssets, sha256 } from '../scripts/font-assets.mjs'
 import { css } from '../src/styles.ts'
 import {
   DEFAULT_COLORS, DEFAULT_FONT_PACK, SYSTEM_FONT, contrastRatio, fontFaceCss,
-  fontPacks, resolveSiteStyles, siteStylesFromDataset, validColor, validFontPack,
+  fontPacks, resolveSiteStyles, resolveWidgetOrigin, siteStylesFromDataset, validColor, validFontPack,
 } from '../src/site-styles.ts'
 
 const { manifest, assets } = collectFontAssets()
@@ -73,6 +73,48 @@ describe('backward-compatible style inputs', () => {
       expect(validFontPack(fontPackId)).toBe(false)
       expect(resolveSiteStyles({ fontPackId }).fontPackId).toBe(DEFAULT_FONT_PACK)
     }
+  })
+})
+
+describe('font asset origin', () => {
+  test('production, local and staging scripts keep their own origin and manifest paths', () => {
+    const styles = resolveSiteStyles()
+    for (const origin of ['https://widget.vizyto.com', 'http://127.0.0.1:4391', 'https://widget.staging.example.test']) {
+      for (const path of ['/v1/widget.js', '/v/abc123/widget.js?version=1#embed']) {
+        expect(resolveWidgetOrigin(`${origin}${path}`)).toBe(origin)
+      }
+      const faces = fontFaceCss(styles, manifest, origin)
+      const urls = [...faces.matchAll(/src: url\('([^']+)'\)/g)].map((match) => match[1])
+      expect(urls).toEqual(manifest.fontPacks[styles.fontPackId].files.map((file) => `${origin}${file.path}`))
+    }
+  })
+  test('missing or malformed script URLs fall back to production', () => {
+    for (const src of [undefined, '', 'not a URL', '/v1/widget.js']) {
+      expect(resolveWidgetOrigin(src)).toBe('https://widget.vizyto.com')
+      expect(fontFaceCss(resolveSiteStyles(), manifest, src)).toContain('https://widget.vizyto.com/fonts/')
+    }
+  })
+  test('non-HTTP schemes are rejected, even when they contain an HTTPS origin', () => {
+    for (const src of ['ftp://widget.example.test/widget.js', 'file:///widget.js',
+      'data:text/javascript,void(0)', 'javascript:void(0)', 'blob:https://widget.example.test/id']) {
+      expect(resolveWidgetOrigin(src)).toBe('https://widget.vizyto.com')
+      const faces = fontFaceCss(resolveSiteStyles(), manifest, src)
+      expect(faces).toContain('https://widget.vizyto.com/fonts/')
+      expect(faces).not.toContain(src)
+    }
+  })
+  test('module remembers the executing script after currentScript becomes null', () => {
+    // Use a fresh module context so the top-level import above cannot hide timing bugs.
+    const result = Bun.spawnSync([process.execPath, '--eval', `
+      globalThis.document = { currentScript: { src: 'http://127.0.0.1:4391/v/abc123/widget.js' } }
+      const { fontFaceCss, resolveSiteStyles } = await import('./src/site-styles.ts')
+      document.currentScript = null
+      const { collectFontAssets } = await import('./scripts/font-assets.mjs')
+      process.stdout.write(fontFaceCss(resolveSiteStyles(), collectFontAssets().manifest))
+    `], { cwd: new URL('..', import.meta.url).pathname })
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout.toString()).toContain('http://127.0.0.1:4391/fonts/')
+    expect(result.stdout.toString()).not.toContain('https://widget.vizyto.com')
   })
 })
 

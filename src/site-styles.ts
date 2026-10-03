@@ -1,5 +1,19 @@
 import fontPacks from './font-packs.json'
 
+export function resolveWidgetOrigin(scriptSrc?: string): string {
+  try {
+    const url = new URL(scriptSrc || '')
+    if (url.protocol === 'http:' || url.protocol === 'https:') return url.origin
+  } catch {}
+  return 'https://widget.vizyto.com'
+}
+
+// Capture during classic script execution, including dynamically inserted scripts.
+// currentScript is null by the time a deferred mount() registers fonts.
+const widgetOrigin = resolveWidgetOrigin(
+  typeof document === 'undefined' ? undefined : (document.currentScript as HTMLScriptElement | null)?.src,
+)
+
 export { fontPacks }
 export type FontPackId = keyof typeof fontPacks
 export type ThemePref = 'light' | 'dark' | 'auto'
@@ -77,15 +91,18 @@ export type FontManifest = {
 }
 
 // The manifest is trusted build output, never embed input or a remote stylesheet.
-export function fontFaceCss(styles: ReturnType<typeof resolveSiteStyles>, manifest: FontManifest): string {
+export function fontFaceCss(
+  styles: ReturnType<typeof resolveSiteStyles>, manifest: FontManifest, origin = widgetOrigin,
+): string {
   if (styles.font === 'off') return ''
+  const fontOrigin = resolveWidgetOrigin(origin)
   const pack = manifest.fontPacks[styles.fontPackId]
   return pack.files.map((file) => `@font-face {
   font-family: '${pack.family}';
   font-style: normal;
   font-weight: ${file.weight};
   font-display: swap;
-  src: url('https://widget.vizyto.com${file.path}') format('woff2');
+  src: url('${fontOrigin}${file.path}') format('woff2');
   unicode-range: ${file.unicodeRange};
 }`).join('\n')
 }
