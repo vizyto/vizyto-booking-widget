@@ -1,10 +1,9 @@
 // Assemble the Cloudflare Pages deploy directory from the vite build.
-// Produces:
-//   deploy/v1/widget.js   - rolling "latest v1" the embed snippets point at
-//   deploy/_headers       - CORS + cache rules
-//   deploy/index.html     - tiny landing at widget.vizyto.com root
+// Produces rolling v1, a content-addressed build/manifest, hashed fonts and licenses.
 // Run after `vite build` (the `build:cdn` script chains them).
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { collectFontAssets, sha256 } from './font-assets.mjs'
 
 const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 
@@ -16,14 +15,48 @@ if (!existsSync('dist/widget.js')) {
 mkdirSync('deploy/v1', { recursive: true })
 copyFileSync('dist/widget.js', 'deploy/v1/widget.js')
 
-// /v1/widget.js is a moving pointer (v1.x patches land here), so cache it only
-// briefly — embedders get fixes within minutes without re-pasting the snippet.
+const { manifest: fonts, assets } = collectFontAssets()
+const builtFonts = JSON.parse(readFileSync('dist/font-manifest.json', 'utf8'))
+if (JSON.stringify(builtFonts) !== JSON.stringify(fonts)) {
+  throw new Error('Font inputs changed after Vite build; rebuild before assembling deploy/')
+}
+for (const asset of assets) {
+  const target = `deploy${asset.path}`
+  mkdirSync(dirname(target), { recursive: true })
+  writeFileSync(target, asset.bytes)
+}
+const widgetHash = sha256(readFileSync('dist/widget.js'))
+const versionPath = `/v/${widgetHash}`
+mkdirSync(`deploy${versionPath}`, { recursive: true })
+copyFileSync('dist/widget.js', `deploy${versionPath}/widget.js`)
+const manifest = {
+  ...fonts,
+  widget: { version: pkg.version, path: `${versionPath}/widget.js`, hash: widgetHash },
+  capabilities: ['fontPackId', 'accent', 'accentLight', 'accentDark', 'onAccent', 'theme', 'font-off'],
+}
+writeFileSync(`deploy${versionPath}/manifest.json`, JSON.stringify(manifest, null, 2) + '\n')
+
+// Rolling v1 retains its existing cache policy. SWR permits stale responses;
+// max-age=600 does not guarantee client updates within ten minutes.
 writeFileSync(
   'deploy/_headers',
   `/v1/widget.js
   Access-Control-Allow-Origin: *
   Cross-Origin-Resource-Policy: cross-origin
   Cache-Control: public, max-age=600, stale-while-revalidate=86400
+
+/v/*
+  Access-Control-Allow-Origin: *
+  Cross-Origin-Resource-Policy: cross-origin
+  Cache-Control: public, max-age=31536000, immutable
+
+/fonts/*
+  Access-Control-Allow-Origin: *
+  Cross-Origin-Resource-Policy: cross-origin
+  Cache-Control: public, max-age=31536000, immutable
+
+/releases.json
+  Cache-Control: no-store
 `,
 )
 
@@ -53,3 +86,6 @@ writeFileSync(
 )
 
 console.log(`[build-deploy] deploy/ ready (v1/widget.js, v${pkg.version})`)
+console.log(`[build-deploy] immutable: ${versionPath}/widget.js`)
+console.log(`[build-deploy] manifest: ${versionPath}/manifest.json`)
+console.log(`[build-deploy] fonts: ${assets.filter((a) => a.path.endsWith('.woff2')).length} WOFF2, 9 OFL licenses`)

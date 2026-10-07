@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --port 4500",
     "build:cdn": "vite build && node scripts/build-deploy.mjs",
-    "deploy": "pnpm build:cdn && pnpm dlx wrangler@4 deploy"
+    "deploy": "pnpm build:cdn && node scripts/restore-published.mjs && pnpm dlx wrangler@4 deploy"
   },
   "dependencies": {
     "preact": "^10.24.3"
@@ -19,6 +19,15 @@
     ]
   },
   "devDependencies": {
+    "@fontsource/archivo": "^5.3.0",
+    "@fontsource/barlow": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.3.0",
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/jost": "^5.3.0",
+    "@fontsource/manrope": "^5.3.0",
+    "@fontsource/outfit": "^5.3.0",
+    "@fontsource/poppins": "^5.3.0",
+    "@fontsource/roboto": "^5.3.0",
     "@preact/preset-vite": "^2.9.4",
     "typescript": "^5.9.3",
     "vite": "^7.3.0"
