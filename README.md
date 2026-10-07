@@ -396,14 +396,13 @@ git tag v1.0.0 && git push origin v1.0.0   # lub: Actions → Deploy widget → 
 
 Albo lokalnie: `pnpm deploy`.
 
-**Immutable URL release gate (F28, Vizyto):** before Vizyto sites first use an
-immutable `/v/<hash>/` URL, deployment must preserve all previously published
-`v/<hash>/` directories and their font assets across subsequent deploys. Implement
-this in F28 on the Vizyto side, for example with persistent uploads to a static
-bucket or by fetching the previous release manifest in CI and restoring its
-referenced artifacts before deployment. The current `deploy.yml` does not restore
-previous artifacts; immutable URLs must not be adopted by Vizyto sites until this
-gate is met. F10 leaves CI unchanged.
+**Immutable releases:** every deploy runs `scripts/restore-published.mjs` after
+`build:cdn`. It reads the live `/releases.json`, restores each listed `/v/<hash>/`
+(widget, manifest, referenced fonts and licenses, all hash-checked) into `deploy/` and
+writes the list back with the new release. Cloudflare static assets replace the whole
+directory on deploy, so without this step older pinned URLs used by Vizyto sites would
+disappear. Any fetch or hash error aborts the deploy; only a missing `/releases.json`
+(first immutable release) is accepted.
 
 ### Jednorazowa konfiguracja
 

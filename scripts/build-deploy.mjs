@@ -54,6 +54,9 @@ writeFileSync(
   Access-Control-Allow-Origin: *
   Cross-Origin-Resource-Policy: cross-origin
   Cache-Control: public, max-age=31536000, immutable
+
+/releases.json
+  Cache-Control: no-store
 `,
 )
 

@@ -22,6 +22,8 @@ jobs:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
       - run: pnpm build:cdn
+      # Keep earlier immutable /v/<hash>/ releases: sites pin them (vizyto #177).
+      - run: node scripts/restore-published.mjs
       - name: Deploy to Cloudflare
         run: pnpm dlx wrangler@4 deploy
         env:
