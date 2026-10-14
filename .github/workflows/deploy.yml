@@ -2,26 +2,51 @@ name: Deploy widget (Cloudflare)
 
 # Tag a release to ship widget.vizyto.com/v1/widget.js:
 #   make release V=1.0.0   (tags v1.0.0 + pushes)
-# Or run manually from the Actions tab (workflow_dispatch).
+# Or run manually from the Actions tab (workflow_dispatch) - on main only.
 # Only needs the org's CLOUDFLARE_API_TOKEN secret (account is inferred).
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
 
+# One deploy at a time. Every run reads the live /releases.json and publishes it
+# back with its own release added, so two overlapping runs would each write a list
+# without the other's release and its pinned /v/<hash>/ files would disappear.
+# Queued, never cancelled: a cancelled run could stop between upload and the list.
+concurrency:
+  group: deploy-widget
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # Same rule as scripts/release.sh locally: releases come from main. A tag
+      # push is already gated by the release script; a manual run is not.
+      - name: Manual runs deploy main only
+        if: github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Deploy from main (this run is on ${GITHUB_REF})."
+          exit 1
       - uses: actions/checkout@v4
+      # pnpm 9 here, pnpm 11 locally: the lockfile (format 9.0) installs frozen
+      # under both, checked with 9.15.9 and 11.5.0.
       - uses: pnpm/action-setup@v4
         with:
           version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: pnpm install --no-frozen-lockfile
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
       - run: pnpm build:cdn
+      # Before restore-published.mjs: the tests read the freshly assembled deploy/.
+      - name: Test
+        run: bun test
       # Keep earlier immutable /v/<hash>/ releases: sites pin them (vizyto #177).
       - run: node scripts/restore-published.mjs
       - name: Deploy to Cloudflare

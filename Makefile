@@ -1,4 +1,4 @@
-# Vizyto Booking Widget — release & deploy
+# Vizyto Booking Widget - release & deploy
 #
 #   make release           # auto-bump patch od ostatniego taga v* (lub v1.0.0)
 #   make release V=1.2.0   # konkretna wersja -> tag v1.2.0 + push -> CI deployuje
@@ -19,7 +19,7 @@ build: ## Zbuduj widget + złóż katalog deploy/
 	pnpm build:cdn
 
 deploy: ## Lokalny deploy na Cloudflare (wymaga CLOUDFLARE_API_TOKEN)
-	pnpm deploy
+	pnpm run deploy
 
 show-version: ## Pokaż ostatni wydany tag
 	@git tag --list 'v*' --sort=-v:refname | head -1 | grep . || echo "<brak>"
