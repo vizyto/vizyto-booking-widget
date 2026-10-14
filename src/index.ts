@@ -184,6 +184,11 @@ function mountFromScript() {
   })
 }
 
+// The IIFE build assigns the module's EXPORTS to the global `VizytoBooking` after
+// this body runs, replacing the object below - so everything on it has to be
+// exported too. `on`/`off` were not, and `VizytoBooking.on` (the README's first
+// event channel) was undefined in the published bundle.
+export { on, off }
 ;(window as any).VizytoBooking = { mount, unmount, open, close, on, off }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountFromScript)
