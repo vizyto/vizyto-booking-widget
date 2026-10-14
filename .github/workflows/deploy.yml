@@ -12,7 +12,11 @@ on:
 # One deploy at a time. Every run reads the live /releases.json and publishes it
 # back with its own release added, so two overlapping runs would each write a list
 # without the other's release and its pinned /v/<hash>/ files would disappear.
-# Queued, never cancelled: a cancelled run could stop between upload and the list.
+# cancel-in-progress: false keeps a RUNNING deploy alive (a cancelled run could stop
+# between the upload and the list). It is not a queue: GitHub keeps one run going
+# and at most one waiting, and a newer run replaces the one that waits. The
+# replaced run never started, and the newer one deploys newer code, but its
+# release's /v/<hash>/ is not published - re-run that tag's workflow if it must be.
 concurrency:
   group: deploy-widget
   cancel-in-progress: false

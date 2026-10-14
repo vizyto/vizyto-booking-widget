@@ -524,7 +524,10 @@ polecenie workspace, które nie uruchamia skryptu z `package.json`.
 
 CI po kolei: `pnpm install --frozen-lockfile` → `pnpm exec tsc --noEmit` →
 `pnpm build:cdn` → `bun test` → `restore-published.mjs` → `wrangler deploy`.
-Dwa deploye nigdy nie biegną naraz (grupa `concurrency`, kolejny czeka).
+Dwa deploye nigdy nie biegną naraz (grupa `concurrency`): jeden trwa, najwyżej
+jeden czeka, a nowszy przebieg zastępuje ten czekający. Zastąpione wydanie nie
+trafia do `/v/<hash>/` ani do `releases.json` - jeśli ma tam być, uruchom
+ponownie przebieg jego taga.
 
 **Niezmienne wydania:** każdy deploy (CI i `pnpm run deploy`) uruchamia po
 `build:cdn` skrypt `scripts/restore-published.mjs`. Czyta on z produkcji
