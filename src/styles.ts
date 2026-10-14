@@ -818,6 +818,9 @@ a.vz-btn { text-decoration: none; }
 /* Warning-tinted variant (access-restricted screens). */
 .vz-check.warn { background: color-mix(in srgb, var(--vz-warning) 14%, var(--vz-surface)); color: var(--vz-warning); }
 .vz-check.warn svg { width: 28px; height: 28px; }
+/* The closed-channel state (#680): a business decision, not a warning. */
+.vz-check.calm { background: var(--vz-surface-2); color: var(--vz-text-muted); animation: none; }
+.vz-check.calm svg { width: 28px; height: 28px; }
 @keyframes vz-pop-check { from { transform: scale(.6); opacity: 0 } to { transform: scale(1); opacity: 1 } }
 .vz-done-title { font-size: 22px; font-weight: 600; }
 .vz-done-sub { color: var(--vz-text-muted); font-size: 13.5px; margin-top: 6px; line-height: 1.5; }

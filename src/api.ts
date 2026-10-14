@@ -5,6 +5,7 @@
 // the in-memory mock backend so the full flow is testable before the API ships.
 
 import * as mock from './mock'
+import type { PublicBookingChannels } from './channel'
 
 export type Cfg = { apiBase: string; siteKey: string; businessId: number; token?: string; turnstileKey?: string; mock?: boolean }
 
@@ -155,6 +156,13 @@ export type Business = {
   bookingPolicy?: BookingPolicy
   // Whitelist gate; absent (older API) = open to everyone.
   bookingAccess?: BookingAccess
+  // Business-wide online booking switch, already folded to false for a business
+  // without a serving plan (`bookingSuspended` says why).
+  hasWebsiteReservationsEnabled?: boolean
+  bookingSuspended?: boolean
+  // Per-channel booking policy (#680); the widget reads its `widget` slice
+  // through ./channel. Absent on an older API.
+  bookingChannels?: PublicBookingChannels
 }
 
 // A named group of services (PRO -> kategorie usług). Fetched from a separate
@@ -287,7 +295,7 @@ function headers(cfg: Cfg, extra?: Record<string, string>): Record<string, strin
 }
 
 export async function fetchBusiness(cfg: Cfg): Promise<Business | null> {
-  if (cfg.mock) return mock.fetchBusiness()
+  if (cfg.mock) return mock.fetchBusiness(cfg.businessId)
   try {
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}`, { headers: headers(cfg) })
     return r.ok ? ((await r.json()) as Business) : null

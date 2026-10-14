@@ -14,9 +14,14 @@
   // ?onlyServices=1 strips classes and rentables from the mock business, to prove a
   // single-family business (a barbershop) never sees the offering fork.
   if (q.get('onlyServices')) window.__VIZYTO_MOCK_ONLY_SERVICES__ = true;
+  if (q.get('prefillKind')) prefill.kind = q.get('prefillKind');
+  // ?business=680|681|682 picks a per-channel policy lever of the mock (#680, see
+  // src/mock.ts); ?signedIn=1 mounts with a session, so a write needs no SMS code.
+  var signedIn = !!q.get('signedIn');
   VizytoBooking.mount({
-    businessId: 24, siteKey: 'pk_test', apiBase: 'mock', inline: '#booking',
+    businessId: Number(q.get('business')) || 24, siteKey: 'pk_test', apiBase: 'mock', inline: '#booking',
     prefill: Object.keys(prefill).length ? prefill : undefined,
+    token: signedIn ? 'mock-token' : undefined, userId: signedIn ? 555 : undefined,
   });
 </script>
 </body></html>

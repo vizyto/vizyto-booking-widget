@@ -53,6 +53,7 @@ import { StepOffering, type OfferingKind } from './steps/StepOffering'
 import { StepRentalItem, groupRentables, rentalOptionKey, type RentalOption } from './steps/StepRentalItem'
 import { StepRentalTime } from './steps/StepRentalTime'
 import { resolveCartPolicy } from './policy'
+import { classifyWriteFailure, refusedActions, widgetAllows, type CustomerAction } from './channel'
 import {
   canPickPerItem,
   clearStaffPins,
@@ -69,7 +70,7 @@ import { noopEmit, type EmitFn } from './events'
 import { ProgressBar } from './ui/ProgressBar'
 import { Spinner } from './ui/Spinner'
 import { Powered } from './ui/Powered'
-import { ArrowLeft, ArrowRight, Close } from './ui/icons'
+import { ArrowLeft, ArrowRight, CalendarDays, Close } from './ui/icons'
 import { SummaryCard, type SummaryRow } from './ui/SummaryCard'
 import { SummaryPromoLine } from './ui/PromoBadge'
 import { AvatarStack } from './ui/AvatarStack'
@@ -134,7 +135,35 @@ const positionsLabel = (n: number) => {
 
 /** Hard cap mirroring the API's MAX_CART_ITEMS - refuse the 9th politely. */
 const MAX_CART_ITEMS = 8
-type Phase = 'select' | 'identify' | 'login' | 'otp' | 'confirming' | 'done' | 'slotLost' | 'waitlist' | 'waitlistDone' | 'restricted'
+type Phase = 'select' | 'identify' | 'login' | 'otp' | 'confirming' | 'done' | 'slotLost' | 'waitlist' | 'waitlistDone' | 'restricted' | 'closed'
+
+/** The policy action each offering family books under (#680). */
+const KIND_ACTION: Record<OfferingKind, CustomerAction> = { service: 'book', class: 'groupClasses', rental: 'rentals' }
+
+/**
+ * The closed state, per what is closed. `all` = nothing this business sells can be
+ * booked in the widget channel; a family = only that one (the others stay open).
+ */
+type ClosedFor = CustomerAction | 'all'
+const CLOSED_TITLE: Record<ClosedFor, string> = {
+  all: 'Rezerwacje online są teraz wyłączone',
+  book: 'Umawianie wizyt online jest teraz wyłączone',
+  groupClasses: 'Zapisy na zajęcia online są teraz wyłączone',
+  rentals: 'Wynajem online jest teraz wyłączony',
+  waitlist: 'Zapisy na listę oczekujących są teraz wyłączone',
+  reschedule: 'Rezerwacje online są teraz wyłączone',
+  cancel: 'Rezerwacje online są teraz wyłączone',
+}
+/** What the customer wanted to do, as the start of "..., zadzwoń do firmy". */
+const CLOSED_GOAL: Record<ClosedFor, string> = {
+  all: 'Aby umówić termin',
+  book: 'Aby umówić wizytę',
+  groupClasses: 'Aby zapisać się na zajęcia',
+  rentals: 'Aby ustalić termin wynajmu',
+  waitlist: 'Aby umówić termin',
+  reschedule: 'Aby umówić termin',
+  cancel: 'Aby umówić termin',
+}
 /**
  * The steps INSIDE the 'select' phase, addressed by name rather than by index.
  * Which of them exist depends on the cart (the provider step disappears when
@@ -506,14 +535,51 @@ export function BookingFlow({
           ? 'service'
           : null),
   )
-  /** Families this business actually sells - the fork never offers a dead branch. */
-  const kinds = useMemo<OfferingKind[]>(() => {
+  /** Families this business actually sells. */
+  const soldKinds = useMemo<OfferingKind[]>(() => {
     const out: OfferingKind[] = []
     if (hasServices) out.push('service')
     if (mayHaveClasses) out.push('class')
     if (hasRentals) out.push('rental')
     return out
   }, [hasServices, mayHaveClasses, hasRentals])
+
+  /**
+   * Per-channel booking policy (#680). The widget books in the channel `widget`,
+   * and a family the business does not take there is not offered at all - the
+   * same pre-check CLIENT and WEB make, so the customer never walks a whole flow
+   * into a 409. `refused` holds actions the API turned down at submit time while
+   * the profile still allowed them (the owner switched them off after this page
+   * loaded): from then on they count as closed too.
+   */
+  const [refused, setRefused] = useState<CustomerAction[]>([])
+  const allows = (action: CustomerAction) => widgetAllows(business, action) && !refused.includes(action)
+  /** Families this business sells AND takes in the widget channel - the fork never offers a dead branch. */
+  const kinds = useMemo<OfferingKind[]>(
+    () => soldKinds.filter((k) => allows(KIND_ACTION[k])),
+    [soldKinds, business, refused],
+  )
+  /**
+   * What is closed before the flow starts. Nothing to offer at all is the
+   * whole-widget state (also for a business that sells nothing yet, when visits
+   * are closed - there is no family to name). A prefill that names a closed
+   * family (a timetable CTA when classes are switched off) gets that family's
+   * state instead of a silent detour into another one.
+   */
+  const [initialClosed] = useState<ClosedFor | null>(() => {
+    if (kinds.length === 0 && (soldKinds.length > 0 || !allows('book'))) return 'all'
+    const asked: OfferingKind | null =
+      prefill?.kind ??
+      (prefill?.classId != null || prefill?.sessionId != null
+        ? 'class'
+        : prefill?.serviceId != null
+          ? 'service'
+          : initialRental
+            ? 'rental'
+            : null)
+    if (asked && soldKinds.includes(asked) && !kinds.includes(asked)) return KIND_ACTION[asked]
+    return null
+  })
   const needsOfferingStep = kind === null && kinds.length > 1
   /**
    * Clamped to what the business actually sells. A host page can hand us a family
@@ -632,7 +698,13 @@ export function BookingFlow({
   const [emptyProbe, setEmptyProbe] = useState<'others' | 'none' | null>(null)
 
   // flow
-  const [phase, setPhase] = useState<Phase>('select')
+  const [phase, setPhase] = useState<Phase>(initialClosed ? 'closed' : 'select')
+  const [closedFor, setClosedFor] = useState<ClosedFor | null>(initialClosed)
+  // Closed before anything started: tell the host page once per mount, so a site
+  // can hide its own "book" buttons or log it (`channel_closed`, stage 'load').
+  useEffect(() => {
+    if (initialClosed) emit('channel_closed', { action: initialClosed, stage: 'load' })
+  }, [])
   const [contact, setContact] = useState<Contact>(emptyContact)
   const [notes, setNotes] = useState('')
   // Status the server ACTUALLY gave the booking - 'pending' when the business
@@ -910,11 +982,11 @@ export function BookingFlow({
    * step needs.
    */
   useEffect(() => {
-    if (!mayHaveClasses || groupClasses !== null) return
+    if (!mayHaveClasses || !kinds.includes('class') || groupClasses !== null) return
     let cancelled = false
     fetchGroupClasses(cfg).then((rows) => { if (!cancelled) setGroupClasses(rows) })
     return () => { cancelled = true }
-  }, [mayHaveClasses, groupClasses])
+  }, [mayHaveClasses, kinds, groupClasses])
 
   /**
    * Load the timetable when the customer actually enters the class branch.
@@ -1335,20 +1407,27 @@ export function BookingFlow({
       })
       return
     }
-    if (r.code === 'PRICE_CHANGED' && r.pricing) {
-      setQuote(r.pricing)
+    // A whitelist refusal has no screen of its own here: like any other rental
+    // refusal it is named on the calendar (the last branch below).
+    const failure = classifyWriteFailure(r)
+    if (failure === 'price_changed') {
+      setQuote(r.pricing!)
       setPriceChanged(true)
       setPhase('confirming')
       return
     }
-    if (r.code === 'BOOKED_BY_MISMATCH' || r.code === 'VERIFICATION_REQUIRED' || r.code === 'PHONE_VERIFICATION_REQUIRED') {
+    if (failure === 'verification') {
       setAuth(null)
       setIdentifyErr('Potwierdź numer telefonu, aby dokończyć rezerwację.')
       setPhase('identify')
       emit('booking_failed', { ...ctx, code: r.code, reason: 'verification_required' })
       return
     }
-    if (r.code === 'NETWORK') {
+    if (failure === 'channel_closed') {
+      closeChannel('rentals', r.code, ctx)
+      return
+    }
+    if (failure === 'network') {
       setBookingErr('Brak połączenia. Spróbuj ponownie.')
       emit('booking_failed', { ...ctx, code: r.code, reason: 'network' })
       return
@@ -1532,6 +1611,7 @@ export function BookingFlow({
   // visit does not fit (ta sama brama co w WEB i CLIENT).
   const waitlistLine = lines.length === 1 ? lines[0]! : null
   const canWaitlist = business.waitlistEnabled !== false
+    && allows('waitlist')
     && !!waitlistLine
     && waitlistLine.addonIds.length === 0
     && !isUnit
@@ -1578,39 +1658,43 @@ export function BookingFlow({
       })
       return
     }
-    if (r.code === 'PRICE_CHANGED' && r.pricing) {
-      setQuote(r.pricing)
-      setPriceChanged(true)
-      setPhase('confirming')
-      return
+    switch (classifyWriteFailure(r)) {
+      case 'price_changed':
+        setQuote(r.pricing!)
+        setPriceChanged(true)
+        setPhase('confirming')
+        return
+      // PHONE_VERIFICATION_REQUIRED: the account's phoneVerified flag dropped
+      // after the session was minted (e.g. a number change in the app) - the
+      // widget's own OTP re-login is exactly the verification the API wants.
+      case 'verification':
+        setAuth(null)
+        setIdentifyErr('Potwierdź numer telefonu, aby dokończyć rezerwację.')
+        setPhase('identify')
+        emit('booking_failed', { ...ctx, code: r.code, reason: 'verification_required' })
+        return
+      case 'access_restricted':
+        // Backstop: the server-side whitelist gate refused the write (the probe
+        // failed open or access changed mid-flow). Same screen as the soft check.
+        setPhase('restricted')
+        emit('booking_access_denied', { userId: a.userId, serviceId: lines[0]?.service.id ?? null, stage: 'create' })
+        emit('booking_failed', { ...ctx, code: r.code, reason: 'access_restricted' })
+        return
+      // The business stopped taking visits in this channel after the page loaded:
+      // a decision, not a race, so never "pick another term".
+      case 'channel_closed':
+        closeChannel('book', r.code, ctx)
+        return
+      case 'network':
+        setBookingErr('Brak połączenia. Spróbuj ponownie.')
+        emit('booking_failed', { ...ctx, code: r.code, reason: 'network' })
+        return
+      case 'refused':
+        setSlotKey('')
+        setPhase('slotLost')
+        emit('slot_lost', { ...ctx, code: r.code })
+        emit('booking_failed', { ...ctx, code: r.code, reason: 'slot_lost' })
     }
-    // PHONE_VERIFICATION_REQUIRED: the account's phoneVerified flag dropped
-    // after the session was minted (e.g. a number change in the app) - the
-    // widget's own OTP re-login is exactly the verification the API wants.
-    if (r.code === 'BOOKED_BY_MISMATCH' || r.code === 'VERIFICATION_REQUIRED' || r.code === 'PHONE_VERIFICATION_REQUIRED') {
-      setAuth(null)
-      setIdentifyErr('Potwierdź numer telefonu, aby dokończyć rezerwację.')
-      setPhase('identify')
-      emit('booking_failed', { ...ctx, code: r.code, reason: 'verification_required' })
-      return
-    }
-    if (r.code === 'BOOKING_ACCESS_RESTRICTED') {
-      // Backstop: the server-side whitelist gate refused the write (the probe
-      // failed open or access changed mid-flow). Same screen as the soft check.
-      setPhase('restricted')
-      emit('booking_access_denied', { userId: a.userId, serviceId: lines[0]?.service.id ?? null, stage: 'create' })
-      emit('booking_failed', { ...ctx, code: r.code, reason: 'access_restricted' })
-      return
-    }
-    if (r.code === 'NETWORK') {
-      setBookingErr('Brak połączenia. Spróbuj ponownie.')
-      emit('booking_failed', { ...ctx, code: r.code, reason: 'network' })
-      return
-    }
-    setSlotKey('')
-    setPhase('slotLost')
-    emit('slot_lost', { ...ctx, code: r.code })
-    emit('booking_failed', { ...ctx, code: r.code, reason: 'slot_lost' })
   }
 
   /**
@@ -1659,25 +1743,30 @@ export function BookingFlow({
       })
       return
     }
-    if (r.code === 'PRICE_CHANGED' && r.pricing) {
-      setQuote(r.pricing)
+    const failure = classifyWriteFailure(r)
+    if (failure === 'price_changed') {
+      setQuote(r.pricing!)
       setPriceChanged(true)
       setPhase('confirming')
       return
     }
-    if (r.code === 'BOOKED_BY_MISMATCH' || r.code === 'VERIFICATION_REQUIRED' || r.code === 'PHONE_VERIFICATION_REQUIRED') {
+    if (failure === 'verification') {
       setAuth(null)
       setIdentifyErr('Potwierdź numer telefonu, aby dokończyć zapis.')
       setPhase('identify')
       emit('booking_failed', { ...ctx, code: r.code, reason: 'verification_required' })
       return
     }
-    if (r.code === 'BOOKING_ACCESS_RESTRICTED') {
+    if (failure === 'access_restricted') {
       setPhase('restricted')
       emit('booking_failed', { ...ctx, code: r.code, reason: 'access_restricted' })
       return
     }
-    if (r.code === 'NETWORK') {
+    if (failure === 'channel_closed') {
+      closeChannel('groupClasses', r.code, ctx)
+      return
+    }
+    if (failure === 'network') {
       setBookingErr('Brak połączenia. Spróbuj ponownie.')
       emit('booking_failed', { ...ctx, code: r.code, reason: 'network' })
       return
@@ -1833,10 +1922,59 @@ export function BookingFlow({
       })
       return
     }
+    if (classifyWriteFailure(r) === 'channel_closed') {
+      emit('waitlist_failed', { code: r.code })
+      closeChannel('waitlist', r.code, { serviceId: service.id })
+      return
+    }
     setWlErr(waitlistErrorMsg(r.code))
     setPhase('waitlist')
     emit('waitlist_failed', { code: r.code })
   }
+
+  /**
+   * A write the API refused under the channel policy (409 CHANNEL_BOOKING_DISABLED
+   * / CHANNEL_ACTION_DISABLED): the business switched this off after the page
+   * loaded. Remember what is closed now, so the fork and the waitlist stop
+   * offering it, and show the closed state - for the whole widget when nothing
+   * this business sells is left.
+   */
+  function closeChannel(action: CustomerAction, code: string, ctx: Record<string, unknown>) {
+    const nextRefused = [...new Set([...refused, ...refusedActions(action, code)])]
+    setRefused(nextRefused)
+    const left = soldKinds.filter((k) => widgetAllows(business, KIND_ACTION[k]) && !nextRefused.includes(KIND_ACTION[k]))
+    setClosedFor(left.length === 0 ? 'all' : action)
+    setBookingErr('')
+    setPhase('closed')
+    emit('channel_closed', { ...ctx, action, code, stage: 'submit' })
+    // The waitlist reports its own failure event (waitlist_failed).
+    if (action !== 'waitlist') emit('booking_failed', { ...ctx, code, reason: 'channel_closed' })
+  }
+
+  /**
+   * The way out of a closed family: the families still open (the fork when there
+   * are several), or the calendar when only the waitlist closed. Null when
+   * nothing is left - the closed state is then the end of the road.
+   */
+  const closedExit: { label: string; go: () => void } | null = (() => {
+    if (phase !== 'closed' || !closedFor || closedFor === 'all') return null
+    if (closedFor === 'waitlist') {
+      if (!kinds.includes('service')) return null
+      return { label: 'Wróć do kalendarza', go: () => { setIntent('book'); setClosedFor(null); setStepId('time'); setPhase('select') } }
+    }
+    if (kinds.length === 0) return null
+    const only = kinds.length === 1 ? kinds[0]! : null
+    return {
+      label: only === 'service' ? 'Przejdź do wizyt' : only === 'class' ? 'Przejdź do zajęć' : only === 'rental' ? 'Przejdź do wynajmu' : 'Wybierz, co zarezerwować',
+      go: () => {
+        setClosedFor(null)
+        setBookingErr('')
+        if (only) { setKind(only); setStepId(firstStepOf(only)) }
+        else { setKind(null); setStepId('offering') }
+        setPhase('select')
+      },
+    }
+  })()
 
   // Open the waitlist form for the selected service/day. The sign-up needs an
   // authenticated user, which the identify/OTP path supplies at submit time.
@@ -2103,6 +2241,8 @@ export function BookingFlow({
     if (phase === 'slotLost') return () => recoverSlot()
     // Back to the service list - other services may still be bookable for this viewer.
     if (phase === 'restricted') return () => { setStepId('service'); setPhase('select') }
+    // Closed: back leads to whatever is still open, otherwise it closes (launcher).
+    if (phase === 'closed') return closedExit?.go ?? onClose ?? null
     if (phase === 'select') {
       // Configuring overlays the selection - back just closes it, keeping choices.
       if (configuring) return () => setConfiguringId(null)
@@ -2114,7 +2254,7 @@ export function BookingFlow({
       if (prev) return () => setStepId(prev)
       // First step of a family: go back to the fork when there was one, otherwise
       // close. Without this a mixed business had no way to change its mind.
-      if (stepId !== 'offering' && hasServices && mayHaveClasses) {
+      if (stepId !== 'offering' && kinds.length > 1) {
         return () => { setKind(null); setStepId('offering') }
       }
       return onClose ?? null // first step: back closes (launcher)
@@ -2416,7 +2556,7 @@ export function BookingFlow({
    * forma najogólniejsza.
    */
   const panelTitle =
-    needsOfferingStep && kind === null
+    (needsOfferingStep && kind === null) || phase === 'closed'
       ? 'Zarezerwuj termin'
       : effKind === 'rental'
         ? 'Zarezerwuj przedmiot'
@@ -2444,7 +2584,7 @@ export function BookingFlow({
       <div class="vz-body" ref={bodyRef} tabIndex={-1}>
         {/* The offering fork sits BEFORE the counter: the two families have
             different step counts, so numbering it would promise the wrong total. */}
-        {phase !== 'done' && phase !== 'waitlistDone' && phase !== 'restricted' && !(phase === 'select' && stepId === 'offering') && (
+        {phase !== 'done' && phase !== 'waitlistDone' && phase !== 'restricted' && phase !== 'closed' && !(phase === 'select' && stepId === 'offering') && (
           <ProgressBar step={progStep} total={totalSteps} label={stepNames[progStep]} />
         )}
 
@@ -2791,6 +2931,29 @@ export function BookingFlow({
             >
               Wróć do usług
             </button>
+          </div>
+        )}
+        {phase === 'closed' && closedFor && (
+          // Calm, not an error: the business decided this, and the way to still
+          // book is the phone (never discouraged) or what else stays open.
+          <div class="vz-fade-in" style="text-align:center;padding:8px 0;" role="status">
+            <div class="vz-check calm"><CalendarDays size={26} /></div>
+            <div class="vz-done-title" style="font-size:18px;">{CLOSED_TITLE[closedFor]}</div>
+            <p class="vz-lead" style="margin-top:8px;">
+              {closedFor === 'waitlist' && closedExit
+                ? `Wybierz inny wolny termin w kalendarzu${businessPhone ? ' albo zadzwoń do firmy' : ''}.`
+                : `${CLOSED_GOAL[closedFor]}, ${businessPhone ? 'zadzwoń do firmy' : 'skontaktuj się bezpośrednio z firmą'}.`}
+            </p>
+            {businessPhone && (
+              <a class="vz-btn mt" href={`tel:${businessPhone.replace(/[\s\-()]/g, '')}`}>
+                <Phone size={17} /> Zadzwoń: {businessPhone}
+              </a>
+            )}
+            {closedExit && (
+              <button class={`vz-btn${businessPhone ? ' ghost' : ' mt'}`} onClick={closedExit.go} type="button">
+                {closedExit.label}
+              </button>
+            )}
           </div>
         )}
         {phase === 'done' && (
