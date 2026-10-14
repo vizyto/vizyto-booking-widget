@@ -40,6 +40,7 @@ import type {
   WaitlistResult,
 } from './api'
 import type { CustomerAction } from './channel'
+import { zonedIso } from './dates'
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -639,8 +640,11 @@ export async function getRentalDaySlots(p: { resourceId?: number; rentalTypeId?:
   await wait(250)
   // The trailer (resource 31) is billed per day -> no grid at all.
   if (p.resourceId === 31) return { mode: 'range' }
+  // Like the API: `local` is the wall clock of the business timezone, `start` the
+  // real instant (10:00 in Warsaw is 08:00Z in summer). Keeping them different is
+  // what lets the smoke catch a widget that glues `local` to "Z" again.
   const slots = ['10:00', '11:00', '12:00', '14:00', '15:00', '18:00'].map((hh) => ({
-    start: `${p.date}T${hh}:00.000Z`,
+    start: zonedIso(p.date, hh, BUSINESS.timezone || 'Europe/Warsaw') ?? `${p.date}T${hh}:00.000Z`,
     local: hh,
     resourceIds: [21, 22],
     promo: isPromoDay(p.date) && isPromoTime(hh) ? promoFields(8000) : null,

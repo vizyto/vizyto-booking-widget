@@ -280,6 +280,26 @@ await clickByText('11:00'); await page.waitForTimeout(300)
 s = await state()
 ok('godzinowy: wybór godziny odblokowuje CTA', !s.ctaDisabled, `${s.ctaText}`)
 
+// The tile says the business's wall clock ("11:00" in Warsaw), and the mock grid
+// publishes the real instant (09:00Z in summer), like the API. A widget that
+// glued "11:00" to "Z" books 13:00 local: the receipt would say so.
+await page.goto(URL + '?signedIn=1'); await page.waitForTimeout(900)
+await clickByText('Wynajem'); await page.waitForTimeout(500)
+await clickByText('Przydzielimy wolny egzemplarz'); await page.waitForTimeout(800)
+await clickByText('11:00'); await page.waitForTimeout(400)
+await next(); await page.waitForTimeout(1300)
+s = await state()
+ok('godzinowy: odbiór o wybranej godzinie (strefa firmy, nie UTC)',
+   /Odbiór\d{1,2} \S+, 11:00/.test(s.body) && /Zwrot\d{1,2} \S+, 12:00/.test(s.body), s.body.slice(0, 400))
+
+// A rentable instance's resourceId alone names the rental family: no fork, and
+// straight onto that instance's calendar (vizyto README, prefill table).
+await page.goto(URL + '?prefillResource=31'); await page.waitForTimeout(1200)
+s = await state()
+ok('prefill egzemplarza bez kind: od razu kalendarz przyczepy',
+   s.stepName === 'WYBÓR TERMINU' && /Na jak długo\?/.test(s.body) && /1 doba/.test(s.body) && !/Wizyta indywidualna/.test(s.body),
+   `${s.stepName} | ${s.body.slice(0, 200)}`)
+
 // --- range mode (daily instance) ---
 await reload()
 await clickByText('Wynajem'); await page.waitForTimeout(500)

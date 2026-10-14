@@ -5,6 +5,7 @@
 // the in-memory mock backend so the full flow is testable before the API ships.
 
 import * as mock from './mock'
+import { zonedDay } from './dates'
 import type { PublicBookingChannels } from './channel'
 
 export type Cfg = { apiBase: string; siteKey: string; businessId: number; token?: string; turnstileKey?: string; mock?: boolean }
@@ -588,6 +589,9 @@ const RENTAL_UNIT_GEN: Record<RentalUnit, string> = {
  */
 export function rentalUnitsLabel(n: number, unit: RentalUnit, after?: 'od'): string {
   if (n === 1) return `1 ${after === 'od' ? RENTAL_UNIT_GEN[unit] : RENTAL_UNIT_ONE[unit]}`
+  // Po "od" każda liczba poza 1 bierze dopełniacz liczby mnogiej: "od 2 dób",
+  // "od 3 godzin", "od 22 tygodni" - nigdy "od 2 doby".
+  if (after === 'od') return `${n} ${RENTAL_UNIT_MANY[unit]}`
   const mod100 = n % 100
   const mod10 = n % 10
   const few = mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)
@@ -1315,7 +1319,26 @@ export function bookingIdempotencyKey(p: {
 
 // ---- formatting / phone helpers -----------------------------------------
 
-export const slotStartDate = (date: string, utcKey: string) => `${date}T${utcKey.slice(0, 5)}:00.000Z`
+/**
+ * The instant of a visit slot. Availability answers UTC "HH:mm" keys for one
+ * LOCAL day of the business, so the key belongs to that local day, not to the
+ * UTC day of the same name: in Poland a 00:30 start is 22:30Z of the day before.
+ * With the business timezone the key is placed on the UTC day that lands on
+ * `date` locally; without it (labels only need the hour) it is glued to `date`.
+ */
+export function slotStartDate(date: string, utcKey: string, tz?: string | null): string {
+  const iso = `${date}T${utcKey.slice(0, 5)}:00.000Z`
+  const ms = Date.parse(iso)
+  if (!tz || Number.isNaN(ms)) return iso
+  try {
+    for (const shift of [0, -86_400_000, 86_400_000]) {
+      if (zonedDay(ms + shift, tz) === date) return new Date(ms + shift).toISOString()
+    }
+  } catch {
+    // Unknown zone name: keep the plain reading.
+  }
+  return iso
+}
 
 export function slotLabel(date: string, utcKey: string, tz: string | null): string {
   try {

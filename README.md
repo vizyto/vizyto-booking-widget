@@ -383,14 +383,15 @@ VizytoBooking.open({ classId: 41, sessionId: 901 })
 
 // wynajem - od katalogu przedmiotów
 VizytoBooking.open({ kind: 'rental' })
-// wynajem konkretnego egzemplarza (karta pojazdu na stronie wypożyczalni)
-VizytoBooking.open({ kind: 'rental', resourceId: 31 })
+// wynajem konkretnego egzemplarza (karta pojazdu na stronie wypożyczalni);
+// sam `resourceId` egzemplarza wystarcza, `kind` jest tu opcjonalny
+VizytoBooking.open({ resourceId: 31 })
 ```
 
 | klucz | rodzina | znaczenie |
 | --- | --- | --- |
 | `serviceId` | wizyta | usługa do koszyka; z wariantami zostaje na kroku usługi, żeby je wybrać |
-| `resourceId` | wizyta, wynajem | wizyta: wykonawca albo egzemplarz z puli, ignorowany, gdy usługa przydziela automatycznie; wynajem: egzemplarz - pomija listę i wchodzi od razu na jego kalendarz (egzemplarz z puli albo zdjęty z oferty zostawia listę) |
+| `resourceId` | wizyta, wynajem | wizyta: wykonawca albo egzemplarz z puli, ignorowany, gdy usługa przydziela automatycznie; wynajem: egzemplarz - pomija listę i wchodzi od razu na jego kalendarz, także bez `kind` (egzemplarz z puli albo zdjęty z oferty zostawia listę) |
 | `classId` | zajęcia | kurs; wchodzi od razu na jego grafik |
 | `sessionId` | zajęcia | konkretny termin; **pełny termin jest odrzucany** i klient staje na liście |
 | `kind` | wszystkie | `'service' \| 'class' \| 'rental'` - jawny wybór rodziny, gdy nie znasz id |
@@ -483,7 +484,7 @@ przepływ offline:
 
 `scripts/mock-harness.html` przyjmuje te same dźwignie w adresie:
 `?business=680`, `?signedIn=1` (sesja bez kodu SMS), `?prefillClass=41`,
-`?prefillSession=901`, `?prefillService=1`, `?prefillKind=rental`,
+`?prefillSession=901`, `?prefillService=1`, `?prefillResource=31`, `?prefillKind=rental`,
 `?onlyServices=1`.
 
 ### Test na prawdziwym API
