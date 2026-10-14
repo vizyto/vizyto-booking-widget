@@ -94,18 +94,36 @@ describe('mock channel levers', () => {
     expect(families.map((a) => widgetAllows(b, a))).toEqual([true, false, true, false])
   })
 
-  test('682 looks open but refuses every write with a channel 409', async () => {
+  const writeAll = (c) => Promise.all([
+    createAppointment(c, { items: [], startDate: '2030-01-07T08:00:00.000Z', bookedById: 1, idempotencyKey: 'k' }, 'mock-token'),
+    registerForSession(c, { sessionId: 901, bookedById: 1, idempotencyKey: 'k' }, 'mock-token'),
+    createRental(c, { resourceId: 31, startDate: '2030-01-07T08:00:00.000Z', endDate: '2030-01-08T08:00:00.000Z', bookedById: 1, idempotencyKey: 'k' }, 'mock-token'),
+    joinWaitlist(c, { businessServiceId: 1, dateFrom: '2030-01-07', dateTo: '2030-01-08', bookedById: 1 }, 'mock-token'),
+  ])
+
+  test('682 looks open, then answers like a channel switched off after load', async () => {
     const c = cfg(682)
     const b = await fetchBusiness(c)
     expect(families.map((a) => widgetAllows(b, a))).toEqual([true, true, true, true])
+    const writes = await writeAll(c)
+    expect(writes.map((r) => r.ok)).toEqual([false, false, false, false])
+    // A closed channel refuses every new booking with the same code (policy.service.ts).
+    expect(writes.map((r) => r.code)).toEqual(Array(4).fill('CHANNEL_BOOKING_DISABLED'))
+    expect(writes.map(classifyWriteFailure)).toEqual(Array(4).fill('channel_closed'))
+    // The re-read the widget makes after a channel 409 sees the closed channel.
+    const fresh = await fetchBusiness(c)
+    expect(families.map((a) => widgetAllows(fresh, a))).toEqual([false, false, false, false])
+  })
+
+  test('683 switches actions off one by one', async () => {
+    const c = cfg(683)
+    const b = await fetchBusiness(c)
+    expect(families.map((a) => widgetAllows(b, a))).toEqual([true, true, true, true])
     const visit = await createAppointment(c, { items: [], startDate: '2030-01-07T08:00:00.000Z', bookedById: 1, idempotencyKey: 'k' }, 'mock-token')
-    const cls = await registerForSession(c, { sessionId: 901, bookedById: 1, idempotencyKey: 'k' }, 'mock-token')
-    const rental = await createRental(c, { resourceId: 31, startDate: '2030-01-07T08:00:00.000Z', endDate: '2030-01-08T08:00:00.000Z', bookedById: 1, idempotencyKey: 'k' }, 'mock-token')
-    const wl = await joinWaitlist(c, { businessServiceId: 1, dateFrom: '2030-01-07', dateTo: '2030-01-08', bookedById: 1 }, 'mock-token')
-    expect([visit, cls, rental, wl].map((r) => r.ok)).toEqual([false, false, false, false])
-    expect(visit.code).toBe('CHANNEL_BOOKING_DISABLED')
-    expect([cls.code, rental.code, wl.code]).toEqual(['CHANNEL_ACTION_DISABLED', 'CHANNEL_ACTION_DISABLED', 'CHANNEL_ACTION_DISABLED'])
-    expect([visit, cls, rental, wl].map(classifyWriteFailure)).toEqual(['channel_closed', 'channel_closed', 'channel_closed', 'channel_closed'])
+    expect(visit.code).toBe('CHANNEL_ACTION_DISABLED')
+    expect(refusedActions('book', visit.code)).toEqual(['book'])
+    const fresh = await fetchBusiness(c)
+    expect(families.map((a) => widgetAllows(fresh, a))).toEqual([false, true, true, true])
   })
 
   test('back on 24 the same writes go through', async () => {

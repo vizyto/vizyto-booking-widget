@@ -10,8 +10,13 @@
 //       680 -> the widget channel is switched off: the closed state, no steps
 //       681 -> classes and the waitlist are off in the widget channel, visits and
 //              rentals stay open (the fork loses a branch, no waitlist button)
-//       682 -> the profile says open, but every write answers 409 as if the
-//              owner switched the channel off after the page loaded
+//       682 -> the profile says open, but the owner switches the whole widget
+//              channel off after the page loaded: every new-booking write
+//              answers 409 CHANNEL_BOOKING_DISABLED (what the API sends for a
+//              closed channel) and every later profile read says closed
+//       683 -> the profile says open, but the owner switches actions off one
+//              by one: each write answers 409 CHANNEL_ACTION_DISABLED and later
+//              profile reads say that one action is closed
 import type {
   Business,
   CartItem,
@@ -84,13 +89,30 @@ const OPEN_ACTIONS: Record<CustomerAction, boolean> = {
 export const MOCK_CHANNEL_CLOSED = 680
 export const MOCK_CHANNEL_PARTIAL = 681
 export const MOCK_CHANNEL_CLOSES_ON_SUBMIT = 682
+export const MOCK_ACTIONS_CLOSE_ON_SUBMIT = 683
 // Set by fetchBusiness: the write mocks below take no business id.
 let mockBusinessId = 24
+// What the owner has switched off since the page loaded (682: the whole channel,
+// 683: these actions). Profile reads after a refusal reflect it, like the API.
+let mockChannelSwitchedOff = false
+const mockActionsSwitchedOff = new Set<CustomerAction>()
 
-/** 409 a write gets on business 682, in the shape the API's policy service picks. */
+/**
+ * 409 a write gets on business 682/683, with the code the API's policy service
+ * (`channelRefusal`) picks: a channel switched off refuses every new booking with
+ * CHANNEL_BOOKING_DISABLED, one action switched off in an open channel answers
+ * CHANNEL_ACTION_DISABLED (a visit too).
+ */
 function channelRefusal(action: CustomerAction): { ok: false; code: string } | null {
-  if (mockBusinessId !== MOCK_CHANNEL_CLOSES_ON_SUBMIT) return null
-  return { ok: false, code: action === 'book' ? 'CHANNEL_BOOKING_DISABLED' : 'CHANNEL_ACTION_DISABLED' }
+  if (mockBusinessId === MOCK_CHANNEL_CLOSES_ON_SUBMIT) {
+    mockChannelSwitchedOff = true
+    return { ok: false, code: 'CHANNEL_BOOKING_DISABLED' }
+  }
+  if (mockBusinessId === MOCK_ACTIONS_CLOSE_ON_SUBMIT) {
+    mockActionsSwitchedOff.add(action)
+    return { ok: false, code: 'CHANNEL_ACTION_DISABLED' }
+  }
+  return null
 }
 
 const BUSINESS: Business = {
@@ -285,7 +307,16 @@ export async function fetchBusiness(businessId?: number): Promise<Business> {
     const partial = { ...OPEN_ACTIONS, groupClasses: false, waitlist: false }
     return { ...BUSINESS, id: businessId, bookingChannels: { ...BUSINESS.bookingChannels, widget: { enabled: true, actions: partial } } }
   }
-  if (businessId === MOCK_CHANNEL_CLOSES_ON_SUBMIT) return { ...BUSINESS, id: businessId }
+  if (businessId === MOCK_CHANNEL_CLOSES_ON_SUBMIT) {
+    if (!mockChannelSwitchedOff) return { ...BUSINESS, id: businessId }
+    const closed = { book: false, groupClasses: false, rentals: false, waitlist: false, reschedule: true, cancel: true }
+    return { ...BUSINESS, id: businessId, bookingChannels: { ...BUSINESS.bookingChannels, widget: { enabled: false, actions: closed } } }
+  }
+  if (businessId === MOCK_ACTIONS_CLOSE_ON_SUBMIT) {
+    const actions = { ...OPEN_ACTIONS }
+    for (const a of mockActionsSwitchedOff) actions[a] = false
+    return { ...BUSINESS, id: businessId, bookingChannels: { ...BUSINESS.bookingChannels, widget: { enabled: true, actions } } }
+  }
   // Test lever: a single-family business (plain barbershop) must never see the
   // offering fork. Strips the group services and the rentables from the payload.
   // `typeof` guard: the mock also runs under bun:test, where there is no window.

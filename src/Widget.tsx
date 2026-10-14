@@ -78,6 +78,19 @@ export function Widget({
     if (open) load()
   }, [open])
 
+  /**
+   * A write was refused under the channel policy (409 CHANNEL_*), so the cached
+   * profile is stale. Replace it: the flow on screen recomputes what is still
+   * open, and every later mount (the modal reopened, a new open()) starts from
+   * the fresh `bookingChannels.widget` instead of walking into the same 409. A
+   * failed read keeps the old copy (no spinner, the closed state stays).
+   */
+  async function refreshBusiness(): Promise<Business | null> {
+    const b = await fetchBusiness(cfg)
+    if (b) setBusiness(b)
+    return b
+  }
+
   // Emit open/close on real transitions (launcher only - inline is always open).
   useEffect(() => {
     if (mode !== 'launcher' || open === wasOpen.current) return
@@ -149,7 +162,16 @@ export function Widget({
       </div>
     </MiniPanel>
   ) : business ? (
-    <BookingFlow key={sessionId} cfg={cfg} business={business} prefill={prefill} preAuth={preAuth} onClose={close} emit={emit} />
+    <BookingFlow
+      key={sessionId}
+      cfg={cfg}
+      business={business}
+      prefill={prefill}
+      preAuth={preAuth}
+      onClose={close}
+      onChannelRefused={refreshBusiness}
+      emit={emit}
+    />
   ) : null
 
   if (mode === 'inline') return <div class="vz-inline">{content}</div>

@@ -238,8 +238,14 @@ monorepo. Tak samo jak CLIENT i WEB:
   zapisach na zajęcia), pokazuje stan zamknięcia tej rodziny z przejściem do
   pozostałych;
 - 409 `CHANNEL_*` przy zapisie (firma wyłączyła kanał już po wczytaniu strony)
-  prowadzi do tego samego stanu, a nie do „Ten termin właśnie zniknął”;
-  zamknięta akcja znika z kreatora do końca sesji.
+  prowadzi do tego samego stanu, a nie do „Ten termin właśnie zniknął”. Sam kod
+  nie mówi, ile zamknięto (`CHANNEL_BOOKING_DISABLED` przy wizycie znaczy i
+  „rezerwacje online wyłączone”, i „cały kanał wyłączony”), więc widget od razu
+  pobiera profil firmy ponownie. Świeże `bookingChannels.widget` decyduje o
+  wyjściach ze stanu zamknięcia i o każdym kolejnym otwarciu (ponownie otwarty
+  modal, nowe `open()`), więc zamknięta akcja nie wraca do kreatora. Stan
+  zamknięcia na ekranie zostaje; gdy nic już nie jest otwarte, obejmuje cały
+  widget.
 
 Starsze API bez `bookingChannels`: wizyty idą za
 `hasWebsiteReservationsEnabled`, reszta zostaje otwarta (jak przed #680).
@@ -477,10 +483,13 @@ przepływ offline:
 - kanały rezerwacji (#680) wybierasz id biznesu (`data-vizyto-business`):
   - **680** - kanał strony WWW wyłączony: stan zamknięcia zamiast kroków,
   - **681** - zajęcia i lista oczekujących wyłączone, wizyty i wynajem otwarte,
-  - **682** - profil mówi „otwarte”, ale każdy zapis dostaje 409
-    `CHANNEL_BOOKING_DISABLED` (wizyta) albo `CHANNEL_ACTION_DISABLED` (zajęcia,
-    wynajem, lista oczekujących), jak po wyłączeniu kanału w trakcie wizyty na
-    stronie.
+  - **682** - profil mówi „otwarte”, ale firma wyłącza cały kanał już po
+    wczytaniu strony: każdy zapis nowej rezerwacji dostaje 409
+    `CHANNEL_BOOKING_DISABLED` (tak odpowiada API przy wyłączonym kanale), a
+    kolejne pobranie profilu pokazuje kanał zamknięty,
+  - **683** - profil mówi „otwarte”, ale firma wyłącza akcje pojedynczo: każdy
+    zapis dostaje 409 `CHANNEL_ACTION_DISABLED`, a kolejne pobranie profilu
+    pokazuje zamkniętą tylko tę akcję.
 
 `scripts/mock-harness.html` przyjmuje te same dźwignie w adresie:
 `?business=680`, `?signedIn=1` (sesja bez kodu SMS), `?prefillClass=41`,
