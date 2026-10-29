@@ -795,6 +795,7 @@ a.vz-btn { text-decoration: none; }
   transition: background var(--vz-dur-out), border-color var(--vz-dur-out), transform var(--vz-dur-out);
 }
 .vz-oauth:hover { background: var(--vz-surface-2); }
+a.vz-oauth { text-decoration: none; }
 .vz-oauth:active { transform: scale(.99); }
 .vz-oauth[disabled] { opacity: .55; cursor: default; }
 .vz-oauth .vz-spin { width: 16px; height: 16px; border-top-color: var(--vz-text); }

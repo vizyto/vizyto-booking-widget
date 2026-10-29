@@ -2,12 +2,16 @@
  * Per-channel booking policy (vizyto #680), the widget's slice of it.
  *
  * The business decides, per channel, whether online booking is on and which
- * customer actions it takes. The widget books in the channel `widget`
- * ("Twoja strona WWW" in PRO - the same channel as a site from the builder), and
- * the API refuses a write the policy does not allow with 409
- * CHANNEL_BOOKING_DISABLED / CHANNEL_ACTION_DISABLED. CLIENT and WEB read the
- * resolved policy from the public business profile and never start a flow the
- * server will refuse; this file lets the widget do the same.
+ * customer actions it takes. On an external site the widget books in the channel
+ * `widget` ("Twoja strona WWW" in PRO - the same channel as a site from the
+ * builder). vizyto.com's own guest page (/r/) mounts it with `channel: 'website'`
+ * and no site key, and that traffic books in the channel `website` ("vizyto.com").
+ * The API picks the channel from the request Origin and refuses a write the
+ * policy does not allow with 409 CHANNEL_BOOKING_DISABLED /
+ * CHANNEL_ACTION_DISABLED; the widget only reads the slice of the configured
+ * channel (`cfg.channel`). CLIENT and WEB read the resolved policy from the
+ * public business profile and never start a flow the server will refuse; this
+ * file lets the widget do the same.
  *
  * `publicChannelAllows` is a faithful port of the function of the same name in
  * the monorepo's `packages/shared/src/utils/bookingChannels.ts` (like ./policy
@@ -25,8 +29,19 @@ export type PublicBookingChannels = Partial<
   Record<BookingChannel, { enabled: boolean; actions: Partial<Record<CustomerAction, boolean>> }>
 >
 
-/** The channel every widget write is attributed to (the site-key path). */
-export const WIDGET_CHANNEL: BookingChannel = 'widget'
+/** The channels the widget can be mounted in (`client_app` is the CLIENT app only). */
+export type WidgetChannel = Extract<BookingChannel, 'widget' | 'website'>
+
+/** The channel of an external site (the site-key path), and the default. */
+export const WIDGET_CHANNEL: WidgetChannel = 'widget'
+
+/**
+ * The `channel` mount option: `website` for vizyto.com's own guest page, anything
+ * else (missing, a typo, `client_app`) is the external-site channel `widget`.
+ */
+export function resolveWidgetChannel(value: unknown): WidgetChannel {
+  return value === 'website' ? 'website' : WIDGET_CHANNEL
+}
 
 /**
  * What a customer surface may offer, read from the public business profile. An
@@ -44,12 +59,6 @@ export function publicChannelAllows(
   if (slice) return slice.actions[action] ?? false
   return action === 'book' ? !!business.hasWebsiteReservationsEnabled : true
 }
-
-/** Widget shorthand: may this business take `action` in the widget channel? */
-export const widgetAllows = (
-  business: Parameters<typeof publicChannelAllows>[0],
-  action: CustomerAction,
-): boolean => publicChannelAllows(business, WIDGET_CHANNEL, action)
 
 /**
  * The refusal codes of the monorepo's booking-channels policy service: the
@@ -71,8 +80,8 @@ const VERIFICATION_CODES: ReadonlySet<string> = new Set([
  *  - `price_changed`: show the new price and ask again (needs the new quote),
  *  - `verification`: back to identity, the session no longer passes,
  *  - `access_restricted`: the whitelist gate refused this viewer,
- *  - `channel_closed`: the business does not take this booking in the widget
- *    channel any more - the closed state, never "this term is gone",
+ *  - `channel_closed`: the business does not take this booking in the
+ *    configured channel any more - the closed state, never "this term is gone",
  *  - `network`: keep everything and offer a retry,
  *  - `refused`: anything else; each path keeps its own recovery (slot lost for a
  *    visit, the reason named on the timetable or the rental calendar).

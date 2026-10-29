@@ -371,6 +371,19 @@ VizytoBooking.close()
 VizytoBooking.unmount()     // usuwa wszystkie instancje
 ```
 
+### vizyto.com guest page options
+
+These options exist for vizyto.com's own guest page (`/r/<id>-<slug>?z=<place>`),
+which mounts the widget inline without a site key. They are `mount()` options
+only, not `data-*` attributes: an external site always books in the `widget`
+channel.
+
+| `mount()` option | type | effect |
+|---|---|---|
+| `channel` | `'widget' \| 'website'` | Which slice of the business's per-channel booking policy (`bookingChannels`) the flow reads, so it never offers what the API will refuse. Default `'widget'` ("Twoja strona WWW"); `'website'` is vizyto.com. Any other value falls back to `'widget'`. The API still decides the channel from the request Origin. |
+| `entryPoint` | `string` | Where the visitor came from. Exactly one of `instagram`, `facebook`, `whatsapp`, `google`, `qr`, `www`, `link`; anything else is dropped. Sent as `entryPoint` in the visit (appointment) POST body only, never with classes, rentals or the waitlist, and never shown. |
+| `loginHref` | `string` | The host page's own sign-in URL (absolute `https:`/`http:` only). Without a site key the Google/Apple/Facebook popups cannot work, so the login step hides them and, when `loginHref` is set, shows one link "Zaloguj się przez Google, Apple lub Facebook" to it instead (same tab, `target="_top"`). With a site key the step is unchanged. SMS code and e-mail login stay as they are. |
+
 ### Prefill - trzy rodziny oferty
 
 Widget obsługuje wizyty, **zajęcia grupowe** i **wynajem**. Biznes, który sprzedaje

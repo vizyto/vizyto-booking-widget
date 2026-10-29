@@ -6,9 +6,23 @@
 
 import * as mock from './mock'
 import { zonedDay } from './dates'
-import type { PublicBookingChannels } from './channel'
+import type { PublicBookingChannels, WidgetChannel } from './channel'
+import type { EntryPoint } from './mountOptions'
 
-export type Cfg = { apiBase: string; siteKey: string; businessId: number; token?: string; turnstileKey?: string; mock?: boolean }
+export type Cfg = {
+  apiBase: string
+  siteKey: string
+  businessId: number
+  token?: string
+  turnstileKey?: string
+  mock?: boolean
+  /** The policy slice the flow reads: `widget` on an external site, `website` on vizyto.com's guest page. */
+  channel: WidgetChannel
+  /** Where the visitor came from (vizyto.com's short link); sent with a visit only. */
+  entryPoint?: EntryPoint
+  /** The host page's own sign-in, offered instead of the OAuth popups when there is no site key. */
+  loginHref?: string
+}
 
 // Per-employee override of a service's price/duration. The business can set a
 // different price/duration for a given worker; the API resolves the fallback
@@ -1116,6 +1130,8 @@ export async function createAppointment(
         startDate: p.startDate,
         notes: p.notes,
         ...(p.expectedTotal !== undefined ? { expectedTotal: p.expectedTotal } : {}),
+        // vizyto.com's short link: where the visitor came from. Visits only.
+        ...(cfg.entryPoint ? { entryPoint: cfg.entryPoint } : {}),
       }),
     })
     const data = await r.json().catch(() => ({}))

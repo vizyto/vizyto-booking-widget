@@ -32,7 +32,7 @@ copyFileSync('dist/widget.js', `deploy${versionPath}/widget.js`)
 const manifest = {
   ...fonts,
   widget: { version: pkg.version, path: `${versionPath}/widget.js`, hash: widgetHash },
-  capabilities: ['fontPackId', 'accent', 'accentLight', 'accentDark', 'onAccent', 'theme', 'font-off'],
+  capabilities: ['fontPackId', 'accent', 'accentLight', 'accentDark', 'onAccent', 'theme', 'font-off', 'channel', 'entryPoint', 'loginHref'],
 }
 writeFileSync(`deploy${versionPath}/manifest.json`, JSON.stringify(manifest, null, 2) + '\n')
 

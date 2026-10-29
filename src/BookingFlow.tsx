@@ -53,7 +53,7 @@ import { StepOffering, type OfferingKind } from './steps/StepOffering'
 import { StepRentalItem, groupRentables, rentalOptionKey, type RentalOption } from './steps/StepRentalItem'
 import { StepRentalTime } from './steps/StepRentalTime'
 import { resolveCartPolicy } from './policy'
-import { classifyWriteFailure, refusedActions, widgetAllows, type CustomerAction } from './channel'
+import { classifyWriteFailure, publicChannelAllows, refusedActions, type CustomerAction } from './channel'
 import {
   canPickPerItem,
   clearStaffPins,
@@ -84,6 +84,7 @@ import { ItemProviders } from './steps/ItemProviders'
 import { StepIdentify, type Contact } from './steps/StepIdentify'
 import { StepWaitlist, type WaitlistPrefs } from './steps/StepWaitlist'
 import { StepLogin } from './steps/StepLogin'
+import { socialLogin } from './mountOptions'
 import { StepOtp } from './steps/StepOtp'
 import { StepDone } from './steps/StepDone'
 import { Notice } from './ui/Notice'
@@ -142,7 +143,7 @@ const KIND_ACTION: Record<OfferingKind, CustomerAction> = { service: 'book', cla
 
 /**
  * The closed state, per what is closed. `all` = nothing this business sells can be
- * booked in the widget channel; a family = only that one (the others stay open).
+ * booked in this channel; a family = only that one (the others stay open).
  */
 type ClosedFor = CustomerAction | 'all'
 const CLOSED_TITLE: Record<ClosedFor, string> = {
@@ -561,16 +562,17 @@ export function BookingFlow({
   }, [hasServices, mayHaveClasses, hasRentals])
 
   /**
-   * Per-channel booking policy (#680). The widget books in the channel `widget`,
-   * and a family the business does not take there is not offered at all - the
-   * same pre-check CLIENT and WEB make, so the customer never walks a whole flow
-   * into a 409. `refused` holds actions the API turned down at submit time while
+   * Per-channel booking policy (#680). The widget books in `cfg.channel`
+   * (`widget` on an external site, `website` on vizyto.com's guest page), and a
+   * family the business does not take there is not offered at all - the same
+   * pre-check CLIENT and WEB make, so the customer never walks a whole flow into
+   * a 409. `refused` holds actions the API turned down at submit time while
    * the profile still allowed them (the owner switched them off after this page
    * loaded): from then on they count as closed too.
    */
   const [refused, setRefused] = useState<CustomerAction[]>([])
-  const allows = (action: CustomerAction) => widgetAllows(business, action) && !refused.includes(action)
-  /** Families this business sells AND takes in the widget channel - the fork never offers a dead branch. */
+  const allows = (action: CustomerAction) => publicChannelAllows(business, cfg.channel, action) && !refused.includes(action)
+  /** Families this business sells AND takes in this channel - the fork never offers a dead branch. */
   const kinds = useMemo<OfferingKind[]>(
     () => soldKinds.filter((k) => allows(KIND_ACTION[k])),
     [soldKinds, business, refused],
@@ -1948,7 +1950,7 @@ export function BookingFlow({
    *
    * The code alone cannot say how much closed (CHANNEL_BOOKING_DISABLED on a
    * visit is both "online booking off" and "the whole channel off"), so the host
-   * re-reads the public profile. The fresh `bookingChannels.widget` then drives
+   * re-reads the public profile. The fresh `bookingChannels[cfg.channel]` then drives
    * this flow's exits and every later mount (a reopened modal, a new `open()`),
    * instead of offering again what the server will refuse. The closed state on
    * screen stays; it only widens to the whole widget when nothing is left.
@@ -1956,7 +1958,7 @@ export function BookingFlow({
   function closeChannel(action: CustomerAction, code: string, ctx: Record<string, unknown>) {
     const nextRefused = [...new Set([...refused, ...refusedActions(action, code)])]
     setRefused(nextRefused)
-    const left = soldKinds.filter((k) => widgetAllows(business, KIND_ACTION[k]) && !nextRefused.includes(KIND_ACTION[k]))
+    const left = soldKinds.filter((k) => publicChannelAllows(business, cfg.channel, KIND_ACTION[k]) && !nextRefused.includes(KIND_ACTION[k]))
     setClosedFor(left.length === 0 ? 'all' : action)
     setBookingErr('')
     setPhase('closed')
@@ -1965,7 +1967,7 @@ export function BookingFlow({
     if (action !== 'waitlist') emit('booking_failed', { ...ctx, code, reason: 'channel_closed' })
     void onChannelRefused?.().then((fresh) => {
       if (!fresh) return
-      const open = soldKinds.filter((k) => widgetAllows(fresh, KIND_ACTION[k]) && !nextRefused.includes(KIND_ACTION[k]))
+      const open = soldKinds.filter((k) => publicChannelAllows(fresh, cfg.channel, KIND_ACTION[k]) && !nextRefused.includes(KIND_ACTION[k]))
       // Only while the closed state is still on screen (null = the customer left it).
       if (open.length === 0) setClosedFor((c) => (c ? 'all' : c))
     })
@@ -2879,6 +2881,7 @@ export function BookingFlow({
             onSubmit={onLogin}
             onOAuth={onOAuth}
             oauthBusy={oauthBusy}
+            social={socialLogin(cfg.siteKey, cfg.loginHref)}
             onBackToGuest={() => { setLoginErr(''); setPhase('identify') }}
             loggingIn={loggingIn}
             error={loginErr}

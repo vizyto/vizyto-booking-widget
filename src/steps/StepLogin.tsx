@@ -5,12 +5,53 @@ import { Field } from '../ui/Field'
 import { Button } from '../ui/Button'
 import { Spinner } from '../ui/Spinner'
 import { AppleLogo, FacebookF, GoogleG } from '../ui/icons'
+import type { SocialLogin } from '../mountOptions'
 
 const PROVIDERS: { id: OAuthProvider; label: string; Icon: (p: { size?: number }) => any }[] = [
   { id: 'google', label: 'Google', Icon: GoogleG },
   { id: 'apple', label: 'Apple', Icon: AppleLogo },
   { id: 'facebook', label: 'Facebook', Icon: FacebookF },
 ]
+
+/**
+ * The social sign-in block. The OAuth popups need a site key, so without one
+ * (vizyto.com's guest page) they are not offered: the host page's own sign-in
+ * takes their place when it gave one (`loginHref`), otherwise only e-mail stays.
+ * Hook-free so it can be rendered on its own.
+ */
+export function SocialLoginOptions({
+  social,
+  onOAuth,
+  oauthBusy,
+  busy,
+}: {
+  social: SocialLogin
+  onOAuth: (p: OAuthProvider) => void
+  oauthBusy: OAuthProvider | null
+  busy: boolean
+}) {
+  if (social.kind === 'none') return null
+  return (
+    <>
+      <div class="vz-oauth-list">
+        {social.kind === 'link' ? (
+          <a class="vz-oauth" href={social.href} target="_top">
+            Zaloguj się przez Google, Apple lub Facebook
+          </a>
+        ) : (
+          PROVIDERS.map((p) => (
+            <button class="vz-oauth" disabled={busy} onClick={() => onOAuth(p.id)} type="button">
+              {oauthBusy === p.id ? <Spinner /> : <p.Icon size={18} />}
+              Kontynuuj z {p.label}
+            </button>
+          ))
+        )}
+      </div>
+
+      <div class="vz-or">lub e-mailem</div>
+    </>
+  )
+}
 
 export function StepLogin({
   email,
@@ -19,6 +60,7 @@ export function StepLogin({
   onSubmit,
   onOAuth,
   oauthBusy,
+  social = { kind: 'buttons' },
   onBackToGuest,
   loggingIn,
   error,
@@ -29,6 +71,7 @@ export function StepLogin({
   onSubmit: (email: string, password: string) => void
   onOAuth: (p: OAuthProvider) => void
   oauthBusy: OAuthProvider | null
+  social?: SocialLogin
   onBackToGuest: () => void
   loggingIn: boolean
   error?: string
@@ -42,16 +85,7 @@ export function StepLogin({
       <StepHeader title="Zaloguj się" />
       <p class="vz-lead">{prefillReason || 'Zaloguj się kontem Vizyto - pominiesz weryfikację SMS.'}</p>
 
-      <div class="vz-oauth-list">
-        {PROVIDERS.map((p) => (
-          <button class="vz-oauth" disabled={busy} onClick={() => onOAuth(p.id)} type="button">
-            {oauthBusy === p.id ? <Spinner /> : <p.Icon size={18} />}
-            Kontynuuj z {p.label}
-          </button>
-        ))}
-      </div>
-
-      <div class="vz-or">lub e-mailem</div>
+      <SocialLoginOptions social={social} onOAuth={onOAuth} oauthBusy={oauthBusy} busy={busy} />
 
       <div class="vz-fields">
         <Field label="E-mail" value={email} onInput={onChangeEmail} type="email" inputMode="email" autoComplete="email" full />

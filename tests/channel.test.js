@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  CHANNEL_REFUSAL_CODES, NEW_BOOKING_ACTIONS, classifyWriteFailure, publicChannelAllows, refusedActions, widgetAllows,
+  CHANNEL_REFUSAL_CODES, NEW_BOOKING_ACTIONS, classifyWriteFailure, publicChannelAllows, refusedActions,
 } from '../src/channel.ts'
 import { createAppointment, createRental, fetchBusiness, joinWaitlist, registerForSession } from '../src/api.ts'
+
+// The external-site widget reads the `widget` slice (the default `cfg.channel`).
+const widgetAllows = (business, action) => publicChannelAllows(business, 'widget', action)
 
 // Mirrors the monorepo's packages/shared/src/utils/bookingChannels.test.ts
 // ("publicChannelAllows"), so the port is held to the same contract.
@@ -29,6 +32,9 @@ describe('publicChannelAllows (port of the shared resolver)', () => {
     expect(widgetAllows(business, 'groupClasses')).toBe(true)
     // An action missing from a present slice is closed, not open.
     expect(widgetAllows(business, 'rentals')).toBe(false)
+    // vizyto.com's guest page (`channel: 'website'`) reads the other slice.
+    expect(publicChannelAllows(business, 'website', 'book')).toBe(true)
+    expect(publicChannelAllows(business, 'website', 'rentals')).toBe(false)
   })
 
   test('a profile without the widget slice falls back to the business switch', () => {
