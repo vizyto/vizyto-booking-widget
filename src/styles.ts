@@ -837,6 +837,9 @@ a.vz-oauth { text-decoration: none; }
   .vz-panel { max-width: none; max-height: 94vh; border-radius: 24px 24px 0 0; border-bottom: 0; animation: vz-sheet-up var(--vz-dur-in) var(--vz-ease-out); }
   @keyframes vz-sheet-up { from { transform: translateY(100%) } to { transform: none } }
   .vz-grab { display: block; }
+  /* An inline embed sits inside a page, not at the screen's bottom edge: it stays a closed card. */
+  .vz-inline .vz-panel { max-height: none; border-radius: 22px; border-bottom: 1px solid var(--vz-border); animation: none; }
+  .vz-inline .vz-grab { display: none; }
 }
 .vz-grab { display: none; width: 38px; height: 4px; border-radius: 999px; background: var(--vz-border); margin: 8px auto 0; }
 
