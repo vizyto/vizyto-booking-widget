@@ -183,6 +183,7 @@ Verification (no extra test dependencies):
 pnpm exec tsc --noEmit
 pnpm build:cdn
 bun test tests/site-styles.test.js
+bun test tests/tables.test.js
 grep -r googleapis dist deploy  # no matches, exit status 1
 ```
 
@@ -217,6 +218,18 @@ zapisy dodatkowo `Authorization: Bearer <token>`):
 - `POST /auth/check-email` `{email}` → `{exists}` - proaktywne wykrycie istniejącego konta.
 - `GET  /auth/embed/start?provider&businessId&origin&key` - start OAuth w popupie (302 do dostawcy).
 - `GET  /auth/embed/callback` - po OAuth odsyła `{token,userId}` przez `postMessage` do dozwolonego originu.
+- Stoliki (vizyto #903 F11; Bearer także przy odczytach, bo API sprawdza dostęp
+  zalogowanego gościa; lokal spoza pilotażu odpowiada `404 TABLES_NOT_AVAILABLE`):
+  - `GET  /businesses/:id/tables/options` - strefy, tryb potwierdzania, limity osób.
+  - `GET  /businesses/:id/tables/availability-counts?from&to&guests&zoneId` - kropki
+    dni; maks. 31 dni na wywołanie, więc 42-dniowy pasek to dwa wywołania.
+  - `GET  /businesses/:id/tables/availability?date&guests&zoneId` - godziny dnia
+    pogrupowane w pory serwowania.
+  - `POST /businesses/:id/tables/reservations` - rezerwacja `{bookedById, startAt,
+    adults, children, zoneId?, notes?}` z `Idempotency-Key`; bez `source` (site key
+    oznacza kanał `widget`).
+  - `POST /businesses/:id/tables/waitlist` - zapis na pusty dzień `{bookedById,
+    dateFrom, dateTo, partySize, zoneId?, source: 'web'}`.
 - `POST /businesses/:id/appointments` - tworzy wizytę (i wysyła SMS-potwierdzenie).
   Kontrakt koszyka: `items[]` w kolejności wykonania, każda pozycja z własnym
   `resourceId` (`null` = Dowolny), `addonIds` i `durationMinutes`. Nagłówek
@@ -272,9 +285,9 @@ VizytoBooking.close()
 VizytoBooking.unmount()     // usuwa wszystkie instancje
 ```
 
-### Prefill - trzy rodziny oferty
+### Prefill - cztery rodziny oferty
 
-Widget obsługuje wizyty, **zajęcia grupowe** i **wynajem**. Biznes, który sprzedaje
+Widget obsługuje wizyty, **zajęcia grupowe**, **wynajem** i **stoliki**. Biznes, który sprzedaje
 więcej niż jedną rodzinę, dostaje na wejściu pytanie „co rezerwujesz"; prefill jest
 odpowiedzią na to pytanie z góry, więc klik w grafik na stronie klubu nie każe
 szukać tych zajęć drugi raz.
@@ -290,6 +303,9 @@ VizytoBooking.open({ classId: 41, sessionId: 901 })
 
 // wynajem - od katalogu przedmiotów
 VizytoBooking.open({ kind: 'rental' })
+
+// stolik w restauracji - od liczby osób
+VizytoBooking.open({ kind: 'table' })
 ```
 
 | klucz | rodzina | znaczenie |
@@ -298,11 +314,20 @@ VizytoBooking.open({ kind: 'rental' })
 | `resourceId` | wizyta | wykonawca albo egzemplarz z puli; ignorowany, gdy usługa przydziela automatycznie |
 | `classId` | zajęcia | kurs; wchodzi od razu na jego grafik |
 | `sessionId` | zajęcia | konkretny termin; **pełny termin jest odrzucany** i klient staje na liście |
-| `kind` | wszystkie | `'service' \| 'class' \| 'rental'` - jawny wybór rodziny, gdy nie znasz id |
+| `kind` | wszystkie | `'service' \| 'class' \| 'rental' \| 'table'` - jawny wybór rodziny, gdy nie znasz id |
 
 Prefill jest **podpowiedzią, nie rozkazem**: nieistniejący kurs, pełny termin albo
 rodzina, której ten biznes nie sprzedaje, cofają klienta o krok zamiast pokazywać
 pusty katalog albo obiecywać zapis, który serwer odrzuci.
+
+**Stolik** (vizyto #903, pilotaż) pojawia się tylko u lokalu, którego publiczne
+`capabilities` zawierają `tables`, a plan nie jest zawieszony (`bookingSuspended`).
+Kroki: liczba osób (dorośli 1-10, dzieci 0-4, przy co najmniej dwóch strefach
+preferowana strefa) → dzień (kropki z liczby wolnych startów) → godzina pogrupowana
+w pory serwowania z „ostatnim wejściem”; szare godziny nie mają stolika dla tej
+liczby osób. Gość nie wybiera stolika: podsumowanie mówi „Lokal dobierze stolik”,
+a uwagi trafiają do lokalu. Pusty dzień prowadzi do „Powiadom mnie” (lista
+oczekujących na ten jeden dzień). Bez ceny.
 
 Tag `<script>` z atrybutami `data-*` woła `mount()` automatycznie po załadowaniu.
 `data-vizyto-launcher="hidden"` ukrywa przycisk (otwierasz przez `open()`).
@@ -350,6 +375,10 @@ kroku. Lejek:
 | `booking_failed` | błąd zapisu | `code`, `reason` (`network`/`slot_lost`/`verification_required`) |
 | `slot_lost` | termin zajęty przed potwierdzeniem | `code`, kontekst |
 
+Eventy rezerwacji stolika niosą `table: true`, `partySize`, `zoneId` i `startAt`
+zamiast pól usługi; `booking_completed` ma `value: 0`. Zapis na listę oczekujących
+na stolik emituje `waitlist_joined` / `waitlist_failed` z `table: true`.
+
 > Telefon i e-mail nie trafiają do eventów (tylko `maskedPhone`) - żadnego PII.
 
 **Koszyk a starsze integracje.** Wizyta może teraz łączyć kilka usług. Eventy od
@@ -372,6 +401,9 @@ przepływ offline:
 - usługi **Golenie brzytwą** + **Koloryzacja** nie mają wspólnego wykonawcy -
   para pokazuje tryb „wybierz specjalistę do każdej usługi”,
 - logowanie: `taken@example.com` + dowolne hasło → sukces.
+- stoliki: poniedziałki są pełne (pusty dzień i lista oczekujących), godzina
+  **20:00** odpowiada `TABLE_NOT_AVAILABLE` (utracony stolik), a grupa powyżej 6 osób
+  widzi 19:00 i 19:30 na szaro.
 
 ### Test na prawdziwym API
 
