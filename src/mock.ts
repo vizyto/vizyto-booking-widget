@@ -6,6 +6,8 @@
 //   - login: taken@example.com + any non-empty password succeeds
 //   - picking a slot at :55 -> createAppointment reports the slot is gone
 //   - token "stale" -> BOOKED_BY_MISMATCH
+//   - tables: Mondays full (waitlist path), 20:00 a lost table (see below)
+import type { TableDay, TableOptions, TablePeriod, TableSlot } from './tables'
 import type {
   Business,
   CartItem,
@@ -236,6 +238,9 @@ const BUSINESS: Business = {
     cancellationHoursBefore: 24,
     importantInfo: 'Prosimy o przyjście 5 minut przed wizytą.\nPłatność kartą lub gotówką na miejscu.',
   },
+  // The tables pilot, so the fourth fork card ("Stolik") is reachable offline.
+  capabilities: ['tables'],
+  bookingSuspended: false,
 }
 
 export async function fetchBusiness(): Promise<Business> {
@@ -247,6 +252,7 @@ export async function fetchBusiness(): Promise<Business> {
       ...BUSINESS,
       services: BUSINESS.services.filter((x) => x.bookingType !== 'group'),
       resources: BUSINESS.resources.filter((r) => !(r as any).isRentable),
+      capabilities: [],
     }
   }
   return BUSINESS
@@ -610,4 +616,103 @@ export async function createRental(
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   if (/T\d{2}:55/.test(p.startDate)) return { ok: false, code: 'RENTAL_SLOT_UNAVAILABLE' }
   return { ok: true, data: { id: 7700, status: 'reserved' } }
+}
+
+// ---- restaurant tables (vizyto #903 F11) -----------------------------------
+// Levers:
+//  - Mondays are full (counts 0, every start taken): the empty day with
+//    "Powiadom mnie" and the table waitlist can be clicked through,
+//  - a party above 6 finds 19:00 and 19:30 grey ("Szare godziny"),
+//  - 20:00 answers TABLE_NOT_AVAILABLE with the API message (a lost table).
+
+const isMonday = (date: string) => new Date(`${date}T00:00:00`).getDay() === 1
+
+/** `2026-11-02T19:00:00+01:00`: the venue's wall time with the visitor's offset. */
+const localIso = (date: string, time: string) => {
+  const d = new Date(`${date}T${time}:00`)
+  const off = -d.getTimezoneOffset()
+  const sign = off >= 0 ? '+' : '-'
+  const abs = Math.abs(off)
+  return `${date}T${time}:00${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}:${String(abs % 60).padStart(2, '0')}`
+}
+
+const halfHours = (from: string, to: string) => {
+  const out: string[] = []
+  const [fh, fm] = from.split(':').map(Number)
+  const [th, tm] = to.split(':').map(Number)
+  for (let m = fh! * 60 + fm!; m <= th! * 60 + tm!; m += 30) {
+    out.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`)
+  }
+  return out
+}
+
+export async function getTableOptions(): Promise<TableOptions> {
+  await wait(160)
+  return {
+    zones: [{ id: 1, name: 'Sala główna' }, { id: 2, name: 'Ogródek' }],
+    confirmationMode: 'auto',
+    assignmentMode: 'auto',
+    lateAfterMinutes: 15,
+    maxAdults: 10,
+    maxChildren: 4,
+  }
+}
+
+export async function getTableCounts(p: { from: string; to: string }): Promise<DayCounts> {
+  await wait(200)
+  const out: DayCounts = {}
+  const d = new Date(`${p.from}T00:00:00`)
+  for (;;) {
+    const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    if (ymd > p.to) break
+    out[ymd] = isMonday(ymd) ? 0 : 14
+    d.setDate(d.getDate() + 1)
+  }
+  return out
+}
+
+export async function getTableDay(p: { date: string; guests: number }): Promise<TableDay> {
+  await wait(240)
+  const now = Date.now()
+  const period = (periodId: number, name: string, from: string, lastSeating: string): TablePeriod => ({
+    periodId,
+    name,
+    lastSeating,
+    slots: halfHours(from, lastSeating).map((time) => {
+      const startAt = localIso(p.date, time)
+      const reason: TableSlot['reason'] = new Date(startAt).getTime() <= now
+        ? 'past'
+        : isMonday(p.date) || (p.guests > 6 && time >= '19:00' && time < '20:00')
+          ? 'taken'
+          : undefined
+      return { startAt, time, available: !reason, ...(reason ? { reason } : {}) }
+    }),
+  })
+  return {
+    date: p.date,
+    guests: p.guests,
+    durationMinutes: p.guests > 4 ? 120 : 90,
+    periods: [period(1, 'Lunch', '12:00', '14:30'), period(2, 'Kolacja', '17:00', '21:00')],
+  }
+}
+
+export async function createTableReservation(
+  p: { startAt: string },
+  token: string | null,
+): Promise<{ ok: true; data: any } | { ok: false; code: string; message?: string }> {
+  await wait(600)
+  if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
+  if (p.startAt.includes('T20:00')) {
+    return { ok: false, code: 'TABLE_NOT_AVAILABLE', message: 'Brak wolnego stolika dla tej liczby osób o tej godzinie. Wybierz inną godzinę.' }
+  }
+  return { ok: true, data: { id: 9300, status: 'confirmed' } }
+}
+
+export async function joinTableWaitlist(
+  _p: { dateFrom: string },
+  token: string | null,
+): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
+  await wait(400)
+  if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
+  return { ok: true, data: { id: 8800 } }
 }

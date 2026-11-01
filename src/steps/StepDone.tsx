@@ -25,12 +25,14 @@ export function StepDone({
   status: string | null
   email: string
   /** A class sign-up is never "pending" and is not called a "rezerwacja". */
-  kind?: 'service' | 'class' | 'rental'
+  kind?: 'service' | 'class' | 'rental' | 'table'
   onClose?: () => void
   onRestart: () => void
 }) {
   const pending = status === 'pending'
   const isClass = kind === 'class'
+  // A restaurant is not a salon: the pending copy names the venue the guest booked.
+  const place = kind === 'table' ? { who: 'Lokal', where: 'w lokalu' } : { who: 'Salon', where: 'w salonie' }
   return (
     <div class="vz-done vz-fade-in">
       <div class={pending ? 'vz-check warn' : 'vz-check'}>{pending ? <Clock size={30} /> : <Check size={30} />}</div>
@@ -38,10 +40,10 @@ export function StepDone({
       <div class="vz-done-sub">
         {pending ? (
           email
-            ? <>Salon musi ją jeszcze potwierdzić. O potwierdzeniu poinformujemy Cię e-mailem na <b style="color:var(--vz-text)">{email}</b>.</>
+            ? <>{place.who} musi ją jeszcze potwierdzić. O potwierdzeniu poinformujemy Cię e-mailem na <b style="color:var(--vz-text)">{email}</b>.</>
             // No e-mail = no channel we can honestly promise (SMS confirmations
             // are off by default) - point at the salon instead.
-            : <>Salon musi ją jeszcze potwierdzić. Status poznasz bezpośrednio w salonie.</>
+            : <>{place.who} musi ją jeszcze potwierdzić. Status poznasz bezpośrednio {place.where}.</>
         ) : email ? (
           <>Potwierdzenie wyślemy na <b style="color:var(--vz-text)">{email}</b>.</>
         ) : isClass ? (
