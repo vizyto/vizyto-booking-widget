@@ -4,6 +4,8 @@ import { css } from './styles'
 import type { Cfg } from './api'
 import type { Prefill } from './BookingFlow'
 import { createEmitter, off, on, type EventHandler } from './events'
+import { resolveWidgetChannel } from './channel'
+import { resolveEntryPoint, resolveLoginHref } from './mountOptions'
 
 import { fontFaceCss, resolveSiteStyles, siteStylesFromDataset, type FontManifest, type SiteStyleConfig, type ThemePref } from './site-styles'
 
@@ -27,6 +29,16 @@ export type MountConfig = SiteStyleConfig & {
   prefill?: Prefill
   onEvent?: EventHandler // funnel events (service_selected, booking_completed, ...) - see README
   dataLayer?: boolean // false = don't push events to window.dataLayer (GTM/GA); default true
+  /**
+   * vizyto.com's own guest page only (no `data-*` attribute: an external site
+   * always books as `widget`). `channel` picks the policy slice the flow reads
+   * (anything but 'website' = 'widget'), `entryPoint` is the place code sent with
+   * a visit (unknown values are dropped), `loginHref` is the page's own sign-in,
+   * offered instead of the OAuth popups when there is no site key.
+   */
+  channel?: 'widget' | 'website'
+  entryPoint?: string
+  loginHref?: string
 }
 
 const darkMql = () => window.matchMedia('(prefers-color-scheme: dark)')
@@ -65,6 +77,9 @@ export function mount(config: MountConfig): HTMLElement | null {
     apiBase: mock ? 'mock' : apiRaw.replace(/\/+$/, ''),
     token: config.token || undefined,
     mock,
+    channel: resolveWidgetChannel(config.channel),
+    entryPoint: resolveEntryPoint(config.entryPoint),
+    loginHref: resolveLoginHref(config.loginHref),
   }
   const siteStyles = resolveSiteStyles(config)
   const label = config.label || 'Zarezerwuj wizytę'
@@ -184,6 +199,11 @@ function mountFromScript() {
   })
 }
 
+// The IIFE build assigns the module's EXPORTS to the global `VizytoBooking` after
+// this body runs, replacing the object below - so everything on it has to be
+// exported too. `on`/`off` were not, and `VizytoBooking.on` (the README's first
+// event channel) was undefined in the published bundle.
+export { on, off }
 ;(window as any).VizytoBooking = { mount, unmount, open, close, on, off }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mountFromScript)

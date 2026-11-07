@@ -550,8 +550,10 @@ export const css = `
    day label pushed clear of them. */
 .vz-days.has-promo { padding-top: 10px; }
 .vz-days.has-promo .vz-day { padding-top: 16px; }
-/* The rental strip lists the whole horizon: it scrolls sideways with tiles at
-   the width the visit strip pages by, instead of squeezing every day into one row. */
+/* The table strip (#903) lists the whole horizon: it scrolls sideways with tiles at
+   the width the paged DayStrip uses, instead of squeezing every day into one row.
+   Not the paged DayStrip, because an empty table day stays tappable (that is where
+   "Powiadom mnie" lives) and DayStrip disables days without free starts. */
 .vz-days.scroll { overflow-x: auto; touch-action: auto; scrollbar-width: none; padding-bottom: 2px; }
 .vz-days.scroll::-webkit-scrollbar { display: none; }
 .vz-days.scroll .vz-day { flex: 0 0 60px; }
@@ -591,6 +593,9 @@ export const css = `
 .vz-pill:active { transform: scale(.98); }
 .vz-pill.on { border-color: var(--vz-accent); background: var(--vz-selected); }
 .vz-pill.on small { color: var(--vz-text); }
+/* "Dłużej" opens the rest of the durations - a way in, not an answer, so it
+   never carries the selected state the real options compete for. */
+.vz-pill-more { border-style: dashed; color: var(--vz-text-muted); }
 .vz-slots { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
 .vz-slot {
   position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 13px 0; border: 1.5px solid transparent; border-radius: var(--vz-r-md);
@@ -809,6 +814,7 @@ a.vz-btn { text-decoration: none; }
   transition: background var(--vz-dur-out), border-color var(--vz-dur-out), transform var(--vz-dur-out);
 }
 .vz-oauth:hover { background: var(--vz-surface-2); }
+a.vz-oauth { text-decoration: none; }
 .vz-oauth:active { transform: scale(.99); }
 .vz-oauth[disabled] { opacity: .55; cursor: default; }
 .vz-oauth .vz-spin { width: 16px; height: 16px; border-top-color: var(--vz-text); }
@@ -832,6 +838,9 @@ a.vz-btn { text-decoration: none; }
 /* Warning-tinted variant (access-restricted screens). */
 .vz-check.warn { background: color-mix(in srgb, var(--vz-warning) 14%, var(--vz-surface)); color: var(--vz-warning); }
 .vz-check.warn svg { width: 28px; height: 28px; }
+/* The closed-channel state (#680): a business decision, not a warning. */
+.vz-check.calm { background: var(--vz-surface-2); color: var(--vz-text-muted); animation: none; }
+.vz-check.calm svg { width: 28px; height: 28px; }
 @keyframes vz-pop-check { from { transform: scale(.6); opacity: 0 } to { transform: scale(1); opacity: 1 } }
 .vz-done-title { font-size: 22px; font-weight: 600; }
 .vz-done-sub { color: var(--vz-text-muted); font-size: 13.5px; margin-top: 6px; line-height: 1.5; }
@@ -847,6 +856,9 @@ a.vz-btn { text-decoration: none; }
   .vz-panel { max-width: none; max-height: 94vh; border-radius: 24px 24px 0 0; border-bottom: 0; animation: vz-sheet-up var(--vz-dur-in) var(--vz-ease-out); }
   @keyframes vz-sheet-up { from { transform: translateY(100%) } to { transform: none } }
   .vz-grab { display: block; }
+  /* An inline embed sits inside a page, not at the screen's bottom edge: it stays a closed card. */
+  .vz-inline .vz-panel { max-height: none; border-radius: 22px; border-bottom: 1px solid var(--vz-border); animation: none; }
+  .vz-inline .vz-grab { display: none; }
 }
 .vz-grab { display: none; width: 38px; height: 4px; border-radius: 999px; background: var(--vz-border); margin: 8px auto 0; }
 

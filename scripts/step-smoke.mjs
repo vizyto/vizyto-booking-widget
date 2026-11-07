@@ -201,8 +201,9 @@ await page.waitForTimeout(600)
 s = await state()
 ok('zajęcia: krok 2 = WYBÓR TERMINU', s.stepName === 'WYBÓR TERMINU', `${s.stepName}`)
 ok('zajęcia: krok 2 z 3', s.krok === 'KROK 2 Z 3', `${s.krok}`)
-ok('grafik pokazuje prowadzącego', /Prowadzi: Marek/.test(s.body), s.body.slice(0, 200))
-ok('grafik pokazuje wolne miejsca', /wolnych miejsc|wolne miejsca|wolne miejsce/.test(s.body), s.body.slice(0, 200))
+ok('grafik pokazuje prowadzącego', /Prowadzi:? Marek/.test(s.body), s.body.slice(0, 200))
+// Since vizyto #171 a term states only that it is full (CLIENT/WEB seat chips).
+ok('grafik nie liczy wolnych miejsc terminu', !/wolnych miejsc|wolne miejsca|wolne miejsce/.test(s.body), s.body.slice(0, 200))
 ok('pełny termin oznaczony i nie do wybrania', /Brak miejsc/.test(s.body), s.body.slice(0, 260))
 ok('CTA nieaktywne, dopóki nie wybrano terminu', s.ctaDisabled, `${s.ctaText}`)
 
@@ -279,6 +280,26 @@ await clickByText('11:00'); await page.waitForTimeout(300)
 s = await state()
 ok('godzinowy: wybór godziny odblokowuje CTA', !s.ctaDisabled, `${s.ctaText}`)
 
+// The tile says the business's wall clock ("11:00" in Warsaw), and the mock grid
+// publishes the real instant (09:00Z in summer), like the API. A widget that
+// glued "11:00" to "Z" books 13:00 local: the receipt would say so.
+await page.goto(URL + '?signedIn=1'); await page.waitForTimeout(900)
+await clickByText('Wynajem'); await page.waitForTimeout(500)
+await clickByText('Przydzielimy wolny egzemplarz'); await page.waitForTimeout(800)
+await clickByText('11:00'); await page.waitForTimeout(400)
+await next(); await page.waitForTimeout(1300)
+s = await state()
+ok('godzinowy: odbiór o wybranej godzinie (strefa firmy, nie UTC)',
+   /Odbiór\d{1,2} \S+, 11:00/.test(s.body) && /Zwrot\d{1,2} \S+, 12:00/.test(s.body), s.body.slice(0, 400))
+
+// A rentable instance's resourceId alone names the rental family: no fork, and
+// straight onto that instance's calendar (vizyto README, prefill table).
+await page.goto(URL + '?prefillResource=31'); await page.waitForTimeout(1200)
+s = await state()
+ok('prefill egzemplarza bez kind: od razu kalendarz przyczepy',
+   s.stepName === 'WYBÓR TERMINU' && /Na jak długo\?/.test(s.body) && /1 doba/.test(s.body) && !/Wizyta indywidualna/.test(s.body),
+   `${s.stepName} | ${s.body.slice(0, 200)}`)
+
 // --- range mode (daily instance) ---
 await reload()
 await clickByText('Wynajem'); await page.waitForTimeout(500)
@@ -299,6 +320,98 @@ await page.goto(URL + '?onlyServices=1')
 await page.waitForTimeout(900)
 s = await state()
 ok('biznes tylko z usługami: brak widelca', s.stepName === 'WYBÓR USŁUGI', `${s.stepName}`)
+
+// ── 13. Per-channel booking policy (#680). The widget books in channel 'widget';
+//        what the business does not take there must not be offered, and a write
+//        refused under the policy is the closed state, never "this term is gone".
+await page.goto(URL + '?business=680')
+await page.waitForTimeout(900)
+s = await state()
+ok('kanał wyłączony: stan zamknięty zamiast kroków', /Rezerwacje online są teraz wyłączone/.test(s.body) && s.krok === null, `${s.krok} | ${s.body.slice(0, 160)}`)
+ok('kanał wyłączony: bez CTA "Dalej"', s.ctaText === null, `${s.ctaText}`)
+ok('kanał wyłączony: odsyła do kontaktu z firmą', /skontaktuj się bezpośrednio z firmą/.test(s.body), s.body.slice(0, 200))
+
+await page.goto(URL + '?business=681')
+await page.waitForTimeout(900)
+s = await state()
+ok('zajęcia wyłączone w kanale: widelec bez zajęć', /Wizyta indywidualna/.test(s.body) && /Wynajem/.test(s.body) && !/Zajęcia grupowe/.test(s.body), s.body.slice(0, 200))
+
+await page.goto(URL + '?business=681&prefillClass=41')
+await page.waitForTimeout(900)
+s = await state()
+ok('prefill zamkniętych zajęć: stan zamknięty tej rodziny', /Zapisy na zajęcia online są teraz wyłączone/.test(s.body), s.body.slice(0, 200))
+ok('prefill zamkniętych zajęć: wyjście do pozostałych rodzin', await clickByText('Wybierz, co zarezerwować'))
+await page.waitForTimeout(500)
+s = await state()
+ok('wyjście prowadzi na widelec otwartych rodzin', /Wizyta indywidualna/.test(s.body) && !/Zajęcia grupowe/.test(s.body), s.body.slice(0, 200))
+
+// 682: the profile says open; the write answers 409 CHANNEL_BOOKING_DISABLED
+// (the owner switched the whole channel off after the page loaded).
+await page.goto(URL + '?business=682&signedIn=1')
+await page.waitForTimeout(900)
+await toServices()
+await addService('Golenie brzytwą'); await page.waitForTimeout(250)
+await closeConfigure()
+await next(); await page.waitForTimeout(1200)
+s = await state()
+ok('682: dochodzi do terminu', s.stepName === 'WYBÓR TERMINU', `${s.stepName}`)
+await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  host.shadowRoot.querySelector('.vz-day:not(.is-disabled)')?.click()
+})
+await page.waitForTimeout(900)
+const slot = await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  const b = [...host.shadowRoot.querySelectorAll('.vz-slot')].find((x) => !/:55/.test(x.textContent))
+  if (!b) return null
+  b.click()
+  return b.textContent
+})
+await page.waitForTimeout(300)
+ok('682: wybrano godzinę', !!slot, `${slot}`)
+const events = []
+await page.exposeFunction('__vzEvent', (t) => events.push(t)).catch(() => {})
+await page.evaluate(() => window.VizytoBooking.on('*', (e) => window.__vzEvent(e.type)))
+await next(); await page.waitForTimeout(1200)
+s = await state()
+ok('409 przy zapisie: stan zamknięty, nie "termin zniknął"', /Rezerwacje online są teraz wyłączone|Umawianie wizyt online jest teraz wyłączone/.test(s.body) && !/Ten termin właśnie zniknął/.test(s.body), s.body.slice(0, 200))
+ok('409 przy zapisie: event channel_closed', events.includes('channel_closed'), events.join(','))
+ok('409 przy zapisie: brak eventu slot_lost', !events.includes('slot_lost'), events.join(','))
+// 682 switched the whole channel off: the profile re-read after the 409 says so,
+// so nothing is offered as a way out, and a reopened flow starts closed instead
+// of walking into the same 409 again.
+ok('682: po ponownym odczycie profilu cały widget zamknięty',
+   /Rezerwacje online są teraz wyłączone/.test(s.body) && !/Przejdź do|Wybierz, co zarezerwować/.test(s.body), s.body.slice(0, 200))
+await page.evaluate(() => window.VizytoBooking.open({}))
+await page.waitForTimeout(900)
+s = await state()
+ok('682: ponowne otwarcie startuje zamknięte, bez kroków', /Rezerwacje online są teraz wyłączone/.test(s.body) && s.krok === null, `${s.krok} | ${s.body.slice(0, 160)}`)
+
+// 683 switches one action off: visits close, the rest stays, and a reopened flow
+// forgets nothing (the fork no longer offers visits).
+await page.goto(URL + '?business=683&signedIn=1')
+await page.waitForTimeout(900)
+await toServices()
+await addService('Golenie brzytwą'); await page.waitForTimeout(250)
+await closeConfigure()
+await next(); await page.waitForTimeout(1200)
+await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  host.shadowRoot.querySelector('.vz-day:not(.is-disabled)')?.click()
+})
+await page.waitForTimeout(900)
+await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  ;[...host.shadowRoot.querySelectorAll('.vz-slot')].find((x) => !/:55/.test(x.textContent))?.click()
+})
+await page.waitForTimeout(300)
+await next(); await page.waitForTimeout(1200)
+s = await state()
+ok('683: zamknięte tylko wizyty, wyjście do reszty', /Umawianie wizyt online jest teraz wyłączone/.test(s.body) && /Wybierz, co zarezerwować/.test(s.body), s.body.slice(0, 200))
+await page.evaluate(() => window.VizytoBooking.open({}))
+await page.waitForTimeout(900)
+s = await state()
+ok('683: ponowne otwarcie - widelec bez wizyt', !/Wizyta indywidualna/.test(s.body) && /Zajęcia grupowe/.test(s.body) && /Wynajem/.test(s.body), s.body.slice(0, 200))
 
 await browser.close()
 console.log(`\n${pass} pass, ${fail} fail`)

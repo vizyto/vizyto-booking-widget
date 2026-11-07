@@ -58,3 +58,72 @@ export function monthMatrix(year: number, month: number): string[][] {
 export const monthOf = (d: string) => ({ year: at(d).getFullYear(), month: at(d).getMonth() })
 export const monthTitle = (year: number, month: number) =>
   monthYear(ymd(new Date(year, month, 1)))
+
+/**
+ * The UTC offset of `tz` at a given instant, in milliseconds. Read back what the
+ * instant looks like on the zone's wall clock and subtract - the only way to get
+ * a zone offset from the platform without shipping a timezone library.
+ */
+function tzOffset(ms: number, tz: string): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(new Date(ms))
+  const p: Record<string, string> = {}
+  for (const { type, value } of parts) p[type] = value
+  const wall = Date.UTC(+p.year!, +p.month! - 1, +p.day!, +p.hour! % 24, +p.minute!, +p.second!)
+  return wall - ms
+}
+
+/**
+ * The instant at which the wall clock in `tz` reads `date` `hhmm`, as an ISO
+ * string. Guess with the offset at the naive instant, then correct once with the
+ * offset at the guess - enough for every real zone, including the DST edges
+ * (inside the repeated hour either answer is defensible, and a rental pickup at
+ * 02:30 on the fold night is not a case worth a library).
+ */
+export function zonedIso(date: string, hhmm: string, tz: string): string | null {
+  const naive = Date.parse(`${date}T${hhmm}:00Z`)
+  if (Number.isNaN(naive)) return null
+  const guess = naive - tzOffset(naive, tz)
+  return new Date(naive - tzOffset(guess, tz)).toISOString()
+}
+
+/** Calendar day (YYYY-MM-DD) an instant falls on, on the wall clock of `tz`. */
+export function zonedDay(ms: number, tz: string): string {
+  return new Date(ms + tzOffset(ms, tz)).toISOString().slice(0, 10)
+}
+
+/**
+ * The instant of a picked rental hour (slot mode: minute/hour units).
+ *
+ * A tile of the day grid carries the business's WALL-CLOCK time (`local`,
+ * "10:00", which the API formats in the business timezone) next to the real
+ * instant (`start`). The instant the server published wins whenever that tile
+ * belongs to `date`; without one the wall time is converted in the business
+ * timezone. Gluing `local` to "Z" instead (what the widget did from v1.9.0 to
+ * v1.14.0) quoted, showed and created every hourly rental 1 hour late in winter
+ * and 2 hours late in summer in Poland.
+ */
+export function rentalSlotStartIso(
+  date: string,
+  slotLocal: string,
+  tz: string,
+  slots?: ReadonlyArray<{ start: string; local: string }> | null,
+): string | null {
+  if (!date || !slotLocal) return null
+  const hhmm = slotLocal.slice(0, 5)
+  try {
+    const hit = slots?.find((s) => s.local.slice(0, 5) === hhmm)
+    const ms = hit ? Date.parse(hit.start) : NaN
+    // A tile from another day (a grid that has not caught up with the date yet)
+    // must not lend its instant to this one.
+    if (!Number.isNaN(ms) && zonedDay(ms, tz) === date) return new Date(ms).toISOString()
+    return zonedIso(date, hhmm, tz)
+  } catch {
+    // An unknown zone name: nothing sane to convert with.
+    return null
+  }
+}

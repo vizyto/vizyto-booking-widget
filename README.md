@@ -3,12 +3,12 @@
 Osadzalny moduł rezerwacji Vizyto. Jeden tag `<script>`, dowolna strona (Wix,
 WordPress, czysty HTML), niezależnie od hostingu. Preact + Shadow DOM (pełna
 izolacja od CSS/JS strony hosta), single-file IIFE. Wygląd 1:1 z aplikacją
-Vizyto - segmentowany pasek „KROK X Z 4", karty wyboru z radio, lepkie „Dalej",
+Vizyto - segmentowany pasek „KROK X Z N”, karty wyboru z radio, lepkie „Dalej”,
 sloty pogrupowane (Rano / Południe / Wieczór), widok tydzień/miesiąc, czcionka
-Poppins, motyw jasny/ciemny/auto.
+Poppins (albo czcionka stylu strony), motyw jasny/ciemny/auto.
 
 Poradnik osadzania: <https://vizyto.com/blog/widget-rezerwacji-na-strone-internetowa>
-(link jest też w stopce widgetu pod „Rezerwacje przez Vizyto").
+(link jest też w stopce widgetu pod „Rezerwacje przez Vizyto”).
 
 ## Instalacja (na stronie klienta)
 
@@ -22,8 +22,18 @@ Poradnik osadzania: <https://vizyto.com/blog/widget-rezerwacji-na-strone-interne
   defer></script>
 ```
 
-Domyślnie: pływający przycisk w rogu → modal z kreatorem
-(Usługa → Specjalista → Termin → Dane → **weryfikacja SMS** → potwierdzenie).
+Domyślnie: pływający przycisk w rogu → modal z kreatorem. Liczba kroków zależy
+od tego, co klient rezerwuje (ostatni krok to zawsze „Twoje dane”, po nim
+weryfikacja SMS i potwierdzenie):
+
+| rodzina oferty | kroki | ile |
+|---|---|---|
+| wizyta | Usługa → Specjalista → Termin → Dane | 4, albo 3 bez wyboru specjalisty (jeden wykonawca, przydział automatyczny) |
+| zajęcia grupowe | Zajęcia → Termin → Dane | 3 |
+| wynajem | Przedmiot → Termin → Dane | 3, albo 2 przy jednej ofercie (trafiony prefill egzemplarza zaczyna od kroku 2) |
+
+Biznes, który sprzedaje więcej niż jedną rodzinę, dostaje przed licznikiem
+pytanie „co rezerwujesz” (bez numeru kroku).
 
 Wariant **inline**: wstaw `<div data-vizyto-booking></div>` w miejscu, gdzie
 kreator ma się pojawić na stałe (przycisk się wtedy nie pokazuje).
@@ -40,11 +50,16 @@ otwiera okno na `…/api/public/auth/embed/start`, a po zalogowaniu strona-moste
 Vizyto (`…/embed/callback`) odsyła bearer token tylko do originu dozwolonego na
 site key.
 
-- Gość: imię, nazwisko, telefon, e-mail → kod SMS (4 cyfry, ważny 5 min,
+- Gość: imię, nazwisko, telefon, e-mail → kod SMS (**6 cyfr**; długość podaje
+  API w `codeLength`, bez tego pola widget przyjmuje 4; kod ważny 5 min,
   3 próby, ponowne wysłanie co 60 s) → rezerwacja.
 - Jeśli e-mail ma już konto Vizyto, kreator automatycznie proponuje logowanie.
+- Telefon, który ma już konto Vizyto, dostaje kod logujący do tego konta
+  (bez zakładania drugiego konta gościa).
 - Strona, która sama jest zalogowaną powierzchnią Vizyto, może podać
   `data-vizyto-token` + `data-vizyto-user` i pominąć cały krok weryfikacji.
+- `data-vizyto-turnstile` włącza Cloudflare Turnstile przed wysłaniem SMS-a
+  (ochrona przed nadużyciami bramki SMS).
 
 ## Atrybuty `data-*`
 
@@ -53,11 +68,18 @@ site key.
 | `data-vizyto-business` | tak | id biznesu w Vizyto |
 | `data-vizyto-key` | tak | publishable site key z PRO → „Strona WWW” |
 | `data-vizyto-api` | nie | origin API (domyślnie `https://api.vizyto.com`; `mock` = tryb testowy bez backendu) |
-| `data-vizyto-label` | nie | tekst przycisku |
-| `data-vizyto-accent` | nie | kolor akcentu, hex (domyślnie `#fd9320`) |
-| `data-vizyto-theme` | nie | `light` (domyślnie), `dark`, lub `auto` (śledzi motyw systemu na żywo) |
-| `data-vizyto-font` | no | `off` disables font registration and uses the system font stack |
-| `data-vizyto-inline` | nie | wymuś tryb inline bez `<div>` |
+| `data-vizyto-label` | nie | tekst przycisku (domyślnie „Zarezerwuj wizytę”) |
+| `data-vizyto-launcher` | nie | `hidden` ukrywa pływający przycisk - modal otwierasz przez `VizytoBooking.open()` |
+| `data-vizyto-inline` | nie | wymuś tryb inline bez `<div data-vizyto-booking>` |
+| `data-vizyto-theme` | nie | `light` (domyślnie), `dark` albo `auto` (śledzi motyw systemu na żywo) |
+| `data-vizyto-accent` | nie | kolor akcentu, `#rrggbb` (domyślnie `#fd9320`) |
+| `data-vizyto-accent-light` | nie | jasny odcień akcentu, `#rrggbb` (domyślnie `#ffdca8`) |
+| `data-vizyto-accent-dark` | nie | ciemny odcień akcentu, `#rrggbb` (domyślnie `#bf700f`) |
+| `data-vizyto-on-accent` | nie | kolor tekstu na akcencie, `#rrggbb` (domyślnie `#ffffff`) |
+| `data-vizyto-font-pack-id` | nie | pakiet czcionek stylu strony (lista w „Style strony”); nieznany id = Poppins |
+| `data-vizyto-font` | nie | `off` = bez rejestracji czcionek, systemowy krój |
+| `data-vizyto-datalayer` | nie | `off` = eventy nie trafiają do `window.dataLayer` |
+| `data-vizyto-turnstile` | nie | publiczny klucz Cloudflare Turnstile dla ścieżki SMS |
 | `data-vizyto-token` | nie | bearer token zalogowanego klienta (pomija weryfikację SMS; wymaga też `-user`) |
 | `data-vizyto-user` | nie | id zalogowanego klienta (parą z `-token`) |
 
@@ -68,28 +90,28 @@ ustawia motyw wg `prefers-color-scheme` i reaguje na zmianę motywu systemu w
 locie. `--vz-accent` (z `data-vizyto-accent`) działa w obu motywach; odcienie
 akcentu liczone są przez `color-mix`, więc dostosowują się automatycznie.
 
-## Site styles (F10)
+## Style strony (F10)
 
-The existing embed and `mount()` API accept the following additive options. The
-widget uses only the sans face of the selected site font pack. Theme remains
-`light` by default; `dark` and the existing live `auto` mode are supported.
+Snippet i `mount()` przyjmują opcje stylu strony z kreatora WWW. Widget używa
+tylko kroju bezszeryfowego (sans) wybranego pakietu. Motyw domyślnie jest
+jasny; działają też `dark` i `auto`.
 
-| Mount option | Script attribute | Behavior |
+| opcja `mount()` | atrybut | działanie |
 |---|---|---|
-| `fontPackId` | `data-vizyto-font-pack-id` | One of the nine IDs below; unknown IDs use Poppins |
-| `accent` | `data-vizyto-accent` | `--vz-accent`, default `#fd9320` |
-| `accentLight` | `data-vizyto-accent-light` | `--vz-accent-tint`, default `#ffdca8` |
-| `accentDark` | `data-vizyto-accent-dark` | `--vz-accent-strong`, default `#bf700f` |
-| `onAccent` | `data-vizyto-on-accent` | `--vz-on-accent`, default `#ffffff` |
-| `theme` | `data-vizyto-theme` | `light`, `dark`, or `auto`; invalid values use `light` |
-| `font` | `data-vizyto-font` | `off` skips font registration and explicitly uses the system font stack |
+| `fontPackId` | `data-vizyto-font-pack-id` | jeden z dziewięciu id poniżej; nieznany = Poppins |
+| `accent` | `data-vizyto-accent` | `--vz-accent`, domyślnie `#fd9320` |
+| `accentLight` | `data-vizyto-accent-light` | `--vz-accent-tint`, domyślnie `#ffdca8` |
+| `accentDark` | `data-vizyto-accent-dark` | `--vz-accent-strong`, domyślnie `#bf700f` |
+| `onAccent` | `data-vizyto-on-accent` | `--vz-on-accent`, domyślnie `#ffffff` |
+| `theme` | `data-vizyto-theme` | `light`, `dark` albo `auto`; inna wartość = `light` |
+| `font` | `data-vizyto-font` | `off` pomija rejestrację czcionek i jawnie ustawia krój systemowy |
 
-| Font pack ID | Widget family |
+| id pakietu | krój w widgecie |
 |---|---|
 | `fraunces-manrope-v1` | Manrope |
 | `bodoni-moda-outfit-v1` | Outfit |
 | `cormorant-garamond-jost-v1` | Jost |
-| `oswald-poppins-v1` | Poppins (default) |
+| `oswald-poppins-v1` | Poppins (domyślny) |
 | `anton-ibm-plex-sans-v1` | IBM Plex Sans |
 | `barlow-condensed-barlow-v1` | Barlow |
 | `archivo-black-archivo-space-mono-v1` | Archivo |
@@ -109,82 +131,81 @@ widget uses only the sans face of the selected site font pack. Theme remains
   defer></script>
 ```
 
-The same values can be passed to `VizytoBooking.mount({ businessId, siteKey,
-fontPackId, theme, accent, accentLight, accentDark, onAccent })`. No family is
-inferred from a font: the site renderer supplies its family's `widgetTheme`.
-All four colors must match `^#[0-9a-fA-F]{6}$` exactly. Invalid values are ignored,
-including short hex, CSS names, CSS fragments and URLs. Contrast is checked only
-when the embed supplies a valid `accent` or `onAccent`. After combining those
-values with defaults, a contrast below 4.5:1 replaces only `onAccent` with whichever
-of `#ffffff` and `#18181b` has higher contrast against the resolved accent. The
-supplied accent is preserved. Light/dark accent tokens remain independent.
+Te same wartości przyjmuje `VizytoBooking.mount({ businessId, siteKey,
+fontPackId, theme, accent, accentLight, accentDark, onAccent })`. Widget nie
+zgaduje rodziny kroju z czcionki: renderer strony podaje `widgetTheme` swojej
+rodziny. Każdy z czterech kolorów musi pasować dokładnie do
+`^#[0-9a-fA-F]{6}$`; inne wartości (krótki hex, nazwy CSS, fragmenty CSS, adresy
+URL) są ignorowane. Kontrast sprawdzamy tylko wtedy, gdy osadzenie podaje
+poprawny `accent` albo `onAccent`: jeśli po połączeniu z domyślnymi wynosi mniej
+niż 4,5:1, podmieniamy wyłącznie `onAccent` na ten z `#ffffff` i `#18181b`,
+który ma wyższy kontrast z akcentem. Podany akcent zostaje bez zmian. Jasny i
+ciemny odcień akcentu są niezależne.
 
-Without a valid accent/label override, all legacy defaults remain unchanged,
-including white `#ffffff` text on `#fd9320`, matching the Vizyto primary button.
+Bez poprawnego akcentu ani etykiety wszystkie dotychczasowe wartości domyślne
+zostają bez zmian, w tym biały `#ffffff` na `#fd9320`, jak główny przycisk
+Vizyto.
 
-### Self-hosted fonts and immutable builds
+### Własne czcionki i niezmienne wydania
 
-No Google font stylesheet, preconnect or font request is made. `@font-face` rules
-are registered once per pack/manifest in the document, since registration inside
-Shadow DOM is unreliable across browsers. Each widget explicitly sets `--vz-font`
-inside its own Shadow DOM. `font: 'off'` registers nothing, even if another
-instance already registered its fonts.
+Widget nie pobiera żadnego arkusza ani czcionki z Google (bez preconnect).
+Reguły `@font-face` rejestrujemy raz na pakiet i manifest w dokumencie, bo
+rejestracja wewnątrz Shadow DOM działa w przeglądarkach nierówno. Każda instancja
+jawnie ustawia `--vz-font` w swoim Shadow DOM. `font: 'off'` nie rejestruje
+niczego, nawet jeśli inna instancja zarejestrowała już swoje czcionki.
 
-The build reads the installed approved `@fontsource` packages, uses only normal
-WOFF2 files for `latin` and `latin-ext`, and sets `font-display: swap`. Static
-weights are 400, 500, 600 and 700. Existing CSS weight 650 uses browser matching
-to 700; there is no extra 650 file. Polish letters are covered by the two subsets.
-OFL-1.1 license files are distributed alongside the fonts. Font URLs use the
-widget script's origin: `<widget-origin>/fonts/<family-slug>/<sha256>.woff2`.
-The origin is captured from `document.currentScript.src` during classic script
-execution, including dynamically inserted scripts, and retained for later mounts.
-Only `http:` and `https:` are accepted; a missing or invalid script URL falls back
-to `https://widget.vizyto.com`. Production, staging and local servers must serve
-the generated `deploy/fonts/` assets alongside the widget. For example, a script
-loaded from `http://127.0.0.1:4391/v1/widget.js` requests fonts from
-`http://127.0.0.1:4391/fonts/`, matching CSP `font-src` for that widget origin.
+Build czyta zainstalowane, zatwierdzone pakiety `@fontsource`, bierze tylko
+zwykłe pliki WOFF2 dla `latin` i `latin-ext` i ustawia `font-display: swap`.
+Grubości statyczne: 400, 500, 600 i 700; istniejąca w CSS grubość 650 trafia w
+700 dopasowaniem przeglądarki, bez osobnego pliku. Polskie znaki pokrywają oba
+podzbiory. Pliki licencji OFL-1.1 jadą razem z czcionkami. Adresy czcionek
+biorą się z originu skryptu widgetu: `<origin-widgetu>/fonts/<rodzina>/<sha256>.woff2`.
+Origin odczytujemy z `document.currentScript.src` podczas wykonania klasycznego
+skryptu (także wstawionego dynamicznie) i zapamiętujemy na późniejsze
+`mount()`. Przyjmujemy tylko `http:` i `https:`; brak lub błędny adres skryptu
+oznacza `https://widget.vizyto.com`. Produkcja, staging i serwery lokalne muszą
+serwować wygenerowane `deploy/fonts/` obok widgetu. Przykład: skrypt z
+`http://127.0.0.1:4391/v1/widget.js` pobiera czcionki z
+`http://127.0.0.1:4391/fonts/`, zgodnie z CSP `font-src` dla originu widgetu.
 
-`pnpm build:cdn` emits:
+`pnpm build:cdn` składa:
 
-- `deploy/v1/widget.js`: the existing rolling v1 entry point.
-- `deploy/v/<widget-sha256>/widget.js`: an immutable URL derived from the exact
-  bundle bytes. Use `https://widget.vizyto.com/v/<widget-sha256>/widget.js` to pin
-  a published site's widget version. The build prints the actual path.
-- `deploy/v/<widget-sha256>/manifest.json`: one release manifest for PRO, SSR
-  and the widget. It includes `schemaVersion`, `hash` of the canonical font
-  manifest (`JSON.stringify({ schemaVersion, fontPacks })`), `widget` version,
-  path and SHA-256, and `capabilities`. `fontPacks[fontPackId]` contains the sans
-  `family`, package/version, license path, weights and `files` with paths,
-  weights, style, subsets, unicode ranges and SHA-256 hashes. It does not contain
-  the site's display or mono fonts. Vite embeds the same font manifest in the
-  bundle; runtime registration needs no manifest fetch. `dist/font-manifest.json`
-  is the intermediate build input verified by the deploy assembler.
-- `deploy/fonts/<family-slug>/*`: hashed WOFF2 files and OFL license text.
-- `deploy/_headers` and `deploy/index.html`.
+- `deploy/v1/widget.js`: kroczący punkt wejścia v1.
+- `deploy/v/<widget-sha256>/widget.js`: niezmienny adres wyliczony z bajtów
+  paczki. Strona opublikowana z kreatora przypina wersję przez
+  `https://widget.vizyto.com/v/<widget-sha256>/widget.js`; build wypisuje
+  faktyczną ścieżkę.
+- `deploy/v/<widget-sha256>/manifest.json`: jeden manifest wydania dla PRO, SSR
+  i widgetu. Zawiera `schemaVersion`, `hash` kanonicznego manifestu czcionek
+  (`JSON.stringify({ schemaVersion, fontPacks })`), wersję `widget`, ścieżkę i
+  SHA-256 oraz `capabilities`. `fontPacks[fontPackId]` opisuje krój sans
+  (`family`, pakiet i wersja, ścieżka licencji, grubości oraz `files` ze
+  ścieżkami, grubościami, stylem, podzbiorami, zakresami unicode i SHA-256).
+  Nie ma w nim krojów display ani mono strony. Vite osadza ten sam manifest w
+  paczce, więc rejestracja w przeglądarce nie pobiera manifestu.
+  `dist/font-manifest.json` to pośredni plik builda sprawdzany przez skrypt
+  składający `deploy/`.
+- `deploy/fonts/<rodzina>/*`: pliki WOFF2 z hashem w nazwie i tekst licencji OFL.
+- `deploy/_headers` i `deploy/index.html`.
 
-Font, license, immutable widget and manifest responses have
+Czcionki, licencje, niezmienny widget i manifest mają
 `Cache-Control: public, max-age=31536000, immutable`,
-`Access-Control-Allow-Origin: *` and `Cross-Origin-Resource-Policy: cross-origin`.
-Rolling `/v1/widget.js` retains
-`Cache-Control: public, max-age=600, stale-while-revalidate=86400` and its existing
-CORS headers. **600 seconds does not guarantee that clients receive an update.**
+`Access-Control-Allow-Origin: *` i `Cross-Origin-Resource-Policy: cross-origin`.
+Kroczący `/v1/widget.js` zachowuje
+`Cache-Control: public, max-age=600, stale-while-revalidate=86400` i swoje
+nagłówki CORS. **600 sekund nie gwarantuje, że klient dostanie nową wersję.**
 
-The assembler preserves previous immutable files already in `deploy/`. Release
-packaging must retain previously published `v/` and `fonts/` files across clean
-CI deployments so pinned sites and cached rolling bundles keep working. The
-existing clean-checkout workflow does not yet restore that archive; archive
-retention must be wired before publishing pinned sites. Immutable cache headers
-alone do not retain files on the server. F10 does not deploy or change the CI
-release workflow.
+Nagłówki cache nie przechowują plików na serwerze: Cloudflare przy każdym
+deployu zastępuje cały katalog. Dlatego każdy deploy (CI i `pnpm run deploy`)
+uruchamia `scripts/restore-published.mjs` - szczegóły w „Deploy”.
 
-Verification (no extra test dependencies):
+Weryfikacja (bez dodatkowych zależności testowych):
 
 ```sh
 pnpm exec tsc --noEmit
 pnpm build:cdn
-bun test tests/site-styles.test.js
-bun test tests/tables.test.js
-grep -r googleapis dist deploy  # no matches, exit status 1
+bun test                        # wszystkie pliki w tests/, także tables.test.js
+grep -r googleapis dist deploy  # brak trafień, kod wyjścia 1
 ```
 
 ## Warunek działania
@@ -194,15 +215,58 @@ swojej strony** (np. `https://salon-jana.pl`) do dozwolonych domen klucza. Bez
 tego dynamiczny CORS odrzuci żądania (przeglądarka nie sfałszuje Origin).
 Klucz musi mieć scope `book`.
 
+## Kanały rezerwacji (vizyto #680)
+
+Firma decyduje w PRO, czy i co przyjmuje w każdym kanale. Widget rezerwuje w
+kanale `widget` („Twoja strona WWW” - ten sam kanał co strona z kreatora). API
+odrzuca zapis, którego kanał nie przyjmuje, odpowiedzią 409
+`CHANNEL_BOOKING_DISABLED` albo `CHANNEL_ACTION_DISABLED`.
+
+Widget czyta politykę z profilu biznesu, który i tak pobiera
+(`bookingChannels.widget` i `hasWebsiteReservationsEnabled` z
+`GET /businesses/:id`), przez `src/channel.ts` - wierną kopię
+`publicChannelAllows` z `packages/shared/src/utils/bookingChannels.ts` w
+monorepo. Tak samo jak CLIENT i WEB:
+
+- wizyty i stoliki są dostępne przy akcji `book` (API tworzy stolik jak wizytę),
+  zajęcia przy `groupClasses`, wynajem przy `rentals`, przycisk listy
+  oczekujących (także „Powiadom mnie” przy stoliku) przy `waitlist`; rodziny,
+  której kanał nie przyjmuje, nie ma w kreatorze;
+- gdy nie zostaje nic do zarezerwowania, zamiast kroków widget pokazuje stan
+  „Rezerwacje online są teraz wyłączone” z numerem telefonu firmy (jeśli go
+  podała); przycisk pływający dalej otwiera modal z tą informacją;
+- prefill rodziny, której kanał nie przyjmuje (np. `classId` przy wyłączonych
+  zapisach na zajęcia), pokazuje stan zamknięcia tej rodziny z przejściem do
+  pozostałych;
+- 409 `CHANNEL_*` przy zapisie (firma wyłączyła kanał już po wczytaniu strony)
+  prowadzi do tego samego stanu, a nie do „Ten termin właśnie zniknął”. Sam kod
+  nie mówi, ile zamknięto (`CHANNEL_BOOKING_DISABLED` przy wizycie znaczy i
+  „rezerwacje online wyłączone”, i „cały kanał wyłączony”), więc widget od razu
+  pobiera profil firmy ponownie. Świeże `bookingChannels.widget` decyduje o
+  wyjściach ze stanu zamknięcia i o każdym kolejnym otwarciu (ponownie otwarty
+  modal, nowe `open()`), więc zamknięta akcja nie wraca do kreatora. Stan
+  zamknięcia na ekranie zostaje; gdy nic już nie jest otwarte, obejmuje cały
+  widget.
+
+Starsze API bez `bookingChannels`: wizyty idą za
+`hasWebsiteReservationsEnabled`, reszta zostaje otwarta (jak przed #680).
+
 ## Wymagane endpointy API (public)
 
 Widget korzysta z (wszystkie pod `/api/public`, nagłówek `x-vizyto-site-key`,
-zapisy dodatkowo `Authorization: Bearer <token>`):
+zapisy i odczyty spersonalizowane dodatkowo `Authorization: Bearer <token>`):
 
-- `GET  /businesses/:id` - dane biznesu (usługi, zasoby, `bookingPolicy`:
-  okno bezpłatnego odwołania + „Ważne informacje” pokazywane przed wysłaniem
-  formularza).
+Biznes i oferta:
+
+- `GET  /businesses/:id` - dane biznesu (usługi, zasoby, godziny otwarcia,
+  `bookingPolicy`: okno bezpłatnego odwołania + „Ważne informacje”,
+  `bookingAccess`, `bookingChannels`, `hasWebsiteReservationsEnabled`).
 - `GET  /businesses/:id/service-categories` - grupowanie usług w zakładki.
+- `GET  /businesses/:id/booking-access` - czy zalogowany klient może rezerwować
+  (biała lista; `businessServiceId` dla konkretnej usługi).
+
+Wizyty:
+
 - `POST /businesses/:id/appointments/availability/cart` - wolne początki łańcucha
   dla koszyka (`items[]`); zwraca `slots`, `itemTimes` (rozpiska pozycji) i
   `totalMinutes`. Z `includeCandidates: true` dokłada `slotCandidates` - kto jest
@@ -210,35 +274,65 @@ zapisy dodatkowo `Authorization: Bearer <token>`):
 - `POST /businesses/:id/appointments/availability/cart/counts` - pigułki dni.
 - `POST /businesses/:id/appointments/availability/cart/first-free` - najbliższy
   wolny termin (serwer przeczesuje 60 dni).
-- `POST /businesses/:id/waitlist` i `GET .../waitlist/check` - lista oczekujących
-  (widget wysyła `source: 'web'`).
-- `POST /guest/otp/send` `{businessId,phone}` → `{expiresIn,maskedPhone}` - wysyła kod SMS.
-- `POST /guest/otp/verify` `{businessId,firstName,lastName,email,phone,otp}` → `{userId,token}` (gość z `phoneVerified`), `409 EMAIL_IN_USE`, `400` przy złym/wygasłym kodzie.
-- `POST /guest/login` `{businessId,email,password}` → `{userId,token}` (token w body - cookies są blokowane cross-origin).
-- `POST /auth/check-email` `{email}` → `{exists}` - proaktywne wykrycie istniejącego konta.
-- `GET  /auth/embed/start?provider&businessId&origin&key` - start OAuth w popupie (302 do dostawcy).
-- `GET  /auth/embed/callback` - po OAuth odsyła `{token,userId}` przez `postMessage` do dozwolonego originu.
-- Stoliki (vizyto #903 F11; Bearer także przy odczytach, bo API sprawdza dostęp
-  zalogowanego gościa; lokal spoza pilotażu odpowiada `404 TABLES_NOT_AVAILABLE`):
-  - `GET  /businesses/:id/tables/options` - strefy, tryb potwierdzania, limity osób.
-  - `GET  /businesses/:id/tables/availability-counts?from&to&guests&zoneId` - kropki
-    dni; maks. 31 dni na wywołanie, więc 42-dniowy pasek to dwa wywołania.
-  - `GET  /businesses/:id/tables/availability?date&guests&zoneId` - godziny dnia
-    pogrupowane w pory serwowania.
-  - `POST /businesses/:id/tables/reservations` - rezerwacja `{bookedById, startAt,
-    adults, children, zoneId?, notes?}` z `Idempotency-Key`; bez `source` (site key
-    oznacza kanał `widget`).
-  - `POST /businesses/:id/tables/waitlist` - zapis na pusty dzień `{bookedById,
-    dateFrom, dateTo, partySize, zoneId?, source: 'web'}`.
+- `POST /businesses/:id/appointments/quote` - cena koszyka w wybranym terminie
+  (promocje, ceny klienta).
+- `POST /businesses/:id/appointments/promo-badges` - oznaczenia promocji dni i godzin.
 - `POST /businesses/:id/appointments` - tworzy wizytę (i wysyła SMS-potwierdzenie).
   Kontrakt koszyka: `items[]` w kolejności wykonania, każda pozycja z własnym
   `resourceId` (`null` = Dowolny), `addonIds` i `durationMinutes`. Nagłówek
   `Idempotency-Key` chroni przed dublem przy ponowieniu.
 
-Backend tych endpointów żyje w monorepo Vizyto:
-`apps/api/src/modules/auth/routes/public-guest.ts` (reużywa istniejącej infry
-SMS, `createGuestCustomer`, tabeli `verifications` i flagi `users.phoneVerified`
-- bez migracji DB).
+Zajęcia grupowe:
+
+- `GET  /businesses/:id/group-classes` - kursy (pojemność, tryb zapisu).
+- `GET  /businesses/:id/group-class-sessions/timetable?from&to` - terminy w oknie
+  6 tygodni.
+- `POST /businesses/:id/group-class-sessions/:sessionId/register` - zapis na
+  termin (`Idempotency-Key`).
+
+Wynajem:
+
+- `GET  /businesses/:id/rentals/availability-counts` - pigułki dni.
+- `GET  /businesses/:id/rentals/day-slots` - godziny odbioru (wynajem godzinowy)
+  albo `mode: 'range'` (doby, tygodnie, miesiące).
+- `GET  /businesses/:id/rentals/availability` - czy dany okres jest wolny.
+- `POST /businesses/:id/rentals/quote` i `POST .../rentals/promo-badges` - cena i
+  oznaczenia promocji.
+- `POST /businesses/:id/rentals` - rezerwacja wynajmu (`Idempotency-Key`).
+
+Stoliki (vizyto #903 F11; Bearer także przy odczytach, bo API sprawdza dostęp
+zalogowanego gościa; lokal spoza pilotażu odpowiada `404 TABLES_NOT_AVAILABLE`):
+
+- `GET  /businesses/:id/tables/options` - strefy, tryb potwierdzania, limity osób.
+- `GET  /businesses/:id/tables/availability-counts?from&to&guests&zoneId` - kropki
+  dni; maks. 31 dni na wywołanie, więc 42-dniowy pasek to dwa wywołania.
+- `GET  /businesses/:id/tables/availability?date&guests&zoneId` - godziny dnia
+  pogrupowane w pory serwowania.
+- `POST /businesses/:id/tables/reservations` - rezerwacja `{bookedById, startAt,
+  adults, children, zoneId?, notes?}` z `Idempotency-Key`; bez `source` (kanał
+  wybiera serwer, tak jak dla wizyty; polityka kanału sprawdza akcję `book`).
+- `POST /businesses/:id/tables/waitlist` - zapis na pusty dzień `{bookedById,
+  dateFrom, dateTo, partySize, zoneId?, source: 'web'}`.
+
+Promocje i lista oczekujących:
+
+- `GET  /businesses/:id/promotions/summary` - promocje do kart oferty.
+- `GET  /businesses/:id/waitlist/check` i `POST /businesses/:id/waitlist` -
+  lista oczekujących (widget wysyła `source: 'web'`).
+
+Tożsamość:
+
+- `POST /guest/otp/send` `{businessId,phone}` → `{expiresIn,maskedPhone,mode,codeLength}` - wysyła kod SMS.
+- `POST /guest/otp/verify` `{businessId,firstName,lastName,email,phone,otp}` → `{userId,token}` (gość z `phoneVerified`), `409 EMAIL_IN_USE`, `400` przy złym/wygasłym kodzie.
+- `POST /guest/login` `{businessId,email,password}` → `{userId,token}` (token w body - cookies są blokowane cross-origin).
+- `POST /auth/check-email` `{email}` → `{exists}` - proaktywne wykrycie istniejącego konta.
+- `GET  /auth/embed/start?provider&businessId&origin&key` - start OAuth w popupie (302 do dostawcy).
+- `GET  /auth/embed/callback` - po OAuth odsyła `{token,userId}` przez `postMessage` do dozwolonego originu.
+
+Backend tych endpointów żyje w monorepo Vizyto (m.in.
+`apps/api/src/modules/auth/routes/public-guest.ts` dla gości - reużywa
+istniejącej infrastruktury SMS, `createGuestCustomer`, tabeli `verifications` i
+flagi `users.phoneVerified`).
 
 **Egzekwowanie po stronie serwera (kluczowe).** Sama weryfikacja w widgecie nie
 wystarcza - atakujący mógłby ją pominąć skryptem. Dlatego endpoint tworzenia
@@ -246,7 +340,8 @@ wizyty (`apps/api/src/modules/appointments/routes/public.ts`) dla żądań spoza
 pierwszej strony (w tym bez nagłówka `Origin`) wymaga: ważnego site key, sesji
 zgodnej z `bookedById` oraz - dla gości - `phoneVerified = true`. Zalogowane
 konta Vizyto (nieanonimowe) pomijają warunek telefonu. To sprawia, że „musisz
-przejść OTP lub się zalogować” jest twardą regułą serwera, a nie tylko UI.
+przejść OTP lub się zalogować” jest twardą regułą serwera, a nie tylko UI. Tak
+samo serwer, nie widget, egzekwuje politykę kanałów.
 
 ## Dev
 
@@ -254,11 +349,17 @@ przejść OTP lub się zalogować” jest twardą regułą serwera, a nie tylko 
 pnpm install
 pnpm dev      # http://localhost:4500 - strona demo z konfiguratorem na żywo
 pnpm build    # -> dist/widget.js (jeden plik IIFE)
+pnpm exec tsc --noEmit
+pnpm build:cdn && bun test   # testy jednostkowe (style strony, kanały rezerwacji, stoliki)
 ```
 
 `index.html` to **konfigurator na żywo**: przełączasz motyw (jasny/ciemny/auto),
 kolor akcentu, tryb (przycisk/inline), czcionkę i tekst - widget przemontowuje
 się od razu, a gotowy snippet `<script>` aktualizuje się do skopiowania.
+
+`scripts/step-smoke.mjs` przeklikuje kreator w przeglądarce na zbudowanej paczce
+w trybie testowym (`scripts/mock-harness.html`); instrukcja uruchomienia jest w
+nagłówku skryptu.
 
 ## API programistyczne
 
@@ -278,17 +379,30 @@ const host = VizytoBooking.mount({
 
 // Otwórz modal z własnego przycisku (gdy showLauncher: false). Prefill skacze
 // od razu do specjalisty/terminu:
-VizytoBooking.open({ serviceId: 1, resourceId: 12 })  // oba -> krok „Termin"
+VizytoBooking.open({ serviceId: 1, resourceId: 12 })  // oba -> krok „Termin”
 VizytoBooking.open({ resourceId: 12 })                // sam barber -> preselekcja
 VizytoBooking.open()                                  // od początku
 VizytoBooking.close()
 VizytoBooking.unmount()     // usuwa wszystkie instancje
 ```
 
+### vizyto.com guest page options
+
+These options exist for vizyto.com's own guest page (`/r/<id>-<slug>?z=<place>`),
+which mounts the widget inline without a site key. They are `mount()` options
+only, not `data-*` attributes: an external site always books in the `widget`
+channel.
+
+| `mount()` option | type | effect |
+|---|---|---|
+| `channel` | `'widget' \| 'website'` | Which slice of the business's per-channel booking policy (`bookingChannels`) the flow reads, so it never offers what the API will refuse. Default `'widget'` ("Twoja strona WWW"); `'website'` is vizyto.com. Any other value falls back to `'widget'`. The API still decides the channel from the request Origin. |
+| `entryPoint` | `string` | Where the visitor came from. Exactly one of `instagram`, `facebook`, `whatsapp`, `google`, `qr`, `www`, `link`; anything else is dropped. Sent as `entryPoint` in the visit (appointment) POST body only, never with classes, rentals or the waitlist, and never shown. |
+| `loginHref` | `string` | The host page's own sign-in URL (absolute `https:`/`http:` only). Without a site key the Google/Apple/Facebook popups cannot work, so the login step hides them and, when `loginHref` is set, shows one link "Zaloguj się przez Google, Apple lub Facebook" to it instead (same tab, `target="_top"`). With a site key the step is unchanged. SMS code and e-mail login stay as they are. |
+
 ### Prefill - cztery rodziny oferty
 
 Widget obsługuje wizyty, **zajęcia grupowe**, **wynajem** i **stoliki**. Biznes, który sprzedaje
-więcej niż jedną rodzinę, dostaje na wejściu pytanie „co rezerwujesz"; prefill jest
+więcej niż jedną rodzinę, dostaje na wejściu pytanie „co rezerwujesz”; prefill jest
 odpowiedzią na to pytanie z góry, więc klik w grafik na stronie klubu nie każe
 szukać tych zajęć drugi raz.
 
@@ -303,6 +417,9 @@ VizytoBooking.open({ classId: 41, sessionId: 901 })
 
 // wynajem - od katalogu przedmiotów
 VizytoBooking.open({ kind: 'rental' })
+// wynajem konkretnego egzemplarza (karta pojazdu na stronie wypożyczalni);
+// sam `resourceId` egzemplarza wystarcza, `kind` jest tu opcjonalny
+VizytoBooking.open({ resourceId: 31 })
 
 // stolik w restauracji - od liczby osób
 VizytoBooking.open({ kind: 'table' })
@@ -311,14 +428,16 @@ VizytoBooking.open({ kind: 'table' })
 | klucz | rodzina | znaczenie |
 | --- | --- | --- |
 | `serviceId` | wizyta | usługa do koszyka; z wariantami zostaje na kroku usługi, żeby je wybrać |
-| `resourceId` | wizyta | wykonawca albo egzemplarz z puli; ignorowany, gdy usługa przydziela automatycznie |
+| `resourceId` | wizyta, wynajem | wizyta: wykonawca albo egzemplarz z puli, ignorowany, gdy usługa przydziela automatycznie; wynajem: egzemplarz - pomija listę i wchodzi od razu na jego kalendarz, także bez `kind` (egzemplarz z puli albo zdjęty z oferty zostawia listę) |
 | `classId` | zajęcia | kurs; wchodzi od razu na jego grafik |
 | `sessionId` | zajęcia | konkretny termin; **pełny termin jest odrzucany** i klient staje na liście |
 | `kind` | wszystkie | `'service' \| 'class' \| 'rental' \| 'table'` - jawny wybór rodziny, gdy nie znasz id |
 
 Prefill jest **podpowiedzią, nie rozkazem**: nieistniejący kurs, pełny termin albo
 rodzina, której ten biznes nie sprzedaje, cofają klienta o krok zamiast pokazywać
-pusty katalog albo obiecywać zapis, który serwer odrzuci.
+pusty katalog albo obiecywać zapis, który serwer odrzuci. Rodzina, którą biznes
+sprzedaje, ale której nie przyjmuje na stronie WWW, pokazuje stan zamknięcia
+(„Kanały rezerwacji”).
 
 **Stolik** (vizyto #903, pilotaż) pojawia się tylko u lokalu, którego publiczne
 `capabilities` zawierają `tables`, a plan nie jest zawieszony (`bookingSuspended`).
@@ -327,7 +446,9 @@ preferowana strefa) → dzień (kropki z liczby wolnych startów) → godzina po
 w pory serwowania z „ostatnim wejściem”; szare godziny nie mają stolika dla tej
 liczby osób. Gość nie wybiera stolika: podsumowanie mówi „Lokal dobierze stolik”,
 a uwagi trafiają do lokalu. Pusty dzień prowadzi do „Powiadom mnie” (lista
-oczekujących na ten jeden dzień). Bez ceny.
+oczekujących na ten jeden dzień). Bez ceny. W polityce kanałów stolik nie ma
+własnej akcji: API tworzy go jak wizytę, więc rodzina znika razem z `book`, a
+„Powiadom mnie” razem z `waitlist`.
 
 Tag `<script>` z atrybutami `data-*` woła `mount()` automatycznie po załadowaniu.
 `data-vizyto-launcher="hidden"` ukrywa przycisk (otwierasz przez `open()`).
@@ -371,9 +492,12 @@ kroku. Lejek:
 | `otp_verified` | poprawny kod | `userId` |
 | `authenticated` | zalogowanie | `method` (`otp`/`password`/`google`/…), `userId` |
 | `booking_submitted` | start zapisu rezerwacji | kontekst + `userId` |
-| **`booking_completed`** | **rezerwacja potwierdzona (KONWERSJA)** | `appointmentId`, `value` (PLN), `currency`, kontekst |
-| `booking_failed` | błąd zapisu | `code`, `reason` (`network`/`slot_lost`/`verification_required`) |
+| **`booking_completed`** | **rezerwacja potwierdzona (KONWERSJA)** | `appointmentId` (wizyta), `attendeeId` (zajęcia) albo `rentalId` (wynajem), `value` (PLN), `currency`, kontekst |
+| `booking_failed` | błąd zapisu | `code`, `reason` (`network` / `slot_lost` / `verification_required` / `access_restricted` / `register_refused` / `rental_refused` / `table_refused` / `channel_closed`) |
 | `slot_lost` | termin zajęty przed potwierdzeniem | `code`, kontekst |
+| `channel_closed` | firma nie przyjmuje tej rezerwacji na stronie WWW (#680) | `action` (`book`/`groupClasses`/`rentals`/`waitlist`/`all`), `stage` (`load` - zamknięte od wejścia, `submit` - 409 przy zapisie), przy `submit` także `code` i kontekst |
+| `booking_access_denied` | biała lista: zalogowany klient nie może rezerwować online | `userId`, `serviceId`, `stage` |
+| `waitlist_started` / `waitlist_joined` / `waitlist_failed` | lista oczekujących | `serviceId`, zakres dat i godzin; `code` przy błędzie |
 
 Eventy rezerwacji stolika niosą `table: true`, `partySize`, `zoneId` i `startAt`
 zamiast pól usługi; `booking_completed` ma `value: 0`. Zapis na listę oczekujących
@@ -392,18 +516,36 @@ zmian, i dokładają obok `serviceIds`, `serviceNames` oraz `itemCount`. `value`
 Ustaw `data-vizyto-api="mock"` w `index.html`. Wbudowany mock obsługuje cały
 przepływ offline:
 
-- kod SMS to zawsze **123456** (logowany też w konsoli),
+- kod SMS to zawsze **123456** (6 cyfr, logowany też w konsoli),
 - e-mail **taken@example.com** → wymusza logowanie (`EMAIL_IN_USE`),
-- termin **15:55** → symuluje zajęty slot (recovery „wybierz inny termin”),
+- termin z minutami **:55** (w siatce mocka jeden na dzień, 15:55 latem,
+  14:55 zimą) → symuluje zajęty slot (recovery „wybierz inny termin”),
 - mock respektuje koszyk: dłuższy łańcuch skraca dzień, zwraca `itemTimes` i
   `slotCandidates`, więc multi-usługę i wybór specjalisty do slotu da się
   przeklikać offline,
 - usługi **Golenie brzytwą** + **Koloryzacja** nie mają wspólnego wykonawcy -
   para pokazuje tryb „wybierz specjalistę do każdej usługi”,
-- logowanie: `taken@example.com` + dowolne hasło → sukces.
+- logowanie: `taken@example.com` + dowolne hasło → sukces,
 - stoliki: poniedziałki są pełne (pusty dzień i lista oczekujących), godzina
   **20:00** odpowiada `TABLE_NOT_AVAILABLE` (utracony stolik), a grupa powyżej 6 osób
-  widzi 19:00 i 19:30 na szaro.
+  widzi 19:00 i 19:30 na szaro,
+- kanały rezerwacji (#680) wybierasz id biznesu (`data-vizyto-business`):
+  - **680** - kanał strony WWW wyłączony: stan zamknięcia zamiast kroków,
+  - **681** - zajęcia i lista oczekujących wyłączone, wizyty, wynajem i stoliki
+    otwarte,
+  - **682** - profil mówi „otwarte”, ale firma wyłącza cały kanał już po
+    wczytaniu strony: każdy zapis nowej rezerwacji (także stolika i listy
+    oczekujących na stolik) dostaje 409 `CHANNEL_BOOKING_DISABLED` (tak
+    odpowiada API przy wyłączonym kanale), a kolejne pobranie profilu pokazuje
+    kanał zamknięty,
+  - **683** - profil mówi „otwarte”, ale firma wyłącza akcje pojedynczo: każdy
+    zapis dostaje 409 `CHANNEL_ACTION_DISABLED`, a kolejne pobranie profilu
+    pokazuje zamkniętą tylko tę akcję (stolik zamyka `book`, razem z wizytami).
+
+`scripts/mock-harness.html` przyjmuje te same dźwignie w adresie:
+`?business=680`, `?signedIn=1` (sesja bez kodu SMS), `?prefillClass=41`,
+`?prefillSession=901`, `?prefillService=1`, `?prefillResource=31`, `?prefillKind=rental`
+(albo `table`), `?onlyServices=1`.
 
 ### Test na prawdziwym API
 
@@ -416,25 +558,36 @@ logów API w trybie `ENABLE_SMS=false`).
 
 Widget to **static-assets Cloudflare Worker** (taki sam mechanizm jak inne appki
 Vizyto: `wrangler deploy`), serwujący `https://widget.vizyto.com/v1/widget.js`.
-`pnpm build:cdn` assembles the rolling widget, immutable build and manifest,
-self-hosted fonts and `_headers` in `deploy/` (see Site styles above).
-Configuration: `wrangler.jsonc`.
+`pnpm build:cdn` składa w `deploy/` kroczący widget, niezmienne wydanie z
+manifestem, własne czcionki i `_headers` (zob. „Style strony”). Konfiguracja:
+`wrangler.jsonc`.
 
 **Wydanie** - tag uruchamia CI (`.github/workflows/deploy.yml`):
 
 ```bash
-git tag v1.0.0 && git push origin v1.0.0   # lub: Actions → Deploy widget → Run
+make release V=1.2.0   # tylko z main: tag v1.2.0 + push
 ```
 
-Albo lokalnie: `pnpm deploy`.
+Ręcznie: Actions → „Deploy widget” → Run, **wyłącznie z gałęzi `main`** (inna
+gałąź kończy przebieg błędem). Albo lokalnie: `pnpm run deploy` (`make deploy`).
+Zawsze `pnpm run deploy`, nie `pnpm deploy`: w pnpm 9 (CI) to wbudowane
+polecenie workspace, które nie uruchamia skryptu z `package.json`.
 
-**Immutable releases:** every deploy runs `scripts/restore-published.mjs` after
-`build:cdn`. It reads the live `/releases.json`, restores each listed `/v/<hash>/`
-(widget, manifest, referenced fonts and licenses, all hash-checked) into `deploy/` and
-writes the list back with the new release. Cloudflare static assets replace the whole
-directory on deploy, so without this step older pinned URLs used by Vizyto sites would
-disappear. Any fetch or hash error aborts the deploy; only a missing `/releases.json`
-(first immutable release) is accepted.
+CI po kolei: `pnpm install --frozen-lockfile` → `pnpm exec tsc --noEmit` →
+`pnpm build:cdn` → `bun test` → `restore-published.mjs` → `wrangler deploy`.
+Dwa deploye nigdy nie biegną naraz (grupa `concurrency`): jeden trwa, najwyżej
+jeden czeka, a nowszy przebieg zastępuje ten czekający. Zastąpione wydanie nie
+trafia do `/v/<hash>/` ani do `releases.json` - jeśli ma tam być, uruchom
+ponownie przebieg jego taga.
+
+**Niezmienne wydania:** każdy deploy (CI i `pnpm run deploy`) uruchamia po
+`build:cdn` skrypt `scripts/restore-published.mjs`. Czyta on z produkcji
+`/releases.json`, odtwarza w `deploy/` każde wymienione `/v/<hash>/` (widget,
+manifest, użyte czcionki i licencje - wszystko ze sprawdzeniem hashy) i zapisuje
+listę z powrotem z nowym wydaniem. Cloudflare static assets przy deployu
+zastępują cały katalog, więc bez tego kroku starsze przypięte adresy stron
+Vizyto by znikały. Każdy błąd pobrania albo hasha przerywa deploy; akceptowany
+jest tylko brak `/releases.json` (pierwsze niezmienne wydanie).
 
 ### Jednorazowa konfiguracja
 
@@ -443,7 +596,7 @@ disappear. Any fetch or hash error aborts the deploy; only a missing `/releases.
    monorepo jest pod `trupu/vizyto` (konto osobiste), więc token żyje jako sekret
    *tamtego* repo i nie da się go współdzielić ani odczytać. Użyj zapisanej
    wartości tokena albo wygeneruj nowy: Cloudflare → My Profile → API Tokens →
-   „Edit Cloudflare Workers". Lokalnie:
+   „Edit Cloudflare Workers”. Lokalnie:
    `gh secret set CLOUDFLARE_API_TOKEN -R vizyto/vizyto-booking-widget`.
 2. `CLOUDFLARE_ACCOUNT_ID` **nie jest potrzebny** - token jest account-scoped.
 3. Domena `widget.vizyto.com` provisionuje się **automatycznie** przy pierwszym

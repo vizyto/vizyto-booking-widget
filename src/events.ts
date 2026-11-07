@@ -30,6 +30,7 @@ export type VizytoEventType =
   | 'booking_failed'
   | 'booking_access_denied' // whitelist gate: logged-in viewer may not book online here
   | 'slot_lost' // chosen slot was taken before confirm
+  | 'channel_closed' // the business does not take this booking on its website (#680) - { action, stage, code? }
   | 'waitlist_started' // opened the waitlist form (a day had no free slots)
   | 'waitlist_joined' // waitlist sign-up confirmed
   | 'waitlist_failed'

@@ -5,9 +5,25 @@
 // the in-memory mock backend so the full flow is testable before the API ships.
 
 import * as mock from './mock'
+import { zonedDay } from './dates'
+import type { PublicBookingChannels, WidgetChannel } from './channel'
+import type { EntryPoint } from './mountOptions'
 import type { TableDay, TableOptions } from './tables'
 
-export type Cfg = { apiBase: string; siteKey: string; businessId: number; token?: string; turnstileKey?: string; mock?: boolean }
+export type Cfg = {
+  apiBase: string
+  siteKey: string
+  businessId: number
+  token?: string
+  turnstileKey?: string
+  mock?: boolean
+  /** The policy slice the flow reads: `widget` on an external site, `website` on vizyto.com's guest page. */
+  channel: WidgetChannel
+  /** Where the visitor came from (vizyto.com's short link); sent with a visit only. */
+  entryPoint?: EntryPoint
+  /** The host page's own sign-in, offered instead of the OAuth popups when there is no site key. */
+  loginHref?: string
+}
 
 // Per-employee override of a service's price/duration. The business can set a
 // different price/duration for a given worker; the API resolves the fallback
@@ -156,11 +172,17 @@ export type Business = {
   bookingPolicy?: BookingPolicy
   // Whitelist gate; absent (older API) = open to everyone.
   bookingAccess?: BookingAccess
+  // Business-wide online booking switch, already folded to false for a business
+  // without a serving plan (`bookingSuspended` says why).
+  hasWebsiteReservationsEnabled?: boolean
+  // An expired plan: the API refuses every online booking.
+  bookingSuspended?: boolean
+  // Per-channel booking policy (#680); the widget reads its `widget` slice
+  // through ./channel. Absent on an older API.
+  bookingChannels?: PublicBookingChannels
   // Modules the business runs (`resolveCapabilities` on the API). The "Stolik"
   // family needs 'tables'; absent (older API) = no table booking.
   capabilities?: string[]
-  // An expired plan: the API refuses every online booking.
-  bookingSuspended?: boolean
 }
 
 // A named group of services (PRO -> kategorie usług). Fetched from a separate
@@ -293,7 +315,7 @@ function headers(cfg: Cfg, extra?: Record<string, string>): Record<string, strin
 }
 
 export async function fetchBusiness(cfg: Cfg): Promise<Business | null> {
-  if (cfg.mock) return mock.fetchBusiness()
+  if (cfg.mock) return mock.fetchBusiness(cfg.businessId)
   try {
     const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}`, { headers: headers(cfg) })
     return r.ok ? ((await r.json()) as Business) : null
@@ -572,9 +594,23 @@ const RENTAL_UNIT_MANY: Record<RentalUnit, string> = {
   minute: 'minut', hour: 'godzin', day: 'dób', week: 'tygodni', month: 'miesięcy',
 }
 
-/** "1 doba" / "2 doby" / "5 dób" - Polish plural for a unit count. */
-export function rentalUnitsLabel(n: number, unit: RentalUnit): string {
-  if (n === 1) return `1 ${RENTAL_UNIT_ONE[unit]}`
+/** Dopełniacz liczby pojedynczej - forma po przyimku "od". */
+const RENTAL_UNIT_GEN: Record<RentalUnit, string> = {
+  minute: 'minuty', hour: 'godziny', day: 'doby', week: 'tygodnia', month: 'miesiąca',
+}
+
+/**
+ * "1 doba" / "2 doby" / "5 dób" - Polish plural for a unit count.
+ *
+ * `after: 'od'` zwraca formę po przyimku, który rządzi dopełniaczem. Bez tego
+ * karta przedmiotu pisała "od 1 doba" - liczebnik odmieniony poprawnie, ale
+ * w mianowniku, więc całość czytała się jak tłumaczenie maszynowe.
+ */
+export function rentalUnitsLabel(n: number, unit: RentalUnit, after?: 'od'): string {
+  if (n === 1) return `1 ${after === 'od' ? RENTAL_UNIT_GEN[unit] : RENTAL_UNIT_ONE[unit]}`
+  // Po "od" każda liczba poza 1 bierze dopełniacz liczby mnogiej: "od 2 dób",
+  // "od 3 godzin", "od 22 tygodni" - nigdy "od 2 doby".
+  if (after === 'od') return `${n} ${RENTAL_UNIT_MANY[unit]}`
   const mod100 = n % 100
   const mod10 = n % 10
   const few = mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)
@@ -1157,8 +1193,10 @@ export async function getTableDay(
 }
 
 /**
- * Reserve a table. No `source`: the site key makes the channel `widget` on the
- * server. The three TABLE_* refusals carry the API's Polish `message`.
+ * Reserve a table. No `source`: the server picks the channel from the request (the
+ * site key = `widget`, vizyto.com's guest page = `website`) and refuses it under that
+ * channel's `book` action (409 CHANNEL_*). The three TABLE_* refusals carry the
+ * API's Polish `message`.
  */
 export async function createTableReservation(
   cfg: Cfg,
@@ -1245,6 +1283,8 @@ export async function createAppointment(
         startDate: p.startDate,
         notes: p.notes,
         ...(p.expectedTotal !== undefined ? { expectedTotal: p.expectedTotal } : {}),
+        // vizyto.com's short link: where the visitor came from. Visits only.
+        ...(cfg.entryPoint ? { entryPoint: cfg.entryPoint } : {}),
       }),
     })
     const data = await r.json().catch(() => ({}))
@@ -1448,7 +1488,26 @@ export function bookingIdempotencyKey(p: {
 
 // ---- formatting / phone helpers -----------------------------------------
 
-export const slotStartDate = (date: string, utcKey: string) => `${date}T${utcKey.slice(0, 5)}:00.000Z`
+/**
+ * The instant of a visit slot. Availability answers UTC "HH:mm" keys for one
+ * LOCAL day of the business, so the key belongs to that local day, not to the
+ * UTC day of the same name: in Poland a 00:30 start is 22:30Z of the day before.
+ * With the business timezone the key is placed on the UTC day that lands on
+ * `date` locally; without it (labels only need the hour) it is glued to `date`.
+ */
+export function slotStartDate(date: string, utcKey: string, tz?: string | null): string {
+  const iso = `${date}T${utcKey.slice(0, 5)}:00.000Z`
+  const ms = Date.parse(iso)
+  if (!tz || Number.isNaN(ms)) return iso
+  try {
+    for (const shift of [0, -86_400_000, 86_400_000]) {
+      if (zonedDay(ms + shift, tz) === date) return new Date(ms + shift).toISOString()
+    }
+  } catch {
+    // Unknown zone name: keep the plain reading.
+  }
+  return iso
+}
 
 export function slotLabel(date: string, utcKey: string, tz: string | null): string {
   try {

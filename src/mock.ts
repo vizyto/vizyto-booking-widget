@@ -6,6 +6,20 @@
 //   - login: taken@example.com + any non-empty password succeeds
 //   - picking a slot at :55 -> createAppointment reports the slot is gone
 //   - token "stale" -> BOOKED_BY_MISMATCH
+//   - per-channel booking policy (#680), by business id:
+//       680 -> the widget channel is switched off: the closed state, no steps
+//       681 -> classes and the waitlist are off in the widget channel, visits,
+//              rentals and tables stay open (the fork loses a branch, no
+//              waitlist button)
+//       682 -> the profile says open, but the owner switches the whole widget
+//              channel off after the page loaded: every new-booking write
+//              (a table and the table waitlist too) answers 409
+//              CHANNEL_BOOKING_DISABLED (what the API sends for a closed
+//              channel) and every later profile read says closed
+//       683 -> the profile says open, but the owner switches actions off one
+//              by one: each write answers 409 CHANNEL_ACTION_DISABLED and later
+//              profile reads say that one action is closed (a table books
+//              under `book`, like a visit, as on the API)
 //   - tables: Mondays full (waitlist path), 20:00 a lost table (see below)
 import type { TableDay, TableOptions, TablePeriod, TableSlot } from './tables'
 import type {
@@ -35,6 +49,8 @@ import type {
   WaitlistParams,
   WaitlistResult,
 } from './api'
+import type { CustomerAction } from './channel'
+import { zonedIso } from './dates'
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -69,6 +85,40 @@ const swatch = (a: string, b: string) =>
   `data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><defs><linearGradient id='g' x1='0' y1='1' x2='1' y2='0'><stop offset='0' stop-color='%23${a}'/><stop offset='1' stop-color='%23${b}'/></linearGradient></defs><rect width='120' height='120' fill='url(%23g)'/></svg>`
 const THUMB2 = swatch('4b5563', '111827')
 const THUMB3 = swatch('9ca3af', '4b5563')
+
+const OPEN_ACTIONS: Record<CustomerAction, boolean> = {
+  book: true, groupClasses: true, rentals: true, waitlist: true, reschedule: true, cancel: true,
+}
+
+/** Mock business ids that simulate the per-channel booking policy (#680). */
+export const MOCK_CHANNEL_CLOSED = 680
+export const MOCK_CHANNEL_PARTIAL = 681
+export const MOCK_CHANNEL_CLOSES_ON_SUBMIT = 682
+export const MOCK_ACTIONS_CLOSE_ON_SUBMIT = 683
+// Set by fetchBusiness: the write mocks below take no business id.
+let mockBusinessId = 24
+// What the owner has switched off since the page loaded (682: the whole channel,
+// 683: these actions). Profile reads after a refusal reflect it, like the API.
+let mockChannelSwitchedOff = false
+const mockActionsSwitchedOff = new Set<CustomerAction>()
+
+/**
+ * 409 a write gets on business 682/683, with the code the API's policy service
+ * (`channelRefusal`) picks: a channel switched off refuses every new booking with
+ * CHANNEL_BOOKING_DISABLED, one action switched off in an open channel answers
+ * CHANNEL_ACTION_DISABLED (a visit too).
+ */
+function channelRefusal(action: CustomerAction): { ok: false; code: string } | null {
+  if (mockBusinessId === MOCK_CHANNEL_CLOSES_ON_SUBMIT) {
+    mockChannelSwitchedOff = true
+    return { ok: false, code: 'CHANNEL_BOOKING_DISABLED' }
+  }
+  if (mockBusinessId === MOCK_ACTIONS_CLOSE_ON_SUBMIT) {
+    mockActionsSwitchedOff.add(action)
+    return { ok: false, code: 'CHANNEL_ACTION_DISABLED' }
+  }
+  return null
+}
 
 const BUSINESS: Business = {
   id: 24,
@@ -228,7 +278,18 @@ const BUSINESS: Business = {
       ],
     },
   ],
-  workingHours: [],
+  // Open every day 09:00-18:00: a daily rental starts at the opening time in the
+  // business timezone, so an empty list would close every pickup day.
+  hasWebsiteReservationsEnabled: true,
+  // Everything open in every customer channel, as the API resolves it (#680).
+  bookingChannels: {
+    website: { enabled: true, actions: { ...OPEN_ACTIONS } },
+    client_app: { enabled: true, actions: { ...OPEN_ACTIONS } },
+    widget: { enabled: true, actions: { ...OPEN_ACTIONS } },
+  },
+  workingHours: [0, 1, 2, 3, 4, 5, 6].map((dayOfWeek) => ({
+    id: dayOfWeek + 1, dayOfWeek, openTime: '09:00', closeTime: '18:00', isOpened: true,
+  })),
   // Demo levers: show the "rezerwacja próbna" notice and enable the waitlist so
   // both flows are reachable in the local configurator.
   isTestMode: true,
@@ -243,11 +304,31 @@ const BUSINESS: Business = {
   bookingSuspended: false,
 }
 
-export async function fetchBusiness(): Promise<Business> {
+export async function fetchBusiness(businessId?: number): Promise<Business> {
   await wait(280)
+  mockBusinessId = businessId ?? BUSINESS.id
+  if (businessId === MOCK_CHANNEL_CLOSED) {
+    const closed = { book: false, groupClasses: false, rentals: false, waitlist: false, reschedule: true, cancel: true }
+    return { ...BUSINESS, id: businessId, bookingChannels: { ...BUSINESS.bookingChannels, widget: { enabled: false, actions: closed } } }
+  }
+  if (businessId === MOCK_CHANNEL_PARTIAL) {
+    const partial = { ...OPEN_ACTIONS, groupClasses: false, waitlist: false }
+    return { ...BUSINESS, id: businessId, bookingChannels: { ...BUSINESS.bookingChannels, widget: { enabled: true, actions: partial } } }
+  }
+  if (businessId === MOCK_CHANNEL_CLOSES_ON_SUBMIT) {
+    if (!mockChannelSwitchedOff) return { ...BUSINESS, id: businessId }
+    const closed = { book: false, groupClasses: false, rentals: false, waitlist: false, reschedule: true, cancel: true }
+    return { ...BUSINESS, id: businessId, bookingChannels: { ...BUSINESS.bookingChannels, widget: { enabled: false, actions: closed } } }
+  }
+  if (businessId === MOCK_ACTIONS_CLOSE_ON_SUBMIT) {
+    const actions = { ...OPEN_ACTIONS }
+    for (const a of mockActionsSwitchedOff) actions[a] = false
+    return { ...BUSINESS, id: businessId, bookingChannels: { ...BUSINESS.bookingChannels, widget: { enabled: true, actions } } }
+  }
   // Test lever: a single-family business (plain barbershop) must never see the
   // offering fork. Strips the group services and the rentables from the payload.
-  if ((window as any).__VIZYTO_MOCK_ONLY_SERVICES__) {
+  // `typeof` guard: the mock also runs under bun:test, where there is no window.
+  if (typeof window !== 'undefined' && (window as any).__VIZYTO_MOCK_ONLY_SERVICES__) {
     return {
       ...BUSINESS,
       services: BUSINESS.services.filter((x) => x.bookingType !== 'group'),
@@ -354,6 +435,8 @@ export async function checkWaitlistWindow(_p: WaitlistCheckParams): Promise<Wait
 let waitlistCount = 0
 export async function joinWaitlist(_p: WaitlistParams, _token: string | null): Promise<WaitlistResult> {
   await wait(500)
+  const closed = channelRefusal('waitlist')
+  if (closed) return closed
   // Second sign-up in a session simulates the "already waiting" duplicate error.
   waitlistCount += 1
   if (waitlistCount > 1) return { ok: false, code: 'WAITLIST_DUPLICATE' }
@@ -509,6 +592,8 @@ export async function createAppointment(
 ): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
   await wait(600)
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
+  const closed = channelRefusal('book')
+  if (closed) return closed
   if (/T\d{2}:55/.test(p.startDate)) return { ok: false, code: 'SLOT_TAKEN' }
   return { ok: true, data: { id: 12345, status: 'confirmed' } }
 }
@@ -561,6 +646,8 @@ export async function registerForSession(
 ): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
   await wait(600)
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
+  const closed = channelRefusal('groupClasses')
+  if (closed) return closed
   if (p.sessionId === 921) return { ok: false, code: 'ENTRY_DISABLED' }
   if (p.sessionId === 903) return { ok: false, code: 'SESSION_FULL' }
   return { ok: true, data: { id: 5150, sessionId: p.sessionId, status: 'registered' } }
@@ -593,8 +680,11 @@ export async function getRentalDaySlots(p: { resourceId?: number; rentalTypeId?:
   await wait(250)
   // The trailer (resource 31) is billed per day -> no grid at all.
   if (p.resourceId === 31) return { mode: 'range' }
+  // Like the API: `local` is the wall clock of the business timezone, `start` the
+  // real instant (10:00 in Warsaw is 08:00Z in summer). Keeping them different is
+  // what lets the smoke catch a widget that glues `local` to "Z" again.
   const slots = ['10:00', '11:00', '12:00', '14:00', '15:00', '18:00'].map((hh) => ({
-    start: `${p.date}T${hh}:00.000Z`,
+    start: zonedIso(p.date, hh, BUSINESS.timezone || 'Europe/Warsaw') ?? `${p.date}T${hh}:00.000Z`,
     local: hh,
     resourceIds: [21, 22],
     promo: isPromoDay(p.date) && isPromoTime(hh) ? promoFields(8000) : null,
@@ -614,6 +704,8 @@ export async function createRental(
 ): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
   await wait(600)
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
+  const closed = channelRefusal('rentals')
+  if (closed) return closed
   if (/T\d{2}:55/.test(p.startDate)) return { ok: false, code: 'RENTAL_SLOT_UNAVAILABLE' }
   return { ok: true, data: { id: 7700, status: 'reserved' } }
 }
@@ -702,6 +794,9 @@ export async function createTableReservation(
 ): Promise<{ ok: true; data: any } | { ok: false; code: string; message?: string }> {
   await wait(600)
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
+  // A table is created as a visit on the API, so it books under the `book` action.
+  const closed = channelRefusal('book')
+  if (closed) return closed
   if (p.startAt.includes('T20:00')) {
     return { ok: false, code: 'TABLE_NOT_AVAILABLE', message: 'Brak wolnego stolika dla tej liczby osób o tej godzinie. Wybierz inną godzinę.' }
   }
@@ -714,5 +809,7 @@ export async function joinTableWaitlist(
 ): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
   await wait(400)
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
+  const closed = channelRefusal('waitlist')
+  if (closed) return closed
   return { ok: true, data: { id: 8800 } }
 }

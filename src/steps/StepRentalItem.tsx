@@ -86,7 +86,7 @@ export function StepRentalItem({
                 {rate != null && (
                   <span class="vz-price">{formatPrice2(rate)} / {rentalUnitsLabel(1, unit).replace('1 ', '')}</span>
                 )}
-                <span class="vz-dur">od {rentalUnitsLabel(min, unit)}</span>
+                <span class="vz-dur">od {rentalUnitsLabel(min, unit, 'od')}</span>
                 {o.head.rentalMaxPartySize != null && (
                   <span class="vz-dur"><Users size={14} /> do {o.head.rentalMaxPartySize} os.</span>
                 )}
