@@ -550,6 +550,13 @@ export const css = `
    day label pushed clear of them. */
 .vz-days.has-promo { padding-top: 10px; }
 .vz-days.has-promo .vz-day { padding-top: 16px; }
+/* The table strip (#903) lists the whole horizon: it scrolls sideways with tiles at
+   the width the paged DayStrip uses, instead of squeezing every day into one row.
+   Not the paged DayStrip, because an empty table day stays tappable (that is where
+   "Powiadom mnie" lives) and DayStrip disables days without free starts. */
+.vz-days.scroll { overflow-x: auto; touch-action: auto; scrollbar-width: none; padding-bottom: 2px; }
+.vz-days.scroll::-webkit-scrollbar { display: none; }
+.vz-days.scroll .vz-day { flex: 0 0 60px; }
 
 /* month grid */
 .vz-month { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
@@ -580,7 +587,9 @@ export const css = `
   transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
 }
 .vz-pill small { font-weight: 500; color: var(--vz-text-muted); }
-.vz-pill:hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+@media (hover: hover) {
+  .vz-pill:not(.on):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+}
 .vz-pill:active { transform: scale(.98); }
 .vz-pill.on { border-color: var(--vz-accent); background: var(--vz-selected); }
 .vz-pill.on small { color: var(--vz-text); }
@@ -594,9 +603,19 @@ export const css = `
   font-size: 15px; font-weight: 600; text-align: center;
   transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
 }
-.vz-slot:hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
-.vz-slot:active { transform: scale(.97); }
+@media (hover: hover) {
+  .vz-slot:not([disabled]):not(.selected):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+}
+.vz-slot:not([disabled]):active { transform: scale(.97); }
 .vz-slot.selected { border-color: var(--vz-accent); background: var(--vz-selected); }
+/* A start without a table for this party (#903): shown, grey, not tappable. */
+.vz-slot[disabled] { opacity: .4; cursor: default; }
+/* "ostatnie wejście 21:00" at the right end of a period header; a long
+   period name ellipsizes instead of pushing it past the card edge. */
+.vz-slot-group-h .vz-slot-group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vz-slot-group-h .vz-slot-group-aside { flex: 0 0 auto; margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; }
+/* Stacked preset rows (Dorośli / Dzieci / Strefa). */
+.vz-stack { display: grid; gap: 18px; }
 /* A grid with a promoted slot: room above the first row and between rows for
    the corner badges, the time pushed clear of them. */
 .vz-slots.has-promo { padding-top: 10px; row-gap: 16px; }

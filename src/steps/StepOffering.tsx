@@ -1,7 +1,7 @@
 import { SelectCard } from '../ui/SelectCard'
-import { Calendar, KeyRound, Users } from '../ui/icons'
+import { Calendar, KeyRound, Users, Utensils } from '../ui/icons'
 
-export type OfferingKind = 'service' | 'class' | 'rental'
+export type OfferingKind = 'service' | 'class' | 'rental' | 'table'
 
 /**
  * "Co chcesz zarezerwować?" - shown ONLY when the business sells both individual
@@ -22,6 +22,7 @@ export function StepOffering({
   serviceLabel,
   classLabel,
   rentalLabel,
+  tableLabel,
 }: {
   selected: OfferingKind | null
   onPick: (k: OfferingKind) => void
@@ -30,6 +31,7 @@ export function StepOffering({
   serviceLabel: string
   classLabel: string
   rentalLabel: string
+  tableLabel: string
 }) {
   return (
     <div class="vz-list vz-stagger" role="radiogroup" aria-label="Co chcesz zarezerwować">
@@ -58,6 +60,16 @@ export function StepOffering({
           desc="Wybierasz, na jak długo i od kiedy."
           selected={selected === 'rental'}
           onSelect={() => onPick('rental')}
+        />
+      )}
+      {/* Restaurant tables (#903): the venue picks the table, the guest the hour. */}
+      {kinds.includes('table') && (
+        <SelectCard
+          avatar={<Utensils size={20} />}
+          title={tableLabel}
+          desc="Wybierasz godzinę, lokal dobierze stolik."
+          selected={selected === 'table'}
+          onSelect={() => onPick('table')}
         />
       )}
     </div>

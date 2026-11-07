@@ -1,4 +1,5 @@
 import { useState } from 'preact/hooks'
+import type { ComponentChildren } from 'preact'
 import type { BookingPolicy, PriceQuote } from '../api'
 import { isLikelyPhone } from '../data/countries'
 import { StepHeader } from '../ui/StepHeader'
@@ -54,6 +55,9 @@ export function StepIdentify({
   sending,
   error,
   policy,
+  terms,
+  notesLabel = 'Notatki (opcjonalnie)',
+  notesPlaceholder = 'Dodatkowe informacje dla specjalisty',
   turnstileKey,
   turnstileToken,
   onTurnstile,
@@ -67,6 +71,11 @@ export function StepIdentify({
   onNotes?: (v: string) => void
   /** Booking terms to read before confirming; omitted when there is nothing to confirm. */
   policy?: BookingPolicy
+  /** Terms of a family with its own rules (a table's hold and cancel rules), in the policy's place. */
+  terms?: ComponentChildren
+  /** A restaurant has no specialist: the table flow names the venue instead. */
+  notesLabel?: string
+  notesPlaceholder?: string
   emailExists: boolean
   onCheckEmail: () => void
   onSendCode: (normalizedPhone: string) => void
@@ -141,13 +150,13 @@ export function StepIdentify({
 
       {onNotes && (
         <label class="vz-notes">
-          <span class="vz-notes-label">Notatki (opcjonalnie)</span>
+          <span class="vz-notes-label">{notesLabel}</span>
           <textarea
             class="vz-textarea"
             rows={3}
             value={notes ?? ''}
             onInput={(e) => onNotes((e.target as HTMLTextAreaElement).value)}
-            placeholder="Dodatkowe informacje dla specjalisty"
+            placeholder={notesPlaceholder}
           />
         </label>
       )}
@@ -164,6 +173,8 @@ export function StepIdentify({
           )}
         </div>
       )}
+
+      {terms && <div class="vz-terms">{terms}</div>}
 
       {error && <div class="vz-err" role="alert">{error}</div>}
 

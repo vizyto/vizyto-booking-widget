@@ -204,7 +204,7 @@ Weryfikacja (bez dodatkowych zależności testowych):
 ```sh
 pnpm exec tsc --noEmit
 pnpm build:cdn
-bun test
+bun test                        # wszystkie pliki w tests/, także tables.test.js
 grep -r googleapis dist deploy  # brak trafień, kod wyjścia 1
 ```
 
@@ -228,9 +228,10 @@ Widget czyta politykę z profilu biznesu, który i tak pobiera
 `publicChannelAllows` z `packages/shared/src/utils/bookingChannels.ts` w
 monorepo. Tak samo jak CLIENT i WEB:
 
-- wizyty są dostępne przy akcji `book`, zajęcia przy `groupClasses`, wynajem
-  przy `rentals`, przycisk listy oczekujących przy `waitlist`; rodziny, której
-  kanał nie przyjmuje, nie ma w kreatorze;
+- wizyty i stoliki są dostępne przy akcji `book` (API tworzy stolik jak wizytę),
+  zajęcia przy `groupClasses`, wynajem przy `rentals`, przycisk listy
+  oczekujących (także „Powiadom mnie” przy stoliku) przy `waitlist`; rodziny,
+  której kanał nie przyjmuje, nie ma w kreatorze;
 - gdy nie zostaje nic do zarezerwowania, zamiast kroków widget pokazuje stan
   „Rezerwacje online są teraz wyłączone” z numerem telefonu firmy (jeśli go
   podała); przycisk pływający dalej otwiera modal z tą informacją;
@@ -299,6 +300,20 @@ Wynajem:
   oznaczenia promocji.
 - `POST /businesses/:id/rentals` - rezerwacja wynajmu (`Idempotency-Key`).
 
+Stoliki (vizyto #903 F11; Bearer także przy odczytach, bo API sprawdza dostęp
+zalogowanego gościa; lokal spoza pilotażu odpowiada `404 TABLES_NOT_AVAILABLE`):
+
+- `GET  /businesses/:id/tables/options` - strefy, tryb potwierdzania, limity osób.
+- `GET  /businesses/:id/tables/availability-counts?from&to&guests&zoneId` - kropki
+  dni; maks. 31 dni na wywołanie, więc 42-dniowy pasek to dwa wywołania.
+- `GET  /businesses/:id/tables/availability?date&guests&zoneId` - godziny dnia
+  pogrupowane w pory serwowania.
+- `POST /businesses/:id/tables/reservations` - rezerwacja `{bookedById, startAt,
+  adults, children, zoneId?, notes?}` z `Idempotency-Key`; bez `source` (kanał
+  wybiera serwer, tak jak dla wizyty; polityka kanału sprawdza akcję `book`).
+- `POST /businesses/:id/tables/waitlist` - zapis na pusty dzień `{bookedById,
+  dateFrom, dateTo, partySize, zoneId?, source: 'web'}`.
+
 Promocje i lista oczekujących:
 
 - `GET  /businesses/:id/promotions/summary` - promocje do kart oferty.
@@ -335,7 +350,7 @@ pnpm install
 pnpm dev      # http://localhost:4500 - strona demo z konfiguratorem na żywo
 pnpm build    # -> dist/widget.js (jeden plik IIFE)
 pnpm exec tsc --noEmit
-pnpm build:cdn && bun test   # testy jednostkowe (style strony, kanały rezerwacji)
+pnpm build:cdn && bun test   # testy jednostkowe (style strony, kanały rezerwacji, stoliki)
 ```
 
 `index.html` to **konfigurator na żywo**: przełączasz motyw (jasny/ciemny/auto),
@@ -384,9 +399,9 @@ channel.
 | `entryPoint` | `string` | Where the visitor came from. Exactly one of `instagram`, `facebook`, `whatsapp`, `google`, `qr`, `www`, `link`; anything else is dropped. Sent as `entryPoint` in the visit (appointment) POST body only, never with classes, rentals or the waitlist, and never shown. |
 | `loginHref` | `string` | The host page's own sign-in URL (absolute `https:`/`http:` only). Without a site key the Google/Apple/Facebook popups cannot work, so the login step hides them and, when `loginHref` is set, shows one link "Zaloguj się przez Google, Apple lub Facebook" to it instead (same tab, `target="_top"`). With a site key the step is unchanged. SMS code and e-mail login stay as they are. |
 
-### Prefill - trzy rodziny oferty
+### Prefill - cztery rodziny oferty
 
-Widget obsługuje wizyty, **zajęcia grupowe** i **wynajem**. Biznes, który sprzedaje
+Widget obsługuje wizyty, **zajęcia grupowe**, **wynajem** i **stoliki**. Biznes, który sprzedaje
 więcej niż jedną rodzinę, dostaje na wejściu pytanie „co rezerwujesz”; prefill jest
 odpowiedzią na to pytanie z góry, więc klik w grafik na stronie klubu nie każe
 szukać tych zajęć drugi raz.
@@ -405,6 +420,9 @@ VizytoBooking.open({ kind: 'rental' })
 // wynajem konkretnego egzemplarza (karta pojazdu na stronie wypożyczalni);
 // sam `resourceId` egzemplarza wystarcza, `kind` jest tu opcjonalny
 VizytoBooking.open({ resourceId: 31 })
+
+// stolik w restauracji - od liczby osób
+VizytoBooking.open({ kind: 'table' })
 ```
 
 | klucz | rodzina | znaczenie |
@@ -413,13 +431,24 @@ VizytoBooking.open({ resourceId: 31 })
 | `resourceId` | wizyta, wynajem | wizyta: wykonawca albo egzemplarz z puli, ignorowany, gdy usługa przydziela automatycznie; wynajem: egzemplarz - pomija listę i wchodzi od razu na jego kalendarz, także bez `kind` (egzemplarz z puli albo zdjęty z oferty zostawia listę) |
 | `classId` | zajęcia | kurs; wchodzi od razu na jego grafik |
 | `sessionId` | zajęcia | konkretny termin; **pełny termin jest odrzucany** i klient staje na liście |
-| `kind` | wszystkie | `'service' \| 'class' \| 'rental'` - jawny wybór rodziny, gdy nie znasz id |
+| `kind` | wszystkie | `'service' \| 'class' \| 'rental' \| 'table'` - jawny wybór rodziny, gdy nie znasz id |
 
 Prefill jest **podpowiedzią, nie rozkazem**: nieistniejący kurs, pełny termin albo
 rodzina, której ten biznes nie sprzedaje, cofają klienta o krok zamiast pokazywać
 pusty katalog albo obiecywać zapis, który serwer odrzuci. Rodzina, którą biznes
 sprzedaje, ale której nie przyjmuje na stronie WWW, pokazuje stan zamknięcia
 („Kanały rezerwacji”).
+
+**Stolik** (vizyto #903, pilotaż) pojawia się tylko u lokalu, którego publiczne
+`capabilities` zawierają `tables`, a plan nie jest zawieszony (`bookingSuspended`).
+Kroki: liczba osób (dorośli 1-10, dzieci 0-4, przy co najmniej dwóch strefach
+preferowana strefa) → dzień (kropki z liczby wolnych startów) → godzina pogrupowana
+w pory serwowania z „ostatnim wejściem”; szare godziny nie mają stolika dla tej
+liczby osób. Gość nie wybiera stolika: podsumowanie mówi „Lokal dobierze stolik”,
+a uwagi trafiają do lokalu. Pusty dzień prowadzi do „Powiadom mnie” (lista
+oczekujących na ten jeden dzień). Bez ceny. W polityce kanałów stolik nie ma
+własnej akcji: API tworzy go jak wizytę, więc rodzina znika razem z `book`, a
+„Powiadom mnie” razem z `waitlist`.
 
 Tag `<script>` z atrybutami `data-*` woła `mount()` automatycznie po załadowaniu.
 `data-vizyto-launcher="hidden"` ukrywa przycisk (otwierasz przez `open()`).
@@ -464,11 +493,15 @@ kroku. Lejek:
 | `authenticated` | zalogowanie | `method` (`otp`/`password`/`google`/…), `userId` |
 | `booking_submitted` | start zapisu rezerwacji | kontekst + `userId` |
 | **`booking_completed`** | **rezerwacja potwierdzona (KONWERSJA)** | `appointmentId` (wizyta), `attendeeId` (zajęcia) albo `rentalId` (wynajem), `value` (PLN), `currency`, kontekst |
-| `booking_failed` | błąd zapisu | `code`, `reason` (`network` / `slot_lost` / `verification_required` / `access_restricted` / `register_refused` / `rental_refused` / `channel_closed`) |
+| `booking_failed` | błąd zapisu | `code`, `reason` (`network` / `slot_lost` / `verification_required` / `access_restricted` / `register_refused` / `rental_refused` / `table_refused` / `channel_closed`) |
 | `slot_lost` | termin zajęty przed potwierdzeniem | `code`, kontekst |
 | `channel_closed` | firma nie przyjmuje tej rezerwacji na stronie WWW (#680) | `action` (`book`/`groupClasses`/`rentals`/`waitlist`/`all`), `stage` (`load` - zamknięte od wejścia, `submit` - 409 przy zapisie), przy `submit` także `code` i kontekst |
 | `booking_access_denied` | biała lista: zalogowany klient nie może rezerwować online | `userId`, `serviceId`, `stage` |
 | `waitlist_started` / `waitlist_joined` / `waitlist_failed` | lista oczekujących | `serviceId`, zakres dat i godzin; `code` przy błędzie |
+
+Eventy rezerwacji stolika niosą `table: true`, `partySize`, `zoneId` i `startAt`
+zamiast pól usługi; `booking_completed` ma `value: 0`. Zapis na listę oczekujących
+na stolik emituje `waitlist_joined` / `waitlist_failed` z `table: true`.
 
 > Telefon i e-mail nie trafiają do eventów (tylko `maskedPhone`) - żadnego PII.
 
@@ -493,21 +526,26 @@ przepływ offline:
 - usługi **Golenie brzytwą** + **Koloryzacja** nie mają wspólnego wykonawcy -
   para pokazuje tryb „wybierz specjalistę do każdej usługi”,
 - logowanie: `taken@example.com` + dowolne hasło → sukces,
+- stoliki: poniedziałki są pełne (pusty dzień i lista oczekujących), godzina
+  **20:00** odpowiada `TABLE_NOT_AVAILABLE` (utracony stolik), a grupa powyżej 6 osób
+  widzi 19:00 i 19:30 na szaro,
 - kanały rezerwacji (#680) wybierasz id biznesu (`data-vizyto-business`):
   - **680** - kanał strony WWW wyłączony: stan zamknięcia zamiast kroków,
-  - **681** - zajęcia i lista oczekujących wyłączone, wizyty i wynajem otwarte,
+  - **681** - zajęcia i lista oczekujących wyłączone, wizyty, wynajem i stoliki
+    otwarte,
   - **682** - profil mówi „otwarte”, ale firma wyłącza cały kanał już po
-    wczytaniu strony: każdy zapis nowej rezerwacji dostaje 409
-    `CHANNEL_BOOKING_DISABLED` (tak odpowiada API przy wyłączonym kanale), a
-    kolejne pobranie profilu pokazuje kanał zamknięty,
+    wczytaniu strony: każdy zapis nowej rezerwacji (także stolika i listy
+    oczekujących na stolik) dostaje 409 `CHANNEL_BOOKING_DISABLED` (tak
+    odpowiada API przy wyłączonym kanale), a kolejne pobranie profilu pokazuje
+    kanał zamknięty,
   - **683** - profil mówi „otwarte”, ale firma wyłącza akcje pojedynczo: każdy
     zapis dostaje 409 `CHANNEL_ACTION_DISABLED`, a kolejne pobranie profilu
-    pokazuje zamkniętą tylko tę akcję.
+    pokazuje zamkniętą tylko tę akcję (stolik zamyka `book`, razem z wizytami).
 
 `scripts/mock-harness.html` przyjmuje te same dźwignie w adresie:
 `?business=680`, `?signedIn=1` (sesja bez kodu SMS), `?prefillClass=41`,
-`?prefillSession=901`, `?prefillService=1`, `?prefillResource=31`, `?prefillKind=rental`,
-`?onlyServices=1`.
+`?prefillSession=901`, `?prefillService=1`, `?prefillResource=31`, `?prefillKind=rental`
+(albo `table`), `?onlyServices=1`.
 
 ### Test na prawdziwym API
 

@@ -96,6 +96,13 @@ export const Info = ({ size = 18, ...p }: P) => (
 export const KeyRound = ({ size = 18, ...p }: P) => (
   <svg {...base(size)} {...p}><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" /><circle cx="16.5" cy="7.5" r=".5" /></svg>
 )
+// Stolik - sztućce, jak karta "Stolik" w aplikacji (lucide utensils).
+export const Utensils = ({ size = 18, ...p }: P) => (
+  <svg {...base(size)} {...p}><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2" /><path d="M7 2v20" /><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3Zm0 0v7" /></svg>
+)
+export const MapPin = ({ size = 18, ...p }: P) => (
+  <svg {...base(size)} {...p}><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0" /><circle cx="12" cy="10" r="3" /></svg>
+)
 export const Sparkles = ({ size = 18, ...p }: P) => (
   <svg {...base(size)} {...p}><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" /></svg>
 )

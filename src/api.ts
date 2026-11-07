@@ -8,6 +8,7 @@ import * as mock from './mock'
 import { zonedDay } from './dates'
 import type { PublicBookingChannels, WidgetChannel } from './channel'
 import type { EntryPoint } from './mountOptions'
+import type { TableDay, TableOptions } from './tables'
 
 export type Cfg = {
   apiBase: string
@@ -174,10 +175,14 @@ export type Business = {
   // Business-wide online booking switch, already folded to false for a business
   // without a serving plan (`bookingSuspended` says why).
   hasWebsiteReservationsEnabled?: boolean
+  // An expired plan: the API refuses every online booking.
   bookingSuspended?: boolean
   // Per-channel booking policy (#680); the widget reads its `widget` slice
   // through ./channel. Absent on an older API.
   bookingChannels?: PublicBookingChannels
+  // Modules the business runs (`resolveCapabilities` on the API). The "Stolik"
+  // family needs 'tables'; absent (older API) = no table booking.
+  capabilities?: string[]
 }
 
 // A named group of services (PRO -> kategorie usług). Fetched from a separate
@@ -1104,6 +1109,154 @@ export async function joinWaitlist(cfg: Cfg, p: WaitlistParams, token: string | 
     })
     const data = await r.json().catch(() => ({}))
     if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}` }
+    return { ok: true, data }
+  } catch {
+    return { ok: false, code: 'NETWORK' }
+  }
+}
+
+// ---- restaurant tables (vizyto #903 F11) ----------------------------------
+// The "Stolik" family: party -> day -> hour by service period, and the venue picks
+// the table. Every path lives under /tables and carries the site key; the reads
+// also send the Bearer, because the API runs the booking-access check with the
+// session viewer. A business outside the pilot answers 404 TABLES_NOT_AVAILABLE.
+
+export { tablesBookable } from './tables'
+export type { TableDay, TableOptions, TablePeriod, TableSlot, TableZone } from './tables'
+
+export type TableCountsResult = CountsResult & { gone: boolean }
+export type TableDayResult = { day: TableDay | null; restricted: boolean; gone: boolean }
+export type TableWriteResult =
+  | { ok: true; data: any }
+  | { ok: false; code: string; message?: string; details?: any }
+
+const tablesBase = (cfg: Cfg) => `${cfg.apiBase}/api/public/businesses/${cfg.businessId}/tables`
+
+const tablesGone = async (r: Response): Promise<boolean> => {
+  if (r.status !== 404) return false
+  const data = await r.json().catch(() => null)
+  return (data as any)?.code === 'TABLES_NOT_AVAILABLE'
+}
+
+/** Zones, confirmation mode and limits; null when it cannot be read (fail-soft). */
+export async function getTableOptions(cfg: Cfg, token?: string | null): Promise<TableOptions | null> {
+  if (cfg.mock) return mock.getTableOptions()
+  try {
+    const r = await fetch(`${tablesBase(cfg)}/options`, { headers: viewerHeaders(cfg, token) })
+    if (!r.ok) return null
+    const data = await r.json()
+    return data && Array.isArray(data.zones) ? (data as TableOptions) : null
+  } catch {
+    return null
+  }
+}
+
+/** Free starts per day for the party, over at most 31 days per call. */
+export async function getTableCounts(
+  cfg: Cfg,
+  p: { from: string; to: string; guests: number; zoneId?: number | null },
+  token?: string | null,
+): Promise<TableCountsResult> {
+  if (cfg.mock) return { counts: await mock.getTableCounts(p), restricted: false, gone: false }
+  try {
+    const q = new URLSearchParams({ from: p.from, to: p.to, guests: String(p.guests) })
+    if (p.zoneId != null) q.set('zoneId', String(p.zoneId))
+    const r = await fetch(`${tablesBase(cfg)}/availability-counts?${q.toString()}`, { headers: viewerHeaders(cfg, token) })
+    if (r.ok) return { counts: ((await r.json()) ?? {}) as DayCounts, restricted: false, gone: false }
+    if (r.status === 404) return { counts: {}, restricted: false, gone: await tablesGone(r) }
+    return { counts: {}, restricted: await isAccessRestricted(r), gone: false }
+  } catch {
+    return { counts: {}, restricted: false, gone: false }
+  }
+}
+
+/** The day's starts by service period; `day: null` without a flag = read error. */
+export async function getTableDay(
+  cfg: Cfg,
+  p: { date: string; guests: number; zoneId?: number | null },
+  token?: string | null,
+): Promise<TableDayResult> {
+  if (cfg.mock) return { day: await mock.getTableDay(p), restricted: false, gone: false }
+  try {
+    const q = new URLSearchParams({ date: p.date, guests: String(p.guests) })
+    if (p.zoneId != null) q.set('zoneId', String(p.zoneId))
+    const r = await fetch(`${tablesBase(cfg)}/availability?${q.toString()}`, { headers: viewerHeaders(cfg, token) })
+    if (r.ok) {
+      const data = await r.json().catch(() => null)
+      return { day: data && Array.isArray(data.periods) ? (data as TableDay) : null, restricted: false, gone: false }
+    }
+    if (r.status === 404) return { day: null, restricted: false, gone: await tablesGone(r) }
+    return { day: null, restricted: await isAccessRestricted(r), gone: false }
+  } catch {
+    return { day: null, restricted: false, gone: false }
+  }
+}
+
+/**
+ * Reserve a table. No `source`: the server picks the channel from the request (the
+ * site key = `widget`, vizyto.com's guest page = `website`) and refuses it under that
+ * channel's `book` action (409 CHANNEL_*). The three TABLE_* refusals carry the
+ * API's Polish `message`.
+ */
+export async function createTableReservation(
+  cfg: Cfg,
+  p: { bookedById: number; startAt: string; adults: number; children: number; zoneId?: number | null; notes?: string; idempotencyKey: string },
+  token: string | null,
+): Promise<TableWriteResult> {
+  if (cfg.mock) return mock.createTableReservation(p, token)
+  try {
+    const extra: Record<string, string> = { 'Idempotency-Key': p.idempotencyKey }
+    if (token) extra.authorization = `Bearer ${token}`
+    const r = await fetch(`${tablesBase(cfg)}/reservations`, {
+      method: 'POST',
+      headers: headers(cfg, extra),
+      body: JSON.stringify({
+        bookedById: p.bookedById,
+        startAt: p.startAt,
+        adults: p.adults,
+        children: p.children,
+        ...(p.zoneId != null ? { zoneId: p.zoneId } : {}),
+        ...(p.notes ? { notes: p.notes } : {}),
+      }),
+    })
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}`, message: typeof data?.message === 'string' ? data.message : undefined }
+    return { ok: true, data }
+  } catch {
+    return { ok: false, code: 'NETWORK' }
+  }
+}
+
+/** Wait for a table on one day. The only public way onto the table waitlist. */
+export async function joinTableWaitlist(
+  cfg: Cfg,
+  p: { bookedById: number; dateFrom: string; dateTo: string; partySize: number; zoneId?: number | null },
+  token: string | null,
+): Promise<TableWriteResult> {
+  if (cfg.mock) return mock.joinTableWaitlist(p, token)
+  try {
+    const r = await fetch(`${tablesBase(cfg)}/waitlist`, {
+      method: 'POST',
+      headers: headers(cfg, token ? { authorization: `Bearer ${token}` } : undefined),
+      body: JSON.stringify({
+        bookedById: p.bookedById,
+        dateFrom: p.dateFrom,
+        dateTo: p.dateTo,
+        partySize: p.partySize,
+        ...(p.zoneId != null ? { zoneId: p.zoneId } : {}),
+        // A website sign-up, as for the visit waitlist.
+        source: 'web',
+      }),
+    })
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok) {
+      return {
+        ok: false,
+        code: data?.code || `HTTP_${r.status}`,
+        message: typeof data?.message === 'string' ? data.message : undefined,
+        details: data?.details,
+      }
+    }
     return { ok: true, data }
   } catch {
     return { ok: false, code: 'NETWORK' }

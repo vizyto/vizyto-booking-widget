@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import type { Business, CartItem, CartItemTime, Cfg, DayCounts, GroupClass, GroupSession, OAuthProvider, OtpMode, PriceQuote, PromoBadges, PublicPromotionSummary, RentalDaySlots, Resource, Service, ServiceCategory, Slots } from './api'
+import type { Business, CartItem, CartItemTime, Cfg, DayCounts, GroupClass, GroupSession, OAuthProvider, OtpMode, PriceQuote, PromoBadges, PublicPromotionSummary, RentalDaySlots, Resource, Service, ServiceCategory, Slots, TableDay, TableOptions, TableSlot } from './api'
 import {
   addonNames,
   addonTotals,
@@ -12,6 +12,12 @@ import {
   createAppointment,
   checkRentalRange,
   createRental,
+  createTableReservation,
+  getTableCounts,
+  getTableDay,
+  getTableOptions,
+  joinTableWaitlist,
+  tablesBookable,
   fetchGroupClasses,
   fetchTimetable,
   getRentalCounts,
@@ -46,7 +52,23 @@ import {
   verifyGuestOtp,
   workerOffersService,
 } from './api'
-import { dayMonth, nextDays, rentalSlotStartIso, ymd, zonedIso } from './dates'
+import { dayMonth, fullDate, nextDays, rentalSlotStartIso, ymd, zonedIso } from './dates'
+import {
+  DEFAULT_ADULTS,
+  TABLE_CANCEL_RULE,
+  TABLE_SLOT_GONE,
+  childrenLine,
+  countsWindow,
+  holdRule,
+  partyGenitive,
+  partyRange,
+  tableErrorMessage,
+  tableIdempotencyKey,
+  tablePartyLabel,
+  tableWaitlistErrorMessage,
+} from './tables'
+import { StepTableParty } from './steps/StepTableParty'
+import { StepTableTime } from './steps/StepTableTime'
 import { StepClass, type ClassOption } from './steps/StepClass'
 import { StepSession } from './steps/StepSession'
 import { StepOffering, type OfferingKind } from './steps/StepOffering'
@@ -138,8 +160,12 @@ const positionsLabel = (n: number) => {
 const MAX_CART_ITEMS = 8
 type Phase = 'select' | 'identify' | 'login' | 'otp' | 'confirming' | 'done' | 'slotLost' | 'waitlist' | 'waitlistDone' | 'restricted' | 'closed'
 
-/** The policy action each offering family books under (#680). */
-const KIND_ACTION: Record<OfferingKind, CustomerAction> = { service: 'book', class: 'groupClasses', rental: 'rentals' }
+/**
+ * The policy action each offering family books under (#680). A table has no action
+ * of its own: the API creates it as a visit and checks `book`, and the monorepo's
+ * `publicTablesBookable` hides the family on the same switch.
+ */
+const KIND_ACTION: Record<OfferingKind, CustomerAction> = { service: 'book', class: 'groupClasses', rental: 'rentals', table: 'book' }
 
 /**
  * The closed state, per what is closed. `all` = nothing this business sells can be
@@ -166,11 +192,16 @@ const CLOSED_GOAL: Record<ClosedFor, string> = {
   cancel: 'Aby umówić termin',
 }
 /**
+ * A table books under `book`, but a guest who picked "Stolik" was not making an
+ * appointment: the closed state names the table instead.
+ */
+const CLOSED_TABLE = { title: 'Rezerwacje stolików online są teraz wyłączone', goal: 'Aby zarezerwować stolik' }
+/**
  * The steps INSIDE the 'select' phase, addressed by name rather than by index.
  * Which of them exist depends on the cart (the provider step disappears when
  * there is nothing to choose), so an index alone cannot say which step it is.
  */
-type SelStepId = 'offering' | 'service' | 'provider' | 'time' | 'class' | 'session' | 'rental' | 'rentalTime'
+type SelStepId = 'offering' | 'service' | 'provider' | 'time' | 'class' | 'session' | 'rental' | 'rentalTime' | 'tableParty' | 'tableTime'
 // Whether the identify/auth path finishes by booking a slot or joining a waitlist.
 type Intent = 'book' | 'waitlist'
 export type Auth = { userId: number; token: string | null }
@@ -397,6 +428,29 @@ export function BookingFlow({
   const [rentalSlots, setRentalSlots] = useState<RentalDaySlots | null>(null)
   const [rentalLoading, setRentalLoading] = useState(false)
   const [rentalRangeOk, setRentalRangeOk] = useState<boolean | null>(null)
+
+  // ---- restaurant tables (#903 F11) ---------------------------------------
+  // Offered only for a business in the tables pilot (strict, like the shared
+  // publicTablesBookable). The party, zone and picked start are the family's own;
+  // the day reuses the flow's `date`, like the rental branch.
+  const tablesOn = useMemo(() => tablesBookable(business), [business])
+  // The API answered 404 TABLES_NOT_AVAILABLE (pilot switched off after load).
+  const [tableGone, setTableGone] = useState(false)
+  const [tableAdults, setTableAdults] = useState(DEFAULT_ADULTS)
+  const [tableChildren, setTableChildren] = useState(0)
+  const [tableZoneId, setTableZoneId] = useState<number | null>(null)
+  // undefined = not read yet, null = the read failed (limits 10/4, no zone chips).
+  const [tableOptions, setTableOptions] = useState<TableOptions | null | undefined>(undefined)
+  const [tableCounts, setTableCounts] = useState<DayCounts>({})
+  const [tableCountsReady, setTableCountsReady] = useState(false)
+  const [tableDay, setTableDay] = useState<TableDay | null>(null)
+  const [tableLoading, setTableLoading] = useState(false)
+  const [tableErr, setTableErr] = useState(false)
+  const [tableSlot, setTableSlot] = useState<TableSlot | null>(null)
+  // The empty-day waitlist runs through the same identify path as a booking.
+  const [tableWl, setTableWl] = useState(false)
+  const [tableNotice, setTableNotice] = useState<{ title: string; text: string } | null>(null)
+  const guests = tableAdults + tableChildren
   // isCustomerSelectable is what the business uses to keep somebody off the
   // public picker. The per-service helpers honour it, so the cart-wide list has
   // to as well - otherwise the same person is offered on one screen and hidden
@@ -558,8 +612,11 @@ export function BookingFlow({
     if (hasServices) out.push('service')
     if (mayHaveClasses) out.push('class')
     if (hasRentals) out.push('rental')
+    // Last, so a mixed business reads as before. When the API says the pilot is
+    // off, the card goes - unless it was the only family, which then explains why.
+    if (tablesOn && !(tableGone && out.length > 0)) out.push('table')
     return out
-  }, [hasServices, mayHaveClasses, hasRentals])
+  }, [hasServices, mayHaveClasses, hasRentals, tablesOn, tableGone])
 
   /**
    * Per-channel booking policy (#680). The widget books in `cfg.channel`
@@ -607,6 +664,8 @@ export function BookingFlow({
    */
   const selectSteps = useMemo<SelStepId[]>(() => {
     if (effKind === 'class') return ['class', 'session']
+    // The summary lives on the identify step, as in every other family.
+    if (effKind === 'table') return ['tableParty', 'tableTime']
     // A single rentable offer needs no catalog step - the customer already chose
     // by opening the widget on a page that rents one thing.
     if (effKind === 'rental') return rentalOptions.length > 1 ? ['rental', 'rentalTime'] : ['rentalTime']
@@ -622,6 +681,8 @@ export function BookingFlow({
     session: 'WYBÓR TERMINU',
     rental: 'WYBÓR PRZEDMIOTU',
     rentalTime: 'WYBÓR TERMINU',
+    tableParty: 'LICZBA OSÓB',
+    tableTime: 'WYBÓR TERMINU',
   }
   const stepNames = [...selectSteps.map((id) => STEP_LABEL[id]), 'TWOJE DANE']
   const totalSteps = stepNames.length
@@ -678,6 +739,11 @@ export function BookingFlow({
       return prefill?.classId != null || prefill?.sessionId != null ? 'session' : 'class'
     }
     if (needsOfferingStep) return 'offering'
+    // A venue that only takes tables opens on the party, like a rentals-only one.
+    if (!initialServiceRef && kinds.length === 1 && kinds[0] === 'table') return 'tableParty'
+    // Before the rental branch: an explicit `kind: 'table'` wins over a `resourceId`
+    // that happens to name a rentable, as it does in `askedKind`.
+    if (prefill?.kind === 'table') return 'tableParty'
     if (prefill?.kind === 'rental' || initialRental) {
       // Trafiony prefill egzemplarza przeskakuje listę - tak samo jak klik
       // w termin zajęć przeskakuje wybór kursu.
@@ -1176,6 +1242,68 @@ export function BookingFlow({
     return () => { cancelled = true }
   }, [effKind, rentalPick, date, rentalUnits, rentalSlots?.mode, refetch])
 
+  /**
+   * Restaurant tables (#903 F11). The options (zones, limits, confirmation mode) are
+   * read once when the family opens; the counts and the day only on the time step,
+   * so tapping through the party pills costs no requests (counts: 30/min per IP).
+   */
+  useEffect(() => {
+    if (effKind !== 'table' || tableOptions !== undefined) return
+    let cancelled = false
+    getTableOptions(cfg, auth?.token).then((o) => {
+      if (cancelled) return
+      setTableOptions(o)
+      if (!o) return
+      // Into the venue's own limits, and drop a zone it no longer offers.
+      const { maxAdults, maxChildren } = partyRange(o)
+      setTableAdults((n) => Math.min(n, maxAdults))
+      setTableChildren((n) => Math.min(n, maxChildren))
+      setTableZoneId((z) => (z != null && o.zones.length >= 2 && o.zones.some((x) => x.id === z) ? z : null))
+    })
+    return () => { cancelled = true }
+  }, [effKind, tableOptions])
+
+  const onTableTime = effKind === 'table' && stepId === 'tableTime' && !tableGone
+  useEffect(() => {
+    if (!onTableTime) return
+    let cancelled = false
+    setTableCountsReady(false)
+    // The API takes at most 31 days per call, so the 42-day strip is two calls.
+    Promise.all(
+      countsWindow(days).map((w) => getTableCounts(cfg, { ...w, guests, zoneId: tableZoneId }, auth?.token)),
+    ).then((rs) => {
+      if (cancelled) return
+      if (rs.some((r) => r.gone)) { dropTables(); return }
+      setTableCounts(Object.assign({}, ...rs.map((r) => r.counts)))
+      if (rs.some((r) => r.restricted)) setCalRestricted(true)
+      setTableCountsReady(true)
+    })
+    return () => { cancelled = true }
+  }, [onTableTime, guests, tableZoneId, auth?.token, refetch])
+
+  // Seed the first day with a free start (today otherwise), once the counts land.
+  useEffect(() => {
+    if (!onTableTime || date || !tableCountsReady) return
+    const seed = days.find((d) => (tableCounts[d] ?? 0) > 0) ?? days[0]
+    if (seed) setDate(seed)
+  }, [onTableTime, date, tableCountsReady, tableCounts])
+
+  useEffect(() => {
+    if (!onTableTime || !date) return
+    let cancelled = false
+    setTableLoading(true)
+    setTableErr(false)
+    getTableDay(cfg, { date, guests, zoneId: tableZoneId }, auth?.token).then((r) => {
+      if (cancelled) return
+      setTableLoading(false)
+      if (r.gone) { dropTables(); return }
+      if (r.restricted) { setTableDay(null); setCalRestricted(true); return }
+      setTableDay(r.day)
+      setTableErr(!r.day)
+    })
+    return () => { cancelled = true }
+  }, [onTableTime, date, guests, tableZoneId, refetch, auth?.token])
+
   // The chosen start is the first moment the server can own the complete price.
   // Every input that can change it invalidates the old answer; route failures
   // simply leave quote null, preserving the legacy local-price flow.
@@ -1309,7 +1437,10 @@ export function BookingFlow({
 
   /** First numbered step of a family - used by the fork and by restart(). */
   const firstStepOf = (k: OfferingKind): SelStepId =>
-    k === 'class' ? 'class' : k === 'rental' ? (rentalOptions.length > 1 ? 'rental' : 'rentalTime') : 'service'
+    k === 'class' ? 'class'
+      : k === 'rental' ? (rentalOptions.length > 1 ? 'rental' : 'rentalTime')
+        : k === 'table' ? 'tableParty'
+          : 'service'
 
   /**
    * Is the rental answer complete? Slot mode needs a picked hour; range mode needs
@@ -1449,6 +1580,192 @@ export function BookingFlow({
     setStepId('rentalTime')
     setPhase('select')
     emit('booking_failed', { ...ctx, code: r.code, reason: 'rental_refused' })
+  }
+
+  // ---- restaurant tables: summary, create, waitlist (#903 F11) ----
+  const tableZoneName = tableZoneId != null ? tableOptions?.zones.find((z) => z.id === tableZoneId)?.name ?? null : null
+  const tablePartyValue = `${tablePartyLabel(guests)}${tableChildren > 0 ? `, ${childrenLine(tableChildren)}` : ''}`
+  const tableDayLabel = date ? (() => { const f = fullDate(date); return f.charAt(0).toUpperCase() + f.slice(1) })() : ''
+  // No price row anywhere: a table costs nothing.
+  const tableSummaryRows: SummaryRow[] = [
+    { label: 'Liczba osób', value: tablePartyValue },
+    ...(tableSlot && date ? [{ label: 'Termin', value: `${tableDayLabel}, godz. ${tableSlot.time}` }] : []),
+    ...(tableDay ? [{ label: 'Czas przy stoliku', value: formatDuration(tableDay.durationMinutes) }] : []),
+    { label: 'Stolik', value: tableZoneName ? `Lokal dobierze stolik, strefa: ${tableZoneName}` : 'Lokal dobierze stolik' },
+  ]
+  const tableWaitlistSummary: SummaryRow[] = [
+    { label: 'Lista oczekujących', value: tableDayLabel },
+    { label: 'Liczba osób', value: tablePartyValue },
+    ...(tableZoneName ? [{ label: 'Strefa', value: tableZoneName }] : []),
+  ]
+  // Event context of a table reservation. No PII, as everywhere.
+  const tableCtx = () => ({
+    table: true,
+    businessId: business.id,
+    partySize: guests,
+    adults: tableAdults,
+    children: tableChildren,
+    zoneId: tableZoneId,
+    date,
+    time: tableSlot?.time ?? '',
+    startAt: tableSlot?.startAt ?? '',
+  })
+
+  /**
+   * The API says the business is out of the tables pilot (404 TABLES_NOT_AVAILABLE):
+   * drop the family and send the customer back to the fork, or keep the step with an
+   * explanation when the table was all this business offered.
+   */
+  function dropTables() {
+    setTableGone(true)
+    setTableSlot(null)
+    setTableDay(null)
+    const others = kinds.filter((k) => k !== 'table')
+    if (others.length === 0) return
+    setKind(null)
+    setStepId(others.length > 1 ? 'offering' : firstStepOf(others[0]!))
+  }
+
+  /**
+   * Reserve a table - the fourth create path, a sibling of reserveRental(). What it
+   * shares is the envelope (site key, Bearer, bookedById, Idempotency-Key, the "verify
+   * your phone" detour); the refusals are its own and lead back to the hours.
+   */
+  async function reserveTable(a: Auth) {
+    if (!tableSlot || booking.current) return
+    booking.current = true
+    setBookingErr('')
+    setTableNotice(null)
+    setPriceChanged(false)
+    setPhase('confirming')
+    const ctx = tableCtx()
+    emit('booking_submitted', { ...ctx, userId: a.userId })
+    const r = await createTableReservation(
+      cfg,
+      {
+        bookedById: a.userId,
+        startAt: tableSlot.startAt,
+        adults: tableAdults,
+        children: tableChildren,
+        zoneId: tableZoneId,
+        notes: notes.trim() || undefined,
+        idempotencyKey: tableIdempotencyKey({
+          businessId: business.id,
+          startAt: tableSlot.startAt,
+          adults: tableAdults,
+          children: tableChildren,
+          zoneId: tableZoneId,
+          userId: a.userId,
+        }),
+      },
+      a.token,
+    )
+    booking.current = false
+    if (r.ok) {
+      setBookedStatus(r.data?.status ?? 'confirmed')
+      setPhase('done')
+      emit('booking_completed', { ...ctx, userId: a.userId, appointmentId: r.data?.id ?? null, value: 0, currency: 'PLN' })
+      return
+    }
+    if (r.code === 'BOOKED_BY_MISMATCH' || r.code === 'VERIFICATION_REQUIRED' || r.code === 'PHONE_VERIFICATION_REQUIRED') {
+      setAuth(null)
+      setIdentifyErr('Potwierdź numer telefonu, aby dokończyć rezerwację.')
+      setPhase('identify')
+      emit('booking_failed', { ...ctx, code: r.code, reason: 'verification_required' })
+      return
+    }
+    if (r.code === 'BOOKING_ACCESS_RESTRICTED') {
+      setPhase('restricted')
+      emit('booking_access_denied', { userId: a.userId, serviceId: null, stage: 'create', table: true })
+      emit('booking_failed', { ...ctx, code: r.code, reason: 'access_restricted' })
+      return
+    }
+    // The venue stopped taking bookings in this channel after the page loaded (#680):
+    // the closed state, never "pick another hour". A table books under `book`.
+    if (classifyWriteFailure(r) === 'channel_closed') {
+      closeChannel('book', r.code, ctx)
+      return
+    }
+    if (r.code === 'NETWORK') {
+      setBookingErr('Brak połączenia. Spróbuj ponownie.')
+      emit('booking_failed', { ...ctx, code: r.code, reason: 'network' })
+      return
+    }
+    if (r.code === 'TABLES_NOT_AVAILABLE') {
+      setPhase('select')
+      dropTables()
+      emit('booking_failed', { ...ctx, code: r.code, reason: 'table_refused' })
+      return
+    }
+    // A zone the venue closed meanwhile: back to "any zone" (and fresh options).
+    if (r.code === 'TABLE_ZONE_NOT_FOUND') {
+      setTableZoneId(null)
+      setTableOptions(undefined)
+    }
+    // Back to the hours with the reason named: the hour is what has to change.
+    setBookingErr(tableErrorMessage(r.code, r.message))
+    setTableSlot(null)
+    setRefetch((x) => x + 1)
+    setStepId('tableTime')
+    setPhase('select')
+    const gone = TABLE_SLOT_GONE.has(r.code)
+    if (gone) emit('slot_lost', { ...ctx, code: r.code })
+    emit('booking_failed', { ...ctx, code: r.code, reason: gone ? 'slot_lost' : 'table_refused' })
+  }
+
+  /** "Powiadom mnie" on an empty day: one day, no time window, no form. */
+  function startTableWaitlist() {
+    if (!date) return
+    setIntent('waitlist')
+    setTableWl(true)
+    setTableNotice(null)
+    setBookingErr('')
+    emit('waitlist_started', { table: true, partySize: guests, zoneId: tableZoneId, date })
+    if (auth) void submitTableWaitlist(auth)
+    else {
+      emit('details_started', { table: true, waitlist: true, partySize: guests, zoneId: tableZoneId })
+      setPhase('identify')
+    }
+  }
+
+  async function submitTableWaitlist(a: Auth) {
+    if (!date || wlBusy) return
+    setWlBusy(true)
+    const ctx = { table: true, partySize: guests, zoneId: tableZoneId, dateFrom: date, dateTo: date }
+    const r = await joinTableWaitlist(cfg, { bookedById: a.userId, dateFrom: date, dateTo: date, partySize: guests, zoneId: tableZoneId }, a.token)
+    setWlBusy(false)
+    if (r.ok) {
+      setPhase('waitlistDone')
+      emit('waitlist_joined', ctx)
+      return
+    }
+    emit('waitlist_failed', { ...ctx, code: r.code })
+    if (r.code === 'BOOKED_BY_MISMATCH' || r.code === 'VERIFICATION_REQUIRED' || r.code === 'PHONE_VERIFICATION_REQUIRED') {
+      setAuth(null)
+      setIdentifyErr('Potwierdź numer telefonu, aby zapisać się na listę.')
+      setPhase('identify')
+      return
+    }
+    // The waitlist (or the whole channel) closed after the page loaded (#680).
+    if (classifyWriteFailure(r) === 'channel_closed') {
+      closeChannel('waitlist', r.code, ctx)
+      return
+    }
+    // Every other answer ends the sign-up and leaves the customer on the hours.
+    setIntent('book')
+    setTableWl(false)
+    setStepId('tableTime')
+    setPhase('select')
+    if (r.code === 'WAITLIST_SLOTS_AVAILABLE') {
+      // A table came free meanwhile: show that day's hours instead of a pointless sign-up.
+      const freeDay = typeof r.details?.date === 'string' ? r.details.date : date
+      setDate(freeDay)
+      setTableSlot(null)
+      setRefetch((x) => x + 1)
+      setTableNotice({ title: 'Wolny stolik', text: 'W tym dniu zwolnił się stolik. Wybierz godzinę.' })
+      return
+    }
+    setTableNotice({ title: 'Lista oczekujących', text: tableWaitlistErrorMessage(r.code) })
   }
 
   /**
@@ -1853,8 +2170,11 @@ export function BookingFlow({
   // A failed new route returns null and the booking proceeds without
   // expectedTotal, exactly like a widget released before promotions.
   async function complete(a: Auth) {
-    if (intent === 'waitlist') void submitWaitlist(a)
-    else if (effKind === 'class') {
+    if (intent === 'waitlist') void (tableWl ? submitTableWaitlist(a) : submitWaitlist(a))
+    else if (effKind === 'table') {
+      if (tableSlot) void reserveTable(a)
+      else setPhase('select')
+    } else if (effKind === 'class') {
       if (chosenSession) void register(a, chosenSession.id)
       else setPhase('select')
     } else if (effKind === 'rental') {
@@ -1874,6 +2194,7 @@ export function BookingFlow({
     if (!auth) return
     if (effKind === 'class' && chosenSession) void register(auth, chosenSession.id, quote)
     else if (effKind === 'rental') void reserveRental(auth, quote)
+    else if (effKind === 'table') void reserveTable(auth)
     else void book(auth, slotKey, quote)
   }
 
@@ -1981,13 +2302,22 @@ export function BookingFlow({
   const closedExit: { label: string; go: () => void } | null = (() => {
     if (phase !== 'closed' || !closedFor || closedFor === 'all') return null
     if (closedFor === 'waitlist') {
-      if (!kinds.includes('service')) return null
-      return { label: 'Wróć do kalendarza', go: () => { setIntent('book'); setClosedFor(null); setStepId('time'); setPhase('select') } }
+      // The table waitlist leads back to the table hours, the visit one to the calendar.
+      const table = tableWl
+      if (!kinds.includes(table ? 'table' : 'service')) return null
+      return {
+        label: 'Wróć do kalendarza',
+        go: () => { setIntent('book'); setTableWl(false); setClosedFor(null); setStepId(table ? 'tableTime' : 'time'); setPhase('select') },
+      }
     }
     if (kinds.length === 0) return null
     const only = kinds.length === 1 ? kinds[0]! : null
     return {
-      label: only === 'service' ? 'Przejdź do wizyt' : only === 'class' ? 'Przejdź do zajęć' : only === 'rental' ? 'Przejdź do wynajmu' : 'Wybierz, co zarezerwować',
+      label: only === 'service' ? 'Przejdź do wizyt'
+        : only === 'class' ? 'Przejdź do zajęć'
+          : only === 'rental' ? 'Przejdź do wynajmu'
+            : only === 'table' ? 'Przejdź do rezerwacji stolika'
+              : 'Wybierz, co zarezerwować',
       go: () => {
         setClosedFor(null)
         setBookingErr('')
@@ -1997,6 +2327,8 @@ export function BookingFlow({
       },
     }
   })()
+  // `kind`, not effKind: once `book` closes, the table leaves `kinds` and effKind moves on.
+  const closedTable = closedFor === 'book' && kind === 'table'
 
   // Open the waitlist form for the selected service/day. The sign-up needs an
   // authenticated user, which the identify/OTP path supplies at submit time.
@@ -2195,7 +2527,22 @@ export function BookingFlow({
     if (stepId === 'offering') {
       // The gate answers itself on tap; "Dalej" is only a fallback for keyboard
       // users who selected without activating.
-      if (kind) setStepId(kind === 'class' ? 'class' : 'service')
+      if (kind) setStepId(firstStepOf(kind))
+      return
+    }
+    if (stepId === 'tableParty') {
+      setStepId('tableTime')
+      return
+    }
+    if (stepId === 'tableTime') {
+      if (!tableSlot) return
+      setIntent('book')
+      setTableWl(false)
+      if (auth) void reserveTable(auth)
+      else {
+        emit('details_started', { table: true, partySize: guests, zoneId: tableZoneId })
+        setPhase('identify')
+      }
       return
     }
     if (stepId === 'rental') {
@@ -2256,13 +2603,15 @@ export function BookingFlow({
 
   // ---- back (rendered in the panel header) ----
   const backFn: (() => void) | null = (() => {
+    // The table waitlist has no form phase: back from its identify is the hours.
+    if (phase === 'identify' && tableWl) return () => { setTableWl(false); setIntent('book'); setPhase('select') }
     if (phase === 'identify') return () => setPhase(intent === 'waitlist' ? 'waitlist' : 'select')
     if (phase === 'waitlist') return () => { setWlErr(''); setIntent('book'); setStepId('time'); setPhase('select') }
     if (phase === 'login') return () => { setLoginErr(''); setPhase('identify') }
     if (phase === 'otp') return () => { setOtpErr(''); setPhase('identify') }
     if (phase === 'slotLost') return () => recoverSlot()
     // Back to the service list - other services may still be bookable for this viewer.
-    if (phase === 'restricted') return () => { setStepId('service'); setPhase('select') }
+    if (phase === 'restricted') return () => { setStepId(firstStepOf(effKind)); setPhase('select') }
     // Closed: back leads to whatever is still open, otherwise it closes (launcher).
     if (phase === 'closed') return closedExit?.go ?? onClose ?? null
     if (phase === 'select') {
@@ -2276,6 +2625,8 @@ export function BookingFlow({
       if (prev) return () => setStepId(prev)
       // First step of a family: go back to the fork when there was one, otherwise
       // close. Without this a mixed business had no way to change its mind.
+      // Any business with a fork (it used to be only services + classes, which left
+      // a rental or table customer no way back to it).
       if (stepId !== 'offering' && kinds.length > 1) {
         return () => { setKind(null); setStepId('offering') }
       }
@@ -2473,7 +2824,7 @@ export function BookingFlow({
     setCartNotice(null)
     setDate('')
     setSlotKey('')
-    setStepId('service')
+    setStepId(firstStepOf(kinds[0] ?? 'service'))
     // Availability left over from the FINISHED booking used to survive "Nowa
     // rezerwacja" - most visible inline, where that button is the only way out:
     // the day pills painted green for a cart that no longer existed. The details
@@ -2501,6 +2852,17 @@ export function BookingFlow({
     setRentalRangeOk(null)
     setAppointmentBadges(null)
     setRentalBadges(null)
+    setTableAdults(DEFAULT_ADULTS)
+    setTableChildren(0)
+    setTableZoneId(null)
+    setTableCounts({})
+    setTableCountsReady(false)
+    setTableDay(null)
+    setTableLoading(false)
+    setTableErr(false)
+    setTableSlot(null)
+    setTableWl(false)
+    setTableNotice(null)
     setQuote(null)
     setPriceChanged(false)
     if (kinds.length > 1) { setKind(null); setStepId('offering') }
@@ -2531,7 +2893,7 @@ export function BookingFlow({
 
   // The visible step index IS the position in the list of existing steps, so the
   // collapsing of an absent provider step needs no special case any more.
-  const termIdx = selectSteps.indexOf('time')
+  const termIdx = Math.max(selectSteps.indexOf('time'), selectSteps.indexOf('rentalTime'), selectSteps.indexOf('tableTime'))
   const progStep =
     phase === 'select'
       ? Math.max(stepIndex, 0)
@@ -2539,10 +2901,14 @@ export function BookingFlow({
         ? termIdx
         : totalSteps - 1
   const showCta = phase === 'select' && !configuring && !detailsService
+  // Notes belong to a booking with a chosen term - not to a waitlist sign-up or an
+  // access-check login. A table's term is its picked start, not a slot key.
+  const notesOn = intent === 'book' && (effKind === 'table' ? !!tableSlot : !!slotKey)
+  const tableTermsOn = effKind === 'table' && intent === 'book' && !!tableSlot
   // Whitelist banner on the selection phases: only for an unconfirmed viewer,
   // and not while the calendar already shows its own dedicated login prompt.
   const showAccessBanner =
-    business.bookingAccess?.policy === 'restricted' && !accessOk && !auth && phase === 'select' && !(stepId === 'time' && calRestricted)
+    business.bookingAccess?.policy === 'restricted' && !accessOk && !auth && phase === 'select' && !((stepId === 'time' || stepId === 'tableTime') && calRestricted)
   // tel: link for the restricted screen (spaces/dashes stripped).
   const businessPhone = business.phone?.trim() || ''
   // The provider question is answered when every position carries an answer: in
@@ -2559,6 +2925,8 @@ export function BookingFlow({
     stepId === 'offering' ? kind != null
       : stepId === 'rental' ? !!rentalPick
         : stepId === 'rentalTime' ? rentalReady
+          : stepId === 'tableParty' ? !tableGone
+            : stepId === 'tableTime' ? !!tableSlot && !tableGone
           : stepId === 'class' ? !!classPick
         : stepId === 'session' ? !!chosenSession
           : stepId === 'service' ? cartValid
@@ -2584,7 +2952,9 @@ export function BookingFlow({
         ? 'Zarezerwuj przedmiot'
         : effKind === 'class'
           ? 'Zapisz się na zajęcia'
-          : 'Zarezerwuj wizytę'
+          : effKind === 'table'
+            ? 'Zarezerwuj stolik'
+            : 'Zarezerwuj wizytę'
 
   return (
     <div class="vz-panel" role="dialog" aria-modal={onClose ? 'true' : undefined} aria-label={panelTitle}>
@@ -2653,12 +3023,62 @@ export function BookingFlow({
         {phase === 'select' && stepId === 'offering' && (
           <StepOffering
             selected={kind}
-            onPick={(k) => { setKind(k); setStepId(firstStepOf(k)) }}
+            onPick={(k) => {
+              setKind(k)
+              // A day picked in another family says nothing about free tables:
+              // the table branch seeds its own from the counts.
+              if (k === 'table') { setDate(''); setTableSlot(null) }
+              setStepId(firstStepOf(k))
+            }}
             kinds={kinds}
             serviceLabel="Wizyta indywidualna"
             classLabel="Zajęcia grupowe"
             rentalLabel="Wynajem"
+            tableLabel="Stolik"
           />
+        )}
+        {phase === 'select' && tableGone && (
+          <Notice title="Rezerwacja stolika">Ten lokal nie przyjmuje rezerwacji stolików.</Notice>
+        )}
+        {phase === 'select' && stepId === 'tableParty' && !tableGone && (
+          <StepTableParty
+            options={tableOptions}
+            adults={tableAdults}
+            children={tableChildren}
+            zoneId={tableZoneId}
+            // The party and the zone change which hours exist: a picked start goes.
+            onAdults={(n) => { setBookingErr(''); setTableNotice(null); setTableAdults(n); setTableSlot(null) }}
+            onChildren={(n) => { setBookingErr(''); setTableNotice(null); setTableChildren(n); setTableSlot(null) }}
+            onZone={(z) => { setBookingErr(''); setTableNotice(null); setTableZoneId(z); setTableSlot(null) }}
+          />
+        )}
+        {phase === 'select' && stepId === 'tableTime' && !tableGone && !calRestricted && (
+          <>
+            {bookingErr && <Notice title="Nie udało się zarezerwować">{bookingErr}</Notice>}
+            {tableNotice && <Notice title={tableNotice.title}>{tableNotice.text}</Notice>}
+            <StepTableTime
+              days={days}
+              counts={tableCounts}
+              date={date}
+              onPickDate={(d) => { setBookingErr(''); setTableNotice(null); setDate(d); setTableSlot(null) }}
+              day={tableDay}
+              loading={tableLoading || (!date && !tableCountsReady)}
+              error={tableErr}
+              onRetry={() => setRefetch((x) => x + 1)}
+              selectedStartAt={tableSlot?.startAt ?? null}
+              onPickSlot={(startAt) => {
+                const slot = tableDay?.periods.flatMap((p) => p.slots).find((x) => x.startAt === startAt) ?? null
+                setBookingErr('')
+                setTableNotice(null)
+                setTableSlot(slot)
+                if (slot) emit('datetime_selected', { table: true, partySize: guests, zoneId: tableZoneId, date, time: slot.time, startDate: slot.startAt })
+              }}
+              // The waitlist is its own channel action (#680), for tables as for visits.
+              canWaitlist={business.waitlistEnabled !== false && allows('waitlist')}
+              onWaitlist={startTableWaitlist}
+              waitlistBusy={wlBusy}
+            />
+          </>
         )}
         {phase === 'select' && stepId === 'rental' && (
           <StepRentalItem
@@ -2771,14 +3191,16 @@ export function BookingFlow({
             promotionSummary={promotionSummary}
           />
         )}
-        {phase === 'select' && !configuring && stepId === 'time' && lines.length > 0 && calRestricted && (
+        {phase === 'select' && !configuring && ((stepId === 'time' && lines.length > 0) || (stepId === 'tableTime' && !tableGone)) && calRestricted && (
           // Availability answered BOOKING_ACCESS_RESTRICTED for this (anonymous)
           // viewer - invite a login instead of rendering an empty calendar.
           <div class="vz-fade-in" style="text-align:center;padding:8px 0;">
             <div class="vz-check warn"><Lock size={26} /></div>
-            <div class="vz-done-title" style="font-size:18px;">Usługa dla stałych klientów</div>
+            <div class="vz-done-title" style="font-size:18px;">{stepId === 'tableTime' ? 'Rezerwacje dla stałych gości' : 'Usługa dla stałych klientów'}</div>
             <p class="vz-lead" style="margin-top:8px;">
-              Ten salon udostępnia rezerwacje online wybranym klientom. Zaloguj się numerem telefonu, aby sprawdzić swój dostęp.
+              {stepId === 'tableTime'
+                ? 'Ten lokal udostępnia rezerwacje online wybranym gościom. Zaloguj się numerem telefonu, aby sprawdzić swój dostęp.'
+                : 'Ten salon udostępnia rezerwacje online wybranym klientom. Zaloguj się numerem telefonu, aby sprawdzić swój dostęp.'}
             </p>
             <button class="vz-btn mt" onClick={goAccessLogin} type="button">Zaloguj się</button>
           </div>
@@ -2849,7 +3271,8 @@ export function BookingFlow({
             // Access-check login (no slot picked yet): no summary and no notes -
             // the user is only confirming who they are.
             summary={
-              intent === 'waitlist' ? waitlistSummary
+              intent === 'waitlist' ? (tableWl ? tableWaitlistSummary : waitlistSummary)
+                : effKind === 'table' ? (tableSlot ? tableSummaryRows : [])
                 : effKind === 'class' ? classSummaryRows
                   : effKind === 'rental' ? rentalSummaryRows
                     : slotKey ? summaryRows : []
@@ -2857,8 +3280,24 @@ export function BookingFlow({
             quote={intent === 'book' ? quote : null}
             contact={contact}
             onChange={onContactChange}
-            notes={intent === 'waitlist' || !slotKey ? undefined : notes}
-            onNotes={intent === 'waitlist' || !slotKey ? undefined : setNotes}
+            notes={notesOn ? notes : undefined}
+            onNotes={notesOn ? setNotes : undefined}
+            notesLabel={effKind === 'table' ? 'Uwagi dla lokalu (opcjonalnie)' : undefined}
+            notesPlaceholder={effKind === 'table' ? 'Np. krzesełko dla dziecka, okazja, alergie' : undefined}
+            // A table's own rules, where a visit shows its cancellation window.
+            terms={tableTermsOn ? (
+              <>
+                {tableOptions?.confirmationMode === 'manual' && <Notice title="Lokal potwierdzi rezerwację" tone="plain" />}
+                <Notice title="Zasady rezerwacji" tone="plain">
+                  {tableOptions ? `${holdRule(tableOptions.lateAfterMinutes)} ` : ''}{TABLE_CANCEL_RULE}
+                </Notice>
+                {business.bookingPolicy?.importantInfo?.trim() && (
+                  <Notice title="Ważne informacje" tone="plain">
+                    <span class="vz-notice-pre">{business.bookingPolicy.importantInfo.trim()}</span>
+                  </Notice>
+                )}
+              </>
+            ) : undefined}
             // Terms belong to a booking; a waitlist sign-up and an access-check
             // login are not the moment to state a cancellation window.
             policy={intent === 'book' && slotKey ? cartPolicy : undefined}
@@ -2926,7 +3365,7 @@ export function BookingFlow({
               <button class="vz-btn mt" onClick={retryBooking} type="button">Spróbuj ponownie</button>
             </div>
           ) : (
-            <div class="vz-center" style="flex-direction:column;gap:14px;"><Spinner /> Rezerwuję Twoją wizytę…</div>
+            <div class="vz-center" style="flex-direction:column;gap:14px;"><Spinner /> {effKind === 'table' ? 'Rezerwuję stolik…' : 'Rezerwuję Twoją wizytę…'}</div>
           ))}
         {phase === 'slotLost' && (
           <div class="vz-fade-in" style="text-align:center;padding:8px 0;">
@@ -2949,10 +3388,10 @@ export function BookingFlow({
             )}
             <button
               class={`vz-btn${businessPhone ? ' ghost' : ' mt'}`}
-              onClick={() => { setStepId('service'); setPhase('select') }}
+              onClick={() => { setStepId(firstStepOf(effKind)); setPhase('select') }}
               type="button"
             >
-              Wróć do usług
+              {effKind === 'table' ? 'Wróć' : 'Wróć do usług'}
             </button>
           </div>
         )}
@@ -2961,11 +3400,11 @@ export function BookingFlow({
           // book is the phone (never discouraged) or what else stays open.
           <div class="vz-fade-in" style="text-align:center;padding:8px 0;" role="status">
             <div class="vz-check calm"><CalendarDays size={26} /></div>
-            <div class="vz-done-title" style="font-size:18px;">{CLOSED_TITLE[closedFor]}</div>
+            <div class="vz-done-title" style="font-size:18px;">{closedTable ? CLOSED_TABLE.title : CLOSED_TITLE[closedFor]}</div>
             <p class="vz-lead" style="margin-top:8px;">
               {closedFor === 'waitlist' && closedExit
                 ? `Wybierz inny wolny termin w kalendarzu${businessPhone ? ' albo zadzwoń do firmy' : ''}.`
-                : `${CLOSED_GOAL[closedFor]}, ${businessPhone ? 'zadzwoń do firmy' : 'skontaktuj się bezpośrednio z firmą'}.`}
+                : `${closedTable ? CLOSED_TABLE.goal : CLOSED_GOAL[closedFor]}, ${businessPhone ? 'zadzwoń do firmy' : 'skontaktuj się bezpośrednio z firmą'}.`}
             </p>
             {businessPhone && (
               <a class="vz-btn mt" href={`tel:${businessPhone.replace(/[\s\-()]/g, '')}`}>
@@ -2981,11 +3420,11 @@ export function BookingFlow({
         )}
         {phase === 'done' && (
           <StepDone
-            rows={effKind === 'class' ? classSummaryRows : effKind === 'rental' ? rentalSummaryRows : summaryRows}
+            rows={effKind === 'class' ? classSummaryRows : effKind === 'rental' ? rentalSummaryRows : effKind === 'table' ? tableSummaryRows : summaryRows}
             quote={quote}
             status={bookedStatus}
             email={contact.email}
-            kind={effKind === 'rental' ? 'rental' : effKind}
+            kind={effKind}
             onClose={onClose}
             onRestart={restart}
           />
@@ -2995,9 +3434,13 @@ export function BookingFlow({
             <div class="vz-check"><Bell size={28} /></div>
             <div class="vz-done-title">Jesteś na liście!</div>
             <div class="vz-done-sub">
-              Damy Ci znać SMS-em{contact.email ? ' i e-mailem' : ''}, gdy tylko zwolni się pasujący termin usługi <b style="color:var(--vz-text)">{waitlistLine?.service.name}</b>.
+              {tableWl ? (
+                <>Damy Ci znać SMS-em{contact.email ? ' i e-mailem' : ''}, gdy zwolni się stolik dla <b style="color:var(--vz-text)">{partyGenitive(guests)}</b>.</>
+              ) : (
+                <>Damy Ci znać SMS-em{contact.email ? ' i e-mailem' : ''}, gdy tylko zwolni się pasujący termin usługi <b style="color:var(--vz-text)">{waitlistLine?.service.name}</b>.</>
+              )}
             </div>
-            <div style="margin-top:18px;text-align:left;"><SummaryCard rows={waitlistSummary} /></div>
+            <div style="margin-top:18px;text-align:left;"><SummaryCard rows={tableWl ? tableWaitlistSummary : waitlistSummary} /></div>
             {onClose ? <Button onClick={onClose}>Gotowe</Button> : <Button variant="ghost" onClick={restart}>Nowa rezerwacja</Button>}
           </div>
         )}
@@ -3007,7 +3450,19 @@ export function BookingFlow({
         <div class="vz-cta">
           <div class="vz-cta-summary">
             <div class="vz-cta-left">
-              {effKind === 'rental' ? (
+              {effKind === 'table' ? (
+                stepId === 'offering' ? (
+                  <div class="vz-cta-meta">Wybierz, co chcesz zarezerwować</div>
+                ) : (
+                  <>
+                    <div class="vz-cta-svc">Stolik</div>
+                    <div class="vz-cta-meta">
+                      <b>{tablePartyLabel(guests)}</b>
+                      {tableSlot && date ? ` · ${dayMonth(date)}, ${tableSlot.time}` : ''}
+                    </div>
+                  </>
+                )
+              ) : effKind === 'rental' ? (
                 rentalPick ? (
                   <>
                     <div class="vz-cta-svc">
