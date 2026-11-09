@@ -23,8 +23,10 @@ export type MountConfig = SiteStyleConfig & {
   showLauncher?: boolean // false = no floating button; open only via VizytoBooking.open()
   /**
    * What the host page already knows the visitor picked - a service, a specialist,
-   * or (for a timetable CTA) a class / a specific term. Without this an inline
-   * embed had no way to receive a preselection at all.
+   * (for a timetable CTA) a class / a specific term, or a rentable: one instance
+   * (`resourceId`) or a rental pool (`rentalTypeId`, straight onto the pool's
+   * calendar). Without this an inline embed had no way to receive a preselection
+   * at all.
    */
   prefill?: Prefill
   onEvent?: EventHandler // funnel events (service_selected, booking_completed, ...) - see README

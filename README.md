@@ -420,6 +420,8 @@ VizytoBooking.open({ kind: 'rental' })
 // wynajem konkretnego egzemplarza (karta pojazdu na stronie wypożyczalni);
 // sam `resourceId` egzemplarza wystarcza, `kind` jest tu opcjonalny
 VizytoBooking.open({ resourceId: 31 })
+// wynajem z puli (tor, sala): od razu kalendarz puli, serwer przydziela egzemplarz
+VizytoBooking.open({ rentalTypeId: 7 })
 
 // stolik w restauracji - od liczby osób
 VizytoBooking.open({ kind: 'table' })
@@ -429,6 +431,7 @@ VizytoBooking.open({ kind: 'table' })
 | --- | --- | --- |
 | `serviceId` | wizyta | usługa do koszyka; z wariantami zostaje na kroku usługi, żeby je wybrać |
 | `resourceId` | wizyta, wynajem | wizyta: wykonawca albo egzemplarz z puli, ignorowany, gdy usługa przydziela automatycznie; wynajem: egzemplarz - pomija listę i wchodzi od razu na jego kalendarz, także bez `kind` (egzemplarz z puli albo zdjęty z oferty zostawia listę) |
+| `rentalTypeId` | wynajem | pula typu (`'pool'` albo `'choice'`): wchodzi od razu na kalendarz puli; nieznany typ zostawia listę |
 | `classId` | zajęcia | kurs; wchodzi od razu na jego grafik |
 | `sessionId` | zajęcia | konkretny termin; **pełny termin jest odrzucany** i klient staje na liście |
 | `kind` | wszystkie | `'service' \| 'class' \| 'rental' \| 'table'` - jawny wybór rodziny, gdy nie znasz id |
@@ -544,8 +547,8 @@ przepływ offline:
 
 `scripts/mock-harness.html` przyjmuje te same dźwignie w adresie:
 `?business=680`, `?signedIn=1` (sesja bez kodu SMS), `?prefillClass=41`,
-`?prefillSession=901`, `?prefillService=1`, `?prefillResource=31`, `?prefillKind=rental`
-(albo `table`), `?onlyServices=1`.
+`?prefillSession=901`, `?prefillService=1`, `?prefillResource=31`, `?prefillRentalType=7`,
+`?prefillKind=rental` (albo `table`), `?onlyServices=1`.
 
 ### Test na prawdziwym API
 

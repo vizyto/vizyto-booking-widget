@@ -300,6 +300,14 @@ ok('prefill egzemplarza bez kind: od razu kalendarz przyczepy',
    s.stepName === 'WYBÓR TERMINU' && /Na jak długo\?/.test(s.body) && /1 doba/.test(s.body) && !/Wizyta indywidualna/.test(s.body),
    `${s.stepName} | ${s.body.slice(0, 200)}`)
 
+// A pool's rentalTypeId (the lane card on /r/) opens that pool's calendar: no
+// fork, no list, and the server assigns the lane.
+await page.goto(URL + '?prefillRentalType=7'); await page.waitForTimeout(1200)
+s = await state()
+ok('prefill puli bez kind: od razu kalendarz toru',
+   s.stepName === 'WYBÓR TERMINU' && /Przydzielimy wolny egzemplarz na wybrany termin\./.test(s.body) && /Ile osób\?/.test(s.body) && !/Wizyta indywidualna/.test(s.body),
+   `${s.stepName} | ${s.body.slice(0, 200)}`)
+
 // --- range mode (daily instance) ---
 await reload()
 await clickByText('Wynajem'); await page.waitForTimeout(500)

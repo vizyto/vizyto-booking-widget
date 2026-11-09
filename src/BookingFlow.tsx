@@ -74,6 +74,7 @@ import { StepSession } from './steps/StepSession'
 import { StepOffering, type OfferingKind } from './steps/StepOffering'
 import { StepRentalItem, groupRentables, rentalOptionKey, type RentalOption } from './steps/StepRentalItem'
 import { StepRentalTime } from './steps/StepRentalTime'
+import { initialRentalOption } from './rentalPrefill'
 import { resolveCartPolicy } from './policy'
 import { classifyWriteFailure, publicChannelAllows, refusedActions, type CustomerAction } from './channel'
 import {
@@ -349,7 +350,7 @@ const emptyContact: Contact = { firstName: '', lastName: '', phone: '', email: '
  * the difference between "sign up in place" and "sign up, then pick the thing you
  * just clicked all over again" - the exact bug the vizyto.com hand-off had.
  */
-export type Prefill = { serviceId?: number; resourceId?: number; classId?: number; sessionId?: number; kind?: OfferingKind }
+export type Prefill = { serviceId?: number; resourceId?: number; rentalTypeId?: number; classId?: number; sessionId?: number; kind?: OfferingKind }
 
 export function BookingFlow({
   cfg,
@@ -410,16 +411,18 @@ export function BookingFlow({
   const rentalOptions = useMemo<RentalOption[]>(() => groupRentables(business.resources), [business])
   const hasRentals = rentalOptions.length > 0
   /**
-   * Egzemplarz wskazany przez stronę-gospodarza. Karta pojazdu w wypożyczalni
+   * Oferta wskazana przez stronę-gospodarza. Karta pojazdu w wypożyczalni
    * podaje `resourceId`, bo klient wybrał już KONKRETNY bus - kalendarz ma
    * pokazać doby tego egzemplarza, a nie listę, na której trzeba go znaleźć
-   * drugi raz. Prefill jest PODPOWIEDZIĄ: gdy pojazd zniknął z oferty albo
-   * należy do puli (`pooled`), zostaje zwykły wybór z listy.
+   * drugi raz. Karta puli (np. „Tor x 6 szt.” na stronie /r/) podaje
+   * `rentalTypeId` - wtedy od razu kalendarz puli, a egzemplarz przydziela
+   * serwer. Prefill jest PODPOWIEDZIĄ: gdy oferta zniknęła, typ jest nieznany
+   * albo sam `resourceId` należy do puli, zostaje zwykły wybór z listy.
    */
-  const initialRental = useMemo<RentalOption | null>(() => {
-    if (prefill?.resourceId == null) return null
-    return rentalOptions.find((o) => !o.pooled && o.head.id === prefill.resourceId) ?? null
-  }, [rentalOptions, prefill?.resourceId])
+  const initialRental = useMemo<RentalOption | null>(
+    () => initialRentalOption(rentalOptions, prefill),
+    [rentalOptions, prefill?.resourceId, prefill?.rentalTypeId],
+  )
 
   const [rentalPick, setRentalPick] = useState<RentalOption | null>(initialRental)
   const [rentalUnits, setRentalUnits] = useState(1)
@@ -594,7 +597,8 @@ export function BookingFlow({
    * never sees one either), and taken from the prefill when the host page already
    * said - a timetable CTA passing `classId` means the choice is made, and so
    * does a `resourceId` that names a rentable instance (a vehicle card on a
-   * rental company's page) when no other family is named.
+   * rental company's page) or a `rentalTypeId` that names a rental pool (a lane
+   * card on the /r/ page) when no other family is named.
    */
   const askedKind: OfferingKind | null =
     prefill?.kind ??
