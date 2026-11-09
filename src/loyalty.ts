@@ -580,8 +580,11 @@ export function rewardBenefit(terms: { kind: LoyaltyRewardKind; value: number; r
   return terms.scope === 'selected' ? `Rabat ${value} na wybrane usługi` : `Rabat ${value} na wszystkie usługi`
 }
 
+/** "1 dzień", "2 dni", "21 dni": every count but one takes "dni". */
+export const daysPhrase = (days: number) => (days === 1 ? '1 dzień' : `${days} dni`)
+
 export const rewardValidityLine = (validityDays: number | null) =>
-  validityDays ? `Ważna ${validityDays} dni od odebrania` : 'Bez terminu ważności'
+  validityDays ? `Ważna ${daysPhrase(validityDays)} od odebrania` : 'Bez terminu ważności'
 
 /** The claimed catalog entry as a reward of the card, until the next read of `me/rewards` brings it. */
 export const claimedTerms = (entry: LoyaltyCatalogReward, targetKey: string | null): LoyaltyRewardTerms => ({
@@ -705,7 +708,7 @@ export const stampRulesLine = (program: Pick<LoyaltyProgramPublic, 'earnRules'>)
 export function stampValidityLine(months: number | null | undefined, rewardValidityDays: number | null | undefined): string {
   if (!months && !rewardValidityDays) return 'Pieczątki i nagroda nie wygasają.'
   const stamps = months ? `Pieczątki są ważne ${monthsPhrase(months)} od przyznania.` : 'Pieczątki nie wygasają.'
-  const reward = rewardValidityDays ? `Nagroda jest ważna ${rewardValidityDays} dni od odebrania.` : 'Nagroda nie wygasa.'
+  const reward = rewardValidityDays ? `Nagroda jest ważna ${daysPhrase(rewardValidityDays)} od odebrania.` : 'Nagroda nie wygasa.'
   return `${stamps} ${reward}`
 }
 

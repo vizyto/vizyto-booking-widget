@@ -20,6 +20,7 @@ import {
   classEntryKey,
   costLine,
   currentPriceLine,
+  daysPhrase,
   deriveRewardChoice,
   earnRuleSubtitle,
   formatPersonalTotalInline,
@@ -37,6 +38,7 @@ import {
   rewardCreateAction,
   rewardLapsed,
   rewardNotes,
+  rewardValidityLine,
   stampRuleSentence,
   stampValidityLine,
   usableOwned,
@@ -358,6 +360,14 @@ describe('copy', () => {
     expect(pointsExpiryLine(null)).toBe('Punkty nie wygasają.')
     expect(stampValidityLine(null, null)).toBe('Pieczątki i nagroda nie wygasają.')
     expect(stampValidityLine(3, 60)).toBe('Pieczątki są ważne 3 miesiące od przyznania. Nagroda jest ważna 60 dni od odebrania.')
+  })
+
+  test('a one-day reward reads "1 dzień" (the API allows validityDays from 1)', () => {
+    expect([1, 2, 5, 21, 90].map(daysPhrase)).toEqual(['1 dzień', '2 dni', '5 dni', '21 dni', '90 dni'])
+    expect(rewardValidityLine(1)).toBe('Ważna 1 dzień od odebrania')
+    expect(rewardValidityLine(30)).toBe('Ważna 30 dni od odebrania')
+    expect(rewardValidityLine(null)).toBe('Bez terminu ważności')
+    expect(stampValidityLine(null, 1)).toBe('Pieczątki nie wygasają. Nagroda jest ważna 1 dzień od odebrania.')
   })
 
   test('earn and stamp rules', () => {
