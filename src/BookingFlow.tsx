@@ -3414,6 +3414,10 @@ export function BookingFlow({
       : phase === 'slotLost' || phase === 'waitlist'
         ? termIdx
         : totalSteps - 1
+  // "Nagroda" is a sub-step of the last step (like the code from a message): it
+  // keeps that number but says its own name. A customer signed in by the host
+  // page never saw "Twoje dane". The changed-price screen of a reward is part of it.
+  const progLabel = phase === 'reward' || (phase === 'confirming' && rewardRepriced) ? 'NAGRODA' : stepNames[progStep]
   const showCta = phase === 'select' && !configuring && !detailsService
   // Notes belong to a booking with a chosen term - not to a waitlist sign-up or an
   // access-check login. A table's term is its picked start, not a slot key.
@@ -3491,7 +3495,7 @@ export function BookingFlow({
         {/* The offering fork sits BEFORE the counter: the two families have
             different step counts, so numbering it would promise the wrong total. */}
         {phase !== 'done' && phase !== 'waitlistDone' && phase !== 'restricted' && phase !== 'closed' && !(phase === 'select' && stepId === 'offering') && (
-          <ProgressBar step={progStep} total={totalSteps} label={stepNames[progStep]} />
+          <ProgressBar step={progStep} total={totalSteps} label={progLabel} />
         )}
 
         {/* 'done' included on purpose: the test-mode disclaimer must survive onto

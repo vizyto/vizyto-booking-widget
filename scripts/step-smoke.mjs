@@ -448,6 +448,8 @@ const haircutToReward = async (query) => {
 await haircutToReward('?business=471&signedIn=1')
 s = await state()
 ok('lojalność: krok Nagroda po terminie (sesja z hosta)', s.title === 'Nagroda', `${s.title} | ${s.body.slice(0, 200)}`)
+// A sub-step of the last step: its number, but its own name - this customer never saw "Twoje dane".
+ok('lojalność: pasek postępu nazywa krok NAGRODA', s.stepName === 'NAGRODA' && /^KROK (\d+) Z \1$/.test(s.krok ?? ''), `${s.krok} | ${s.stepName}`)
 ok('lojalność: postęp klienta', /Punkty: 120/.test(s.body) && /Do poziomu Złoty: 30/.test(s.body), s.body.slice(0, 300))
 ok('lojalność: obecna cena i ceny z nagrodą', /Obecna cena: 50,00/.test(s.body) && /Z nagrodą: 30,00/.test(s.body) && /Z nagrodą: bezpłatnie/.test(s.body), s.body.slice(0, 500))
 ok('lojalność: nagroda z katalogu do odebrania', /Do odebrania za Punkty/.test(s.body) && /Koszt: 100/.test(s.body) && !/Rabat 25%/.test(s.body), s.body.slice(0, 700))
