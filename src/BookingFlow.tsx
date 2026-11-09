@@ -2361,12 +2361,14 @@ export function BookingFlow({
    */
   async function offerReward(a: Auth, ordinary: PriceQuote | null, flow: RewardFlow): Promise<boolean> {
     if (!a.token || !ordinary || !ordinary.lines.length || ordinary.total === 0) return false
-    if (!(await ensureProgram())) return false
+    // The select step goes away before the first read, as it did at the tap before
+    // loyalty: a term tapped while the program loads cannot change this booking.
     setBookingErr('')
     setPriceChanged(false)
     setRewardChecking(true)
     setPhase('confirming')
     try {
+      if (!(await ensureProgram())) return false
       const [wallet, owned, catalog] = await Promise.all([
         getMyLoyalty(cfg, a.token),
         getMyLoyaltyRewards(cfg, a.token),
@@ -2643,12 +2645,17 @@ export function BookingFlow({
     if (offering.current) return
     offering.current = true
     try {
-      if (a.token && await ensureProgram()) {
-        // The entry's price is read first: the same quiet spinner as the card read.
+      if (a.token) {
+        // Locked before the first read, like offerReward: the program and then the
+        // entry's price are read under the same quiet spinner as the card.
+        setBookingErr('')
+        setPriceChanged(false)
         setRewardChecking(true)
         setPhase('confirming')
-        const ordinary = await quoteClassEntry(cfg, id, {}, a.token)
-        if (ordinary && await offerReward(a, ordinary, 'class')) return
+        if (await ensureProgram()) {
+          const ordinary = await quoteClassEntry(cfg, id, {}, a.token)
+          if (ordinary && await offerReward(a, ordinary, 'class')) return
+        }
       }
     } finally {
       offering.current = false
