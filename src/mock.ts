@@ -620,10 +620,27 @@ export async function oauthLogin(provider: string): Promise<LoginResult> {
 type MockFailure = { ok: false; code: string; message?: string; lineIndexes?: number[]; pricing?: PriceQuote }
 type MockWrite = { ok: true; data: any } | MockFailure
 
+/**
+ * What the widget asked the mock, for scripts/step-smoke.mjs: the GET /loyalty
+ * reads (a visitor who only looks makes none) and what the last create carried
+ * (no reward without a program). On window as `__VIZYTO_MOCK_JOURNAL__` from the
+ * first answer it records, so a page on the real API never gets the global.
+ */
+type MockJournal = {
+  loyaltyReads: number
+  lastCreate: { flow: 'appointment' | 'rental' | 'class'; input: Record<string, unknown> } | null
+}
+const journal: MockJournal = { loyaltyReads: 0, lastCreate: null }
+function record(change: (j: MockJournal) => void) {
+  change(journal)
+  if (typeof window !== 'undefined') (window as any).__VIZYTO_MOCK_JOURNAL__ = journal
+}
+
 export async function createAppointment(
   p: { items?: CartItem[]; startDate: string; expectedTotal?: number | null; reward?: RewardFields | null },
   token: string | null,
 ): Promise<MockWrite> {
+  record((j) => { j.lastCreate = { flow: 'appointment', input: { ...p } } })
   await wait(600)
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   const closed = channelRefusal('book')
@@ -686,6 +703,7 @@ export async function registerForSession(
   p: { sessionId: number; expectedTotal?: number | null; reward?: RewardFields | null },
   token: string | null,
 ): Promise<MockWrite> {
+  record((j) => { j.lastCreate = { flow: 'class', input: { ...p } } })
   await wait(600)
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   const closed = channelRefusal('groupClasses')
@@ -746,6 +764,7 @@ export async function createRental(
   p: { resourceId?: number; rentalTypeId?: number; startDate: string; endDate?: string; expectedTotal?: number | null; reward?: RewardFields | null },
   token: string | null,
 ): Promise<MockWrite> {
+  record((j) => { j.lastCreate = { flow: 'rental', input: { ...p } } })
   await wait(600)
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   const closed = channelRefusal('rentals')
@@ -1018,6 +1037,7 @@ const programOf = (businessId: number) =>
   businessId === MOCK_LOYALTY_POINTS ? POINTS_PROGRAM : businessId === MOCK_LOYALTY_STAMPS ? STAMP_PROGRAM : null
 
 export async function getLoyaltyProgram(businessId: number): Promise<LoyaltyProgramPublic | null> {
+  record((j) => { j.loyaltyReads++ })
   await wait(120)
   return programOf(businessId)
 }

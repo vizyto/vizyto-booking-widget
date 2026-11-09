@@ -912,9 +912,9 @@ export function BookingFlow({
   const probedFor = useRef('')
 
   // ---- loyalty rewards (vizyto #471 F37) ----
-  // The public program, read once per mount and only when the flow nears its end:
-  // a visitor who only browses makes no loyalty request, and a business without a
-  // program costs one 404. Restaurant tables and waitlists never touch it.
+  // The public program, read once per mount and only once the customer gives their
+  // details or books: a visitor who only browses makes no loyalty request, and a
+  // business without a program costs one 404. Tables and waitlists never touch it.
   const programReq = useRef<Promise<LoyaltyProgramPublic | null> | null>(null)
   const [offer, setOfferState] = useState<RewardOffer | null>(null)
   // Mirrors `offer` for the async pricing rounds, which outlive the render that started them.
@@ -2575,7 +2575,8 @@ export function BookingFlow({
   /** The success screen's program block: the program, and the card when there is one. */
   async function loadDoneLoyalty(a: Auth) {
     setDoneLoyalty(null)
-    const program = programReq.current ? await programReq.current : null
+    // Usually asked by now (the details step, or "Dalej" with a session); read here otherwise.
+    const program = await ensureProgram()
     if (!program) return
     const catalog = offerRef.current?.catalog ?? []
     setDoneLoyalty({ program, wallet: null, catalog })
@@ -3113,13 +3114,15 @@ export function BookingFlow({
     if (rewardChoice != null && !rewardView.usable.some((u) => u.reward.id === rewardChoice)) setRewardChoice(null)
   }, [rewardView])
 
-  // Prefetch the program, without waiting for it, once the booking is near: the
-  // last select step of the family or the details step. Browsing costs nothing.
+  // Prefetch the program, without waiting for it, once the customer starts giving
+  // their details, so it is there when the code is verified. Never on a select
+  // step: an inline embed can open on its last one (a single rentable, a term or
+  // service prefill), and a visitor who only looks at it makes no loyalty request.
+  // A customer already signed in reads it on "Dalej", under the quiet spinner.
   useEffect(() => {
     if (effKind === 'table' || intent !== 'book') return
-    const last = selectSteps[selectSteps.length - 1]
-    if ((phase === 'select' && stepId === last) || phase === 'identify') void ensureProgram()
-  }, [phase, stepId, effKind, intent, selectSteps])
+    if (phase === 'identify') void ensureProgram()
+  }, [phase, effKind, intent])
 
   // ---- back (rendered in the panel header) ----
   const backFn: (() => void) | null = (() => {

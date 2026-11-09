@@ -450,6 +450,10 @@ const focused = () => page.evaluate(() => {
 })
 const fmt = (f) => (f ? `${f.role ?? ''}|${f.label ?? ''}|${f.cls}|${f.text}` : 'null')
 let f
+/** What the mock was asked (src/mock.ts): GET /loyalty reads and the last create's input. */
+const journal = () => page.evaluate(() => window.__VIZYTO_MOCK_JOURNAL__ ?? { loyaltyReads: 0, lastCreate: null })
+/** A create input with no reward: the v1.16.0 request (tests/loyalty.test.js pins its bytes). */
+const noReward = (input) => input?.reward == null && !['rewardSelection', 'discountChoice', 'pricingToken'].some((k) => k in input)
 /** A keyboard press on a button in the reward step: it has focus first, as from Tab. */
 const pressRewardButton = (sel, text) => page.evaluate(({ sel, text }) => {
   const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
@@ -585,6 +589,52 @@ ok('lojalność: karta z pieczątkami', /Nagroda gotowa/.test(s.body) && /Do ode
 await haircutToReward('?signedIn=1')
 s = await state()
 ok('lojalność: biznes bez programu rezerwuje bez kroku', /Zarezerwowane!/.test(s.body) && !/Program lojalnościowy/.test(s.body), s.body.slice(0, 300))
+let j = await journal()
+ok('lojalność: bez programu wizyta bez pól nagrody', j.lastCreate?.flow === 'appointment' && noReward(j.lastCreate.input), JSON.stringify(j.lastCreate))
+ok('lojalność: bez programu jedno zapytanie o program na rezerwację', j.loyaltyReads === 1, `${j.loyaltyReads}`)
+
+// An inline embed that opens on its last select step (a single rentable, a term,
+// a pool prefill): a visitor who only looks, or even picks an hour, makes no
+// loyalty request, also where the business has a program.
+for (const query of ['?prefillRentalType=7', '?prefillSession=901', '?business=471&prefillSession=912', '?business=471&signedIn=1&prefillRentalType=7']) {
+  await page.goto(URL + query); await page.waitForTimeout(1400)
+  j = await journal()
+  ok(`lojalność: oglądanie bez zapytania o program (${query})`, j.loyaltyReads === 0, `${j.loyaltyReads}`)
+}
+await clickByText('18:00'); await page.waitForTimeout(600)
+j = await journal()
+ok('lojalność: wybrana godzina bez Dalej nie pyta o program', j.loyaltyReads === 0, `${j.loyaltyReads}`)
+
+// A guest asks for it once, on the details step, so it is ready after the SMS code.
+await page.goto(URL + '?business=471&prefillSession=912'); await page.waitForTimeout(1400)
+await next(); await page.waitForTimeout(500)
+s = await state()
+j = await journal()
+ok('lojalność: dane klienta pytają o program raz', s.stepName === 'TWOJE DANE' && j.loyaltyReads === 1, `${s.stepName} | ${j.loyaltyReads}`)
+
+// A signed-in "Dalej" reads the program first: the term locks at the tap, under a
+// spinner, so a later tap cannot change what is booked (the mock answers in 120 ms).
+for (const [query, label] of [['?signedIn=1&prefillSession=901', 'bez programu'], ['?business=471&signedIn=1&prefillSession=912', 'z programem']]) {
+  await page.goto(URL + query); await page.waitForTimeout(1400)
+  await next(); await page.waitForTimeout(40)
+  const locked = await page.evaluate(() => {
+    const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+    const r = host.shadowRoot
+    return { sessions: !!r.querySelector('.vz-sessions'), spinner: !!r.querySelector('.vz-spin') }
+  })
+  ok(`lojalność: Dalej blokuje termin od razu (${label})`, !locked.sessions && locked.spinner, JSON.stringify(locked))
+}
+await page.goto(URL + '?signedIn=1&prefillSession=901'); await page.waitForTimeout(1400)
+await next(); await page.waitForTimeout(1800)
+s = await state()
+j = await journal()
+ok('lojalność: bez programu zapis na zajęcia bez pól nagrody', /Zapisano!/.test(s.body) && j.lastCreate?.flow === 'class' && noReward(j.lastCreate.input), `${JSON.stringify(j.lastCreate)} | ${s.body.slice(0, 200)}`)
+await page.goto(URL + '?signedIn=1&prefillRentalType=7'); await page.waitForTimeout(1400)
+await clickByText('18:00'); await page.waitForTimeout(500)
+await next(); await page.waitForTimeout(1800)
+s = await state()
+j = await journal()
+ok('lojalność: bez programu wynajem bez pól nagrody', /Zarezerwowane!/.test(s.body) && j.lastCreate?.flow === 'rental' && noReward(j.lastCreate.input), `${JSON.stringify(j.lastCreate)} | ${s.body.slice(0, 200)}`)
 
 await browser.close()
 console.log(`\n${pass} pass, ${fail} fail`)

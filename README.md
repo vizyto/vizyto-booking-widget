@@ -287,11 +287,13 @@ krótki blok „Program lojalnościowy”: opis programu, postęp klienta (gdy m
 kartę) i zwinięte „Jak to działa” oraz „Regulamin programu”. Widget nigdy nie
 obiecuje Punktów za tę rezerwację: przyznaje je firma przy rozliczeniu wizyty.
 
-Odczyty są oszczędne i odporne na błędy: program pobiera się raz, dopiero na
-ostatnim kroku wyboru (albo przy danych kontaktowych), więc osoba, która tylko
-przegląda ofertę, nie wysyła żadnego zapytania o program, a firma bez programu
-kosztuje jedno 404. Każdy błąd odczytu znaczy „bez programu” i rezerwacja idzie
-dokładnie jak wcześniej, z tym samym zapytaniem.
+Odczyty są oszczędne i odporne na błędy: program pobiera się raz, dopiero gdy
+klient zaczyna podawać dane kontaktowe, a przy sesji przekazanej przez stronę
+po „Dalej” (krok wyboru znika wtedy od razu pod wskaźnikiem ładowania). Osoba,
+która tylko przegląda ofertę, nie wysyła żadnego zapytania o program, także w
+osadzeniu otwartym od razu na kalendarzu albo grafiku, a firma bez programu
+kosztuje jedno 404 na rezerwację. Każdy błąd odczytu znaczy „bez programu” i
+rezerwacja idzie dokładnie jak wcześniej, z tym samym zapytaniem.
 
 Odmowy przy zapisie z nagrodą (przed zwykłą obsługą błędów, która uznałaby je
 za utracony termin): wygasła wycena z tą samą ceną ponawia zapis po cichu, z
