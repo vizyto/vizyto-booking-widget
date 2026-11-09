@@ -27,6 +27,10 @@
   // ?claimRefusal=REWARD_CLAIM_LIMIT refuses the first claim with that code.
   if (q.get('failRewardQuote')) window.__VIZYTO_MOCK_FAIL_REWARD_QUOTE__ = Number(q.get('failRewardQuote'));
   if (q.get('claimRefusal')) window.__VIZYTO_MOCK_CLAIM_REFUSAL__ = q.get('claimRefusal');
+  // ?slowLoyalty=program|card|entry|price answers that loyalty read too late for the
+  // booking to wait for it; ?brokenLoyalty=entry|reward answers one it cannot read.
+  if (q.get('slowLoyalty')) window.__VIZYTO_MOCK_SLOW_LOYALTY__ = q.get('slowLoyalty');
+  if (q.get('brokenLoyalty')) window.__VIZYTO_MOCK_BROKEN_LOYALTY__ = q.get('brokenLoyalty');
   // ?theme=dark (or auto) renders the dark tokens, for checks in both themes.
   var theme = q.get('theme') || undefined;
   VizytoBooking.mount({

@@ -80,6 +80,19 @@ const addService = (name) => page.evaluate((name) => {
   return 'ok'
 }, name)
 
+/** What the mock was asked (src/mock.ts): GET /loyalty reads and the last create's input. */
+const journal = () => page.evaluate(() => ({ loyaltyReads: 0, lastCreate: null, ...(window.__VIZYTO_MOCK_JOURNAL__ ?? {}) }))
+/** Polls the widget until its text matches `re` or `ms` pass; returns the state then. */
+const waitForText = async (re, ms) => {
+  const end = Date.now() + ms
+  let st = await state()
+  while (!re.test(st?.body ?? '') && Date.now() < end) {
+    await page.waitForTimeout(150)
+    st = await state()
+  }
+  return st
+}
+
 const next = () => clickByText('Dalej')
 const back = () => page.evaluate(() => {
   const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
@@ -99,6 +112,19 @@ const closeConfigure = async () => {
   return closed
 }
 const reload = async () => { await page.goto(URL); await page.waitForTimeout(800) }
+/** On a visit's time step: the first free day, then its 10:00 or 11:00. */
+const pickTerm = async () => {
+  await page.evaluate(() => {
+    const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+    host.shadowRoot.querySelector('.vz-day:not(.is-disabled)')?.click()
+  })
+  await page.waitForTimeout(1000)
+  await page.evaluate(() => {
+    const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+    ;[...host.shadowRoot.querySelectorAll('.vz-slot')].find((x) => /1[01]:00/.test(x.textContent))?.click()
+  })
+  await page.waitForTimeout(300)
+}
 
 /**
  * The mock business sells BOTH visits and classes, so every visit-path scenario
@@ -452,18 +478,6 @@ s = await state()
 ok('683: ponowne otwarcie - widelec bez wizyt', !/Wizyta indywidualna/.test(s.body) && /Zajęcia grupowe/.test(s.body) && /Wynajem/.test(s.body), s.body.slice(0, 200))
 
 // ── 14. Loyalty rewards (#471 F37). 471 = Points, 472 = stamps, 24 = no program.
-const pickTerm = async () => {
-  await page.evaluate(() => {
-    const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
-    host.shadowRoot.querySelector('.vz-day:not(.is-disabled)')?.click()
-  })
-  await page.waitForTimeout(1000)
-  await page.evaluate(() => {
-    const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
-    ;[...host.shadowRoot.querySelectorAll('.vz-slot')].find((x) => /1[01]:00/.test(x.textContent))?.click()
-  })
-  await page.waitForTimeout(300)
-}
 /** What has keyboard focus inside the widget (null = it fell out to the page). */
 const focused = () => page.evaluate(() => {
   const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
@@ -480,8 +494,6 @@ const focused = () => page.evaluate(() => {
 })
 const fmt = (f) => (f ? `${f.role ?? ''}|${f.label ?? ''}|${f.cls}|${f.text}` : 'null')
 let f
-/** What the mock was asked (src/mock.ts): GET /loyalty reads and the last create's input. */
-const journal = () => page.evaluate(() => window.__VIZYTO_MOCK_JOURNAL__ ?? { loyaltyReads: 0, lastCreate: null })
 /** A create input with no reward: the v1.16.0 request (tests/loyalty.test.js pins its bytes). */
 const noReward = (input) => input?.reward == null && !['rewardSelection', 'discountChoice', 'pricingToken'].some((k) => k in input)
 /**
@@ -512,7 +524,8 @@ const pressRewardButton = (sel, text) => page.evaluate(({ sel, text }) => {
   b.click()
   return true
 }, { sel, text })
-const haircutToReward = async (query) => {
+/** A haircut with its day and hour picked, one "Dalej" before the booking. */
+const haircutToTerm = async (query) => {
   await page.goto(URL + query); await page.waitForTimeout(1000)
   await toServices()
   await addService('Strzyżenie'); await page.waitForTimeout(300)
@@ -520,6 +533,9 @@ const haircutToReward = async (query) => {
   await next(); await page.waitForTimeout(800)
   if ((await state()).stepName === 'WYBÓR SPECJALISTY') { await clickByText('Bez preferencji'); await page.waitForTimeout(250); await next(); await page.waitForTimeout(900) }
   await pickTerm()
+}
+const haircutToReward = async (query) => {
+  await haircutToTerm(query)
   await next(); await page.waitForTimeout(2200)
 }
 
@@ -687,6 +703,46 @@ await next(); await page.waitForTimeout(1800)
 s = await state()
 j = await journal()
 ok('lojalność: bez programu wynajem bez pól nagrody', /Zarezerwowane!/.test(s.body) && j.lastCreate?.flow === 'rental' && noReward(j.lastCreate.input), `${JSON.stringify(j.lastCreate)} | ${s.body.slice(0, 200)}`)
+
+// A loyalty read that does not answer in time never holds the booking on its
+// spinner (it has no way back): after its wait the booking goes out as without a
+// program, and the late answer (the mock's 6 s, past every wait) changes nothing.
+for (const [slow, query, done, flow] of [
+  ['program', '?business=471&signedIn=1', /Zarezerwowane!/, 'appointment'],
+  ['card', '?business=471&signedIn=1', /Zarezerwowane!/, 'appointment'],
+  ['price', '?business=471&signedIn=1', /Zarezerwowane!/, 'appointment'],
+  ['entry', '?business=471&signedIn=1&prefillSession=912', /Zapisano!/, 'class'],
+]) {
+  if (flow === 'class') { await page.goto(URL + `${query}&slowLoyalty=${slow}`); await page.waitForTimeout(1500) }
+  else await haircutToTerm(`${query}&slowLoyalty=${slow}`)
+  const tapped = Date.now()
+  await next()
+  s = await waitForText(done, 7000)
+  const took = Date.now() - tapped
+  j = await journal()
+  ok(`lojalność: odczyt bez odpowiedzi (${slow}) - rezerwacja bez nagrody`,
+     done.test(s.body) && j.lastCreate?.flow === flow && noReward(j.lastCreate.input) && took < 5500,
+     `${took} ms | ${JSON.stringify(j.lastCreate)} | ${s.body.slice(0, 200)}`)
+  await page.waitForTimeout(6500)
+  s = await state()
+  ok(`lojalność: spóźniona odpowiedź (${slow}) niczego nie zmienia`, done.test(s.body) && s.title !== 'Nagroda', `${s.title} | ${s.body.slice(0, 200)}`)
+}
+
+// A loyalty answer the reward step cannot read (a class entry's line, a reward
+// without its terms): the booking goes on without the step, not on a spinner.
+for (const [broken, query, done, flow] of [
+  ['entry', '?business=471&signedIn=1&prefillSession=912', /Zapisano!/, 'class'],
+  ['reward', '?business=471&signedIn=1', /Zarezerwowane!/, 'appointment'],
+]) {
+  if (flow === 'class') { await page.goto(URL + `${query}&brokenLoyalty=${broken}`); await page.waitForTimeout(1500) }
+  else await haircutToTerm(`${query}&brokenLoyalty=${broken}`)
+  await next()
+  s = await waitForText(done, 5000)
+  j = await journal()
+  ok(`lojalność: nieczytelna odpowiedź (${broken}) - rezerwacja bez kroku Nagroda`,
+     done.test(s.body) && j.lastCreate?.flow === flow && noReward(j.lastCreate.input),
+     `${JSON.stringify(j.lastCreate)} | ${s.body.slice(0, 200)}`)
+}
 
 await browser.close()
 console.log(`\n${pass} pass, ${fail} fail`)

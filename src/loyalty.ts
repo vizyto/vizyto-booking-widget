@@ -459,6 +459,43 @@ export function settleWithin<T>(read: Promise<T>, ms: number): Promise<T | null>
   })
 }
 
+/**
+ * How long a booking waits for the loyalty reads in front of its create. That
+ * screen is a spinner with no way back, so a read that stalls must never hold the
+ * booking: no answer in time counts as no loyalty, the create goes out exactly as
+ * in v1.16.0 and the late answer is dropped. First the program (one short read,
+ * and the usual 404 of a business without one)...
+ */
+export const PROGRAM_WAIT_MS = 1500
+/** ...then each of: the card with its rewards and the catalog, a class entry's price, and every reward-price round together. */
+export const REWARD_READ_WAIT_MS = 3000
+
+/** What the "Nagroda" step is built from. */
+export type RewardInputs = { wallet: LoyaltyWallet; owned: MyLoyaltyReward[]; catalog: LoyaltyCatalogReward[] }
+
+/**
+ * The program, then the customer's card, rewards and the catalog (in parallel),
+ * each read under its wait. Null = book without loyalty: no program, no card, a
+ * program that is not active, a failed read or no answer in time. Without a
+ * program in time the card is never asked for.
+ */
+export async function readRewardInputs(
+  reads: {
+    program: () => Promise<LoyaltyProgramPublic | null>
+    wallet: () => Promise<LoyaltyWallet | null>
+    owned: () => Promise<MyLoyaltyReward[]>
+    catalog: () => Promise<LoyaltyCatalogReward[]>
+  },
+  waits: { program: number; card: number } = { program: PROGRAM_WAIT_MS, card: REWARD_READ_WAIT_MS },
+): Promise<RewardInputs | null> {
+  if (!(await settleWithin(reads.program(), waits.program))) return null
+  const card = await settleWithin(Promise.all([reads.wallet(), reads.owned(), reads.catalog()]), waits.card)
+  if (!card) return null
+  const [wallet, owned, catalog] = card
+  if (!wallet || wallet.program?.status !== 'active') return null
+  return { wallet, owned, catalog }
+}
+
 // ---------------------------------------------------------------------------
 // Create errors
 // ---------------------------------------------------------------------------

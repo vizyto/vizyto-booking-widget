@@ -915,7 +915,15 @@ export async function joinTableWaitlist(
 //  Harness levers for both (window globals, set from the harness address):
 //      __VIZYTO_MOCK_FAIL_REWARD_QUOTE__ = <reward id> -> the first quote of that
 //                                 reward fails (NETWORK): "Spróbuj ponownie",
-//      __VIZYTO_MOCK_CLAIM_REFUSAL__ = <code> -> the first claim answers that code.
+//      __VIZYTO_MOCK_CLAIM_REFUSAL__ = <code> -> the first claim answers that code,
+//      __VIZYTO_MOCK_SLOW_LOYALTY__ = 'program' | 'card' | 'entry' | 'price' -> every
+//                                 read of that kind (the program; the card, its
+//                                 rewards and the catalog; a class entry's price;
+//                                 a reward price) answers after MOCK_SLOW_LOYALTY_MS,
+//                                 longer than the booking waits for it,
+//      __VIZYTO_MOCK_BROKEN_LOYALTY__ = 'entry' | 'reward' -> a class entry's price
+//                                 carries a line the reward step cannot read, or
+//                                 the card lists a reward without its terms.
 // A reward quote answers pricingToken `mock-reward-<id>`; a create with a reward
 // moves it to `reserved`; a claim lowers the balance and adds the reward.
 
@@ -1043,19 +1051,31 @@ function cardOf(businessId: number): MockCard | null {
 const programOf = (businessId: number) =>
   businessId === MOCK_LOYALTY_POINTS ? POINTS_PROGRAM : businessId === MOCK_LOYALTY_STAMPS ? STAMP_PROGRAM : null
 
+/** How late a read of the slow kind answers: past every wait of the booking (src/loyalty.ts). */
+export const MOCK_SLOW_LOYALTY_MS = 6000
+type SlowLoyaltyRead = 'program' | 'card' | 'entry' | 'price'
+/** The harness lever above. `typeof` guard: the mock also runs under bun:test. */
+const slowLoyalty = (kind: SlowLoyaltyRead) =>
+  typeof window !== 'undefined' && (window as any).__VIZYTO_MOCK_SLOW_LOYALTY__ === kind ? wait(MOCK_SLOW_LOYALTY_MS) : Promise.resolve()
+const brokenLoyalty = (kind: 'entry' | 'reward') =>
+  typeof window !== 'undefined' && (window as any).__VIZYTO_MOCK_BROKEN_LOYALTY__ === kind
+
 export async function getLoyaltyProgram(businessId: number): Promise<LoyaltyProgramPublic | null> {
   record((j) => { j.loyaltyReads++ })
   await wait(120)
+  await slowLoyalty('program')
   return programOf(businessId)
 }
 
 export async function getLoyaltyCatalog(businessId: number): Promise<LoyaltyCatalogReward[]> {
   await wait(120)
+  await slowLoyalty('card')
   return CATALOGS[businessId] ?? []
 }
 
 export async function getMyLoyalty(businessId: number, _token: string): Promise<LoyaltyWallet | null> {
   await wait(160)
+  await slowLoyalty('card')
   const program = programOf(businessId)
   const card = cardOf(businessId)
   if (!program || !card) return null
@@ -1079,8 +1099,12 @@ export async function getMyLoyalty(businessId: number, _token: string): Promise<
 
 export async function getMyLoyaltyRewards(businessId: number, _token: string): Promise<MyLoyaltyReward[]> {
   await wait(160)
+  await slowLoyalty('card')
   const card = cardOf(businessId)
-  return card ? card.owned.filter((r) => r.status === 'available' || r.status === 'reserved').map((r) => ({ ...r })) : []
+  const list = card ? card.owned.filter((r) => r.status === 'available' || r.status === 'reserved').map((r) => ({ ...r })) : []
+  // An answer the step cannot read: a reward without its terms.
+  if (card && brokenLoyalty('reward')) list.push({ id: 4799, catalogId: 47199, status: 'available', expiresAt: null } as unknown as MyLoyaltyReward)
+  return list
 }
 
 /**
@@ -1135,17 +1159,20 @@ export async function claimLoyaltyReward(businessId: number, p: ClaimInput, toke
 /** The ordinary price of one class entry, as the timetable prices it. */
 export async function quoteClassEntry(sessionId: number): Promise<PriceQuote | null> {
   await wait(150)
+  await slowLoyalty('entry')
   const session = timetableRows().find((s) => s.id === sessionId)
   const cls = session ? GROUP_CLASSES.find((c) => c.id === session.groupClassId) : undefined
   const service = cls ? BUSINESS.services.find((s) => s.id === cls.businessServiceId) : undefined
   if (!session || !service) return null
   const listPrice = session.priceOverride ?? service.price
   const promo = session.promo ?? null
-  return quoteOf([{
+  const quote = quoteOf([{
     kind: 'group_class_entry', name: service.name, quantity: 1, listPrice: promo?.listPrice ?? listPrice,
     price: promo?.price ?? listPrice, promotionId: promo ? 1 : null,
     priorPrice: promo?.priorPrice ?? null, advertised: promo?.advertised ?? false, badge: promo?.badge ?? null,
   }])
+  // An answer the step cannot read: a line that is not a line (the API's lines pass through as sent).
+  return brokenLoyalty('entry') ? { ...quote, lines: [...quote.lines, null as unknown as PriceQuoteLine] } : quote
 }
 
 const ordinaryQuoteOf = (target: RewardQuoteTarget): Promise<PriceQuote | null> =>
@@ -1204,6 +1231,7 @@ export async function quoteWithReward(
   token: string | null,
 ): Promise<RewardQuoteResult> {
   await wait(220)
+  await slowLoyalty('price')
   const card = cardOf(businessId)
   if (!token) return { ok: false, code: 'UNAUTHENTICATED' }
   if (!card) return { ok: false, code: 'LOYALTY_PROGRAM_NOT_FOUND' }

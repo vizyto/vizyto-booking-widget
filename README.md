@@ -296,7 +296,12 @@ po „Dalej” (krok wyboru znika wtedy od razu pod wskaźnikiem ładowania). Os
 która tylko przegląda ofertę, nie wysyła żadnego zapytania o program, także w
 osadzeniu otwartym od razu na kalendarzu albo grafiku, a firma bez programu
 kosztuje jedno 404 na rezerwację. Każdy błąd odczytu znaczy „bez programu” i
-rezerwacja idzie dokładnie jak wcześniej, z tym samym zapytaniem.
+rezerwacja idzie dokładnie jak wcześniej, z tym samym zapytaniem. Tak samo
+odczyt, który nie zdąży (program 1,5 s; karta z nagrodami i katalogiem, cena
+wejścia na zajęcia i wszystkie wyceny nagród po 3 s), i odpowiedź, z której nie
+da się zbudować kroku: wskaźnik ładowania po „Dalej” nie ma drogi wstecz, więc
+rezerwacja nigdy na nich nie utknie, a spóźniona odpowiedź niczego już nie
+zmienia.
 
 Odmowy przy zapisie z nagrodą (przed zwykłą obsługą błędów, która uznałaby je
 za utracony termin): wygasła wycena z tą samą ceną ponawia zapis po cichu, z
@@ -635,13 +640,18 @@ przepływ offline:
   - tylko z harnessu: `?failRewardQuote=4701` - pierwsza wycena tej nagrody
     kończy się błędem sieci („Spróbuj ponownie”), `?claimRefusal=<kod>` -
     pierwsze odebranie nagrody z katalogu dostaje ten kod (np.
-    `REWARD_CLAIM_LIMIT` zamyka potwierdzenie, `NETWORK` je zostawia).
+    `REWARD_CLAIM_LIMIT` zamyka potwierdzenie, `NETWORK` je zostawia),
+    `?slowLoyalty=program` (albo `card`, `entry`, `price`) - każdy taki odczyt
+    odpowiada dopiero po 6 s, dłużej, niż rezerwacja na niego czeka, więc
+    rezerwacja idzie bez nagrody, `?brokenLoyalty=entry` (albo `reward`) - cena
+    wejścia na zajęcia ma pozycję, której krok nie odczyta (albo nagroda na
+    koncie nie ma warunków), więc rezerwacja idzie bez kroku „Nagroda”.
 
 `scripts/mock-harness.html` przyjmuje te same dźwignie w adresie:
 `?business=680` (albo `471`, `472`), `?signedIn=1` (sesja bez kodu SMS), `?theme=dark`, `?prefillClass=41`,
 `?prefillSession=901`, `?prefillService=1`, `?prefillResource=31`, `?prefillRentalType=7`,
 `?prefillKind=rental` (albo `table`), `?onlyServices=1`, `?failRewardQuote=4701`,
-`?claimRefusal=REWARD_CLAIM_LIMIT`, a do tego `?oneRental=7` (albo `8`): biznes
+`?claimRefusal=REWARD_CLAIM_LIMIT`, `?slowLoyalty=card`, `?brokenLoyalty=entry`, a do tego `?oneRental=7` (albo `8`): biznes
 wynajmuje jedną ofertę (pulę torów albo przyczepę) obok usług i zajęć, więc
 wynajem nie ma kroku z listą i od razu otwiera jej kalendarz.
 

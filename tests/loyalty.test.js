@@ -4,7 +4,9 @@ import {
   CLAIM_FALLBACK,
   FIXED_REFUSAL,
   LATER,
+  PROGRAM_WAIT_MS,
   REWARD_KEPT_NOTE,
+  REWARD_READ_WAIT_MS,
   REWARD_RECOVERY,
   amountDueSentence,
   appointmentTargetKeys,
@@ -34,6 +36,7 @@ import {
   programIntro,
   programRules,
   progressLines,
+  readRewardInputs,
   refusalMessage,
   refuseLines,
   rentalBaseKey,
@@ -361,6 +364,74 @@ describe('the success screen\'s program block waits a bounded time', () => {
 
   test('a failed read is no block', async () => {
     expect(await settleWithin(Promise.reject(new Error('offline')), 50)).toBeNull()
+  })
+})
+
+describe('the reads in front of a create wait a bounded time', () => {
+  const later = (value, ms) => new Promise((resolve) => setTimeout(() => resolve(value), ms))
+  const never = () => new Promise(() => {})
+  const program = { id: 4710, status: 'active' }
+  const wallet = { balance: 120, program: { status: 'active' } }
+  const owned = [{ id: 4701 }]
+  const catalog = [{ id: 47104 }]
+  const waits = { program: 40, card: 60 }
+  /** The four reads, each answering `answers[name]` (a value or a promise), and which ones were asked. */
+  const reads = (answers = {}) => {
+    const asked = []
+    const read = (name, value) => () => {
+      asked.push(name)
+      const answer = name in answers ? answers[name] : value
+      return answer instanceof Promise ? answer : Promise.resolve(answer)
+    }
+    return {
+      asked,
+      reads: {
+        program: read('program', program),
+        wallet: read('wallet', wallet),
+        owned: read('owned', owned),
+        catalog: read('catalog', catalog),
+      },
+    }
+  }
+
+  test('the constants: the program first and short, then a few seconds per stage', () => {
+    expect(PROGRAM_WAIT_MS).toBe(1500)
+    expect(REWARD_READ_WAIT_MS).toBe(3000)
+  })
+
+  test('answers in time are the step\'s inputs', async () => {
+    const r = reads()
+    expect(await readRewardInputs(r.reads, waits)).toEqual({ wallet, owned, catalog })
+    expect(r.asked).toEqual(['program', 'wallet', 'owned', 'catalog'])
+  })
+
+  test('no program, or none in time, is no loyalty, and the card is never asked for', async () => {
+    for (const answer of [() => null, never, () => later(program, 400), () => Promise.reject(new Error('offline'))]) {
+      const r = reads({ program: answer() })
+      const started = Date.now()
+      expect(await readRewardInputs(r.reads, waits)).toBeNull()
+      expect(Date.now() - started).toBeLessThan(300)
+      expect(r.asked).toEqual(['program'])
+    }
+  })
+
+  test('a card read that stalls is no loyalty after its wait', async () => {
+    for (const name of ['wallet', 'owned', 'catalog']) {
+      const r = reads({ [name]: never() })
+      const started = Date.now()
+      expect(await readRewardInputs(r.reads, waits)).toBeNull()
+      expect(Date.now() - started).toBeLessThan(300)
+    }
+  })
+
+  test('no card, or a program that is not active on it, is no loyalty', async () => {
+    expect(await readRewardInputs(reads({ wallet: null }).reads, waits)).toBeNull()
+    expect(await readRewardInputs(reads({ wallet: { ...wallet, program: { status: 'paused' } } }).reads, waits)).toBeNull()
+  })
+
+  test('the default waits are the constants', async () => {
+    const r = reads({ program: later(program, 5) })
+    expect(await readRewardInputs(r.reads)).toEqual({ wallet, owned, catalog })
   })
 })
 

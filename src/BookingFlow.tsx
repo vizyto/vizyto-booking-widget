@@ -85,6 +85,8 @@ import { initialRentalOption, startingRentalOption, startingRentalUnits } from '
 import {
   CLAIM_CLOSES,
   DONE_LOYALTY_WAIT_MS,
+  PROGRAM_WAIT_MS,
+  REWARD_READ_WAIT_MS,
   REWARD_RECOVERY,
   amountDueSentence,
   appointmentTargetKeys,
@@ -101,6 +103,7 @@ import {
   hasRewardPricing,
   isStampProgram,
   newClaimKey,
+  readRewardInputs,
   refusalMessage,
   refuseLines,
   rentalBaseKey,
@@ -2370,7 +2373,8 @@ export function BookingFlow({
    * catalog, prices what fits this booking, and shows the "Nagroda" step when a
    * reward can be used or claimed. False = book exactly as before, at the
    * ordinary price, with no extra step: no program, no card, no quote, a free
-   * booking, or nothing to offer.
+   * booking, nothing to offer, a read that did not answer in time, or an answer
+   * the step cannot be built from. Never throws: the caller books on false.
    */
   async function offerReward(a: Auth, ordinary: PriceQuote | null, flow: RewardFlow): Promise<boolean> {
     if (!a.token || !ordinary || !ordinary.lines.length || ordinary.total === 0) return false
@@ -2381,23 +2385,31 @@ export function BookingFlow({
     setRewardChecking(true)
     setPhase('confirming')
     try {
-      if (!(await ensureProgram())) return false
-      const [wallet, owned, catalog] = await Promise.all([
-        getMyLoyalty(cfg, a.token),
-        getMyLoyaltyRewards(cfg, a.token),
-        getLoyaltyCatalog(cfg),
-      ])
-      if (!wallet || wallet.program?.status !== 'active') return false
+      // Every read is bounded: this spinner has no way back (src/loyalty.ts).
+      const inputs = await readRewardInputs({
+        program: ensureProgram,
+        wallet: () => getMyLoyalty(cfg, a.token),
+        owned: () => getMyLoyaltyRewards(cfg, a.token),
+        catalog: () => getLoyaltyCatalog(cfg),
+      })
+      if (!inputs) return false
       const gen = ++offerGen.current
       setOffer({
-        gen, flow, auth: a, wallet, owned, catalog, ordinary,
+        gen, flow, auth: a, ...inputs, ordinary,
         lines: bookingRewardLines(ordinary.lines, rewardKeysFor(flow, ordinary)),
         refused: {},
         quotes: {},
       })
-      await priceRewards(gen)
+      // The rounds share one wait (a throw in them reads as no answer). Without
+      // an answer the offer goes, so a round that answers late finds no offer of
+      // its generation and stops (priceRewards).
+      const priced = await settleWithin(priceRewards(gen).then(() => true), REWARD_READ_WAIT_MS)
       const s = offerRef.current
       if (!s || s.gen !== gen) return false
+      if (!priced) {
+        setOffer(null)
+        return false
+      }
       const view = choiceOf(s)
       if (!view.usable.length && !view.claimable.length) {
         setOffer(null)
@@ -2412,6 +2424,11 @@ export function BookingFlow({
       setClaimErr('')
       setPhase('reward')
       return true
+    } catch {
+      // An answer the step cannot be built from (an API shape it does not know) is
+      // no step: the booking goes on at the ordinary price, as without a program.
+      setOffer(null)
+      return false
     } finally {
       setRewardChecking(false)
     }
@@ -2661,7 +2678,8 @@ export function BookingFlow({
   /**
    * A class entry, with a reward step when there is something to offer. The
    * entry's ordinary quote is read only for a business with a program; without
-   * one, or when the quote fails, the sign-up goes exactly as before.
+   * one, when the quote fails or either read does not answer in time, the
+   * sign-up goes exactly as before.
    */
   async function startClassBooking(a: Auth, id: number) {
     if (offering.current) return
@@ -2669,16 +2687,19 @@ export function BookingFlow({
     try {
       if (a.token) {
         // Locked before the first read, like offerReward: the program and then the
-        // entry's price are read under the same quiet spinner as the card.
+        // entry's price are read under the same quiet spinner as the card, each
+        // bounded like the card's reads (src/loyalty.ts).
         setBookingErr('')
         setPriceChanged(false)
         setRewardChecking(true)
         setPhase('confirming')
-        if (await ensureProgram()) {
-          const ordinary = await quoteClassEntry(cfg, id, {}, a.token)
+        if (await settleWithin(ensureProgram(), PROGRAM_WAIT_MS)) {
+          const ordinary = await settleWithin(quoteClassEntry(cfg, id, {}, a.token), REWARD_READ_WAIT_MS)
           if (ordinary && await offerReward(a, ordinary, 'class')) return
         }
       }
+    } catch {
+      // Whatever failed on the way to the reward step, the sign-up goes on without it.
     } finally {
       offering.current = false
       setRewardChecking(false)
@@ -3100,7 +3121,17 @@ export function BookingFlow({
   }
 
   // ---- loyalty: the step's lists and the program prefetch ----
-  const rewardView = useMemo(() => (offer ? choiceOf(offer) : null), [offer])
+  // Derived on every render with an offer, the spinner's included: an offer the
+  // step cannot read (offerReward then drops it and books) renders nothing
+  // instead of throwing in render.
+  const rewardView = useMemo(() => {
+    if (!offer) return null
+    try {
+      return choiceOf(offer)
+    } catch {
+      return null
+    }
+  }, [offer])
   const chosenReward = rewardChoice != null ? rewardView?.usable.find((u) => u.reward.id === rewardChoice) ?? null : null
   /** A reward is chosen but its price is not known yet: the booking waits. */
   const rewardPending = rewardChoice != null && chosenReward?.quote?.status !== 'ok'
