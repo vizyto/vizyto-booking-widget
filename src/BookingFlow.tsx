@@ -81,7 +81,7 @@ import { StepSession } from './steps/StepSession'
 import { StepOffering, type OfferingKind } from './steps/StepOffering'
 import { StepRentalItem, groupRentables, rentalOptionKey, type RentalOption } from './steps/StepRentalItem'
 import { StepRentalTime } from './steps/StepRentalTime'
-import { initialRentalOption } from './rentalPrefill'
+import { initialRentalOption, startingRentalOption, startingRentalUnits } from './rentalPrefill'
 import {
   CLAIM_CLOSES,
   DONE_LOYALTY_WAIT_MS,
@@ -496,8 +496,11 @@ export function BookingFlow({
     [rentalOptions, prefill?.resourceId, prefill?.rentalTypeId],
   )
 
-  const [rentalPick, setRentalPick] = useState<RentalOption | null>(initialRental)
-  const [rentalUnits, setRentalUnits] = useState(1)
+  // The prefill's offer, else the only one there is: a business renting one thing
+  // has no list step, so its time step must start on it. The length starts at the
+  // offer's minimum, as a tap on the list does.
+  const [rentalPick, setRentalPick] = useState<RentalOption | null>(() => startingRentalOption(rentalOptions, prefill))
+  const [rentalUnits, setRentalUnits] = useState(() => startingRentalUnits(rentalPick))
   const [rentalParty, setRentalParty] = useState(1)
   const [rentalCounts, setRentalCounts] = useState<DayCounts>({})
   const [rentalSlots, setRentalSlots] = useState<RentalDaySlots | null>(null)
@@ -3388,8 +3391,10 @@ export function BookingFlow({
     setClassPick(null)
     setSessionId(null)
     setSessions(null)
-    setRentalPick(null)
-    setRentalUnits(1)
+    // A business renting one thing starts on it again: it has no list step.
+    const startPick = startingRentalOption(rentalOptions)
+    setRentalPick(startPick)
+    setRentalUnits(startingRentalUnits(startPick))
     setRentalParty(1)
     setRentalCounts({})
     setRentalSlots(null)
@@ -3652,7 +3657,7 @@ export function BookingFlow({
               setRentalPick(o)
               // Length/party/day belong to the PREVIOUS offer - a lane's hours say
               // nothing about a trailer's days.
-              setRentalUnits(Math.max(1, o.head.rentalMinUnits ?? 1))
+              setRentalUnits(startingRentalUnits(o))
               setRentalParty(1)
               setDate('')
               setSlotKey('')

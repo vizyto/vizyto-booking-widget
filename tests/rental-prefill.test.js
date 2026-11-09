@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { initialRentalOption } from '../src/rentalPrefill.ts'
+import { initialRentalOption, startingRentalOption, startingRentalUnits } from '../src/rentalPrefill.ts'
 
 // A pool of type 7 (lanes 28 and 29) and one instance of type 8 exposed per unit,
 // shaped like groupRentables() output.
@@ -39,5 +39,46 @@ describe('initialRentalOption', () => {
   test('no prefill leaves the list', () => {
     expect(initialRentalOption(options, undefined)).toBeNull()
     expect(initialRentalOption(options, {})).toBeNull()
+  })
+
+  test('the only offer is not a prefill: the host page did not choose the rental family', () => {
+    expect(initialRentalOption([pool], undefined)).toBeNull()
+    expect(initialRentalOption([unit], {})).toBeNull()
+  })
+})
+
+describe('startingRentalOption', () => {
+  test('a single pool starts on its calendar, with or without a prefill', () => {
+    expect(startingRentalOption([pool], undefined)).toBe(pool)
+    expect(startingRentalOption([pool], { rentalTypeId: 7 })).toBe(pool)
+    // A member id or an unknown type has no list to fall back to.
+    expect(startingRentalOption([pool], { resourceId: 28 })).toBe(pool)
+    expect(startingRentalOption([pool], { rentalTypeId: 99 })).toBe(pool)
+  })
+
+  test('a single instance starts on its calendar', () => {
+    expect(startingRentalOption([unit], undefined)).toBe(unit)
+    expect(startingRentalOption([unit], { resourceId: 31 })).toBe(unit)
+  })
+
+  test('several offers start on the prefill hit, else on the list', () => {
+    expect(startingRentalOption(options, { rentalTypeId: 7 })).toBe(pool)
+    expect(startingRentalOption(options, { resourceId: 31 })).toBe(unit)
+    expect(startingRentalOption(options, { resourceId: 28 })).toBeNull()
+    expect(startingRentalOption(options, undefined)).toBeNull()
+  })
+
+  test('no offers, no pick', () => {
+    expect(startingRentalOption([], undefined)).toBeNull()
+    expect(startingRentalOption([], { rentalTypeId: 7 })).toBeNull()
+  })
+})
+
+describe('startingRentalUnits', () => {
+  test('the offer\'s minimum length, one unit without one', () => {
+    expect(startingRentalUnits({ ...unit, head: { ...trailer31, rentalMinUnits: 3 } })).toBe(3)
+    expect(startingRentalUnits({ ...unit, head: { ...trailer31, rentalMinUnits: 0 } })).toBe(1)
+    expect(startingRentalUnits(unit)).toBe(1)
+    expect(startingRentalUnits(null)).toBe(1)
   })
 })

@@ -641,7 +641,9 @@ przepływ offline:
 `?business=680` (albo `471`, `472`), `?signedIn=1` (sesja bez kodu SMS), `?theme=dark`, `?prefillClass=41`,
 `?prefillSession=901`, `?prefillService=1`, `?prefillResource=31`, `?prefillRentalType=7`,
 `?prefillKind=rental` (albo `table`), `?onlyServices=1`, `?failRewardQuote=4701`,
-`?claimRefusal=REWARD_CLAIM_LIMIT`.
+`?claimRefusal=REWARD_CLAIM_LIMIT`, a do tego `?oneRental=7` (albo `8`): biznes
+wynajmuje jedną ofertę (pulę torów albo przyczepę) obok usług i zajęć, więc
+wynajem nie ma kroku z listą i od razu otwiera jej kalendarz.
 
 ### Test na prawdziwym API
 

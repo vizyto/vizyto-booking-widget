@@ -28,3 +28,25 @@ export function initialRentalOption(
   }
   return null
 }
+
+/**
+ * The offer the rental time step starts on: the one the prefill names, else the
+ * only offer there is. A business that rents one thing (one instance or one
+ * pool) has no list step, so nothing else would ever pick it: a bare
+ * `kind: 'rental'` link, the offering fork and "Nowa rezerwacja" all land on
+ * its calendar. With several offers and no hit the list asks, as before.
+ *
+ * Not folded into initialRentalOption: that one also says the host page chose
+ * the rental family, which a business renting one thing next to its services
+ * has not.
+ */
+export function startingRentalOption(
+  options: RentalOption[],
+  prefill?: { resourceId?: number; rentalTypeId?: number },
+): RentalOption | null {
+  return initialRentalOption(options, prefill) ?? (options.length === 1 ? options[0]! : null)
+}
+
+/** The length a fresh pick starts at: the offer's minimum (one unit without one). */
+export const startingRentalUnits = (option: RentalOption | null): number =>
+  Math.max(1, option?.head.rentalMinUnits ?? 1)

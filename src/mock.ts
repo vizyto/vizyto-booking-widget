@@ -357,6 +357,13 @@ export async function fetchBusiness(businessId?: number): Promise<Business> {
       capabilities: [],
     }
   }
+  // Test lever: a business that rents one thing (7 = the pool of two lanes, 8 =
+  // the trailer) next to its services and classes. It has no list step, so the
+  // time step must open on that offer.
+  const oneRental = typeof window !== 'undefined' ? Number((window as any).__VIZYTO_MOCK_ONE_RENTAL__) || null : null
+  if (oneRental != null) {
+    return { ...BUSINESS, resources: BUSINESS.resources.filter((r) => !(r as any).isRentable || (r as any).rentalTypeId === oneRental) }
+  }
   return BUSINESS
 }
 

@@ -16,6 +16,8 @@
   // ?onlyServices=1 strips classes and rentables from the mock business, to prove a
   // single-family business (a barbershop) never sees the offering fork.
   if (q.get('onlyServices')) window.__VIZYTO_MOCK_ONLY_SERVICES__ = true;
+  // ?oneRental=7 (the pool of lanes) or 8 (the trailer) keeps one rental offer.
+  if (q.get('oneRental')) window.__VIZYTO_MOCK_ONE_RENTAL__ = Number(q.get('oneRental'));
   if (q.get('prefillKind')) prefill.kind = q.get('prefillKind');
   // ?business=680|681|682|683 picks a per-channel policy lever of the mock (#680, see
   // src/mock.ts), 471|472 a loyalty program (#471); ?signedIn=1 mounts with a

@@ -323,6 +323,36 @@ await clickByText('3 doby'); await page.waitForTimeout(900)
 s = await state()
 ok('dobowy: próg "od 3 dób" przelicza kwotę', /270,00/.test(s.body), s.body.slice(0, 420))
 
+// --- one offer (no list step) ---
+// A business that rents one thing never shows the list, so nothing but the
+// start can pick the offer: a bare kind=rental link, the fork and "Nowa
+// rezerwacja" must all land on its calendar, for a pool and for one instance.
+await page.goto(URL + '?oneRental=7&prefillKind=rental'); await page.waitForTimeout(1200)
+s = await state()
+ok('jedna pula: kind=rental od razu kalendarz toru',
+   s.krok === 'KROK 1 Z 2' && s.stepName === 'WYBÓR TERMINU' && /Przydzielimy wolny egzemplarz na wybrany termin\./.test(s.body) && /Ile osób\?/.test(s.body),
+   `${s.krok} | ${s.stepName} | ${s.body.slice(0, 200)}`)
+await page.goto(URL + '?oneRental=8&prefillKind=rental'); await page.waitForTimeout(1200)
+s = await state()
+ok('jeden egzemplarz: kind=rental od razu kalendarz przyczepy',
+   s.stepName === 'WYBÓR TERMINU' && /Na jak długo\?/.test(s.body) && /1 doba/.test(s.body),
+   `${s.stepName} | ${s.body.slice(0, 200)}`)
+// Next to services the one offer is not a prefill: the fork still asks first.
+await page.goto(URL + '?oneRental=7&signedIn=1'); await page.waitForTimeout(1200)
+s = await state()
+ok('jedna pula obok usług: widelec zostaje', /Wynajem/.test(s.body) && s.stepName !== 'WYBÓR TERMINU', `${s.stepName} | ${s.body.slice(0, 160)}`)
+await clickByText('Wynajem'); await page.waitForTimeout(800)
+s = await state()
+ok('jedna pula z widelca: kalendarz toru', s.stepName === 'WYBÓR TERMINU' && /Ile osób\?/.test(s.body), `${s.stepName} | ${s.body.slice(0, 200)}`)
+await clickByText('11:00'); await page.waitForTimeout(400)
+await next(); await page.waitForTimeout(1600)
+s = await state()
+ok('jedna pula: rezerwacja toru', /Zarezerwowane!/.test(s.body), s.body.slice(0, 200))
+await clickByText('Nowa rezerwacja'); await page.waitForTimeout(500)
+await clickByText('Wynajem'); await page.waitForTimeout(800)
+s = await state()
+ok('jedna pula po "Nowa rezerwacja": znowu kalendarz toru', s.stepName === 'WYBÓR TERMINU' && /Ile osób\?/.test(s.body), `${s.stepName} | ${s.body.slice(0, 200)}`)
+
 // ── 12. A single-family business shows NO fork (regression guard for barbershops).
 await page.goto(URL + '?onlyServices=1')
 await page.waitForTimeout(900)
