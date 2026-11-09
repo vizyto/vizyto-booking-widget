@@ -12,17 +12,35 @@
   if (q.get('prefillSession')) prefill.sessionId = Number(q.get('prefillSession'));
   if (q.get('prefillService')) prefill.serviceId = Number(q.get('prefillService'));
   if (q.get('prefillResource')) prefill.resourceId = Number(q.get('prefillResource'));
+  if (q.get('prefillRentalType')) prefill.rentalTypeId = Number(q.get('prefillRentalType'));
   // ?onlyServices=1 strips classes and rentables from the mock business, to prove a
   // single-family business (a barbershop) never sees the offering fork.
   if (q.get('onlyServices')) window.__VIZYTO_MOCK_ONLY_SERVICES__ = true;
+  // ?oneRental=7 (the pool of lanes) or 8 (the trailer) keeps one rental offer.
+  if (q.get('oneRental')) window.__VIZYTO_MOCK_ONE_RENTAL__ = Number(q.get('oneRental'));
+  // ?noServices=1 strips every service and class: rentals and tables are left;
+  // ?noTables=1 takes the tables pilot away too.
+  if (q.get('noServices')) window.__VIZYTO_MOCK_NO_SERVICES__ = true;
+  if (q.get('noTables')) window.__VIZYTO_MOCK_NO_TABLES__ = true;
   if (q.get('prefillKind')) prefill.kind = q.get('prefillKind');
   // ?business=680|681|682|683 picks a per-channel policy lever of the mock (#680, see
-  // src/mock.ts); ?signedIn=1 mounts with a session, so a write needs no SMS code.
+  // src/mock.ts), 471|472 a loyalty program (#471); ?signedIn=1 mounts with a
+  // session, so a write needs no SMS code.
   var signedIn = !!q.get('signedIn');
+  // ?failRewardQuote=4701 fails the first quote of that reward ("Spróbuj ponownie");
+  // ?claimRefusal=REWARD_CLAIM_LIMIT refuses the first claim with that code.
+  if (q.get('failRewardQuote')) window.__VIZYTO_MOCK_FAIL_REWARD_QUOTE__ = Number(q.get('failRewardQuote'));
+  if (q.get('claimRefusal')) window.__VIZYTO_MOCK_CLAIM_REFUSAL__ = q.get('claimRefusal');
+  // ?slowLoyalty=program|card|entry|price answers that loyalty read too late for the
+  // booking to wait for it; ?brokenLoyalty=entry|reward answers one it cannot read.
+  if (q.get('slowLoyalty')) window.__VIZYTO_MOCK_SLOW_LOYALTY__ = q.get('slowLoyalty');
+  if (q.get('brokenLoyalty')) window.__VIZYTO_MOCK_BROKEN_LOYALTY__ = q.get('brokenLoyalty');
+  // ?theme=dark (or auto) renders the dark tokens, for checks in both themes.
+  var theme = q.get('theme') || undefined;
   VizytoBooking.mount({
     businessId: Number(q.get('business')) || 24, siteKey: 'pk_test', apiBase: 'mock', inline: '#booking',
     prefill: Object.keys(prefill).length ? prefill : undefined,
-    token: signedIn ? 'mock-token' : undefined, userId: signedIn ? 555 : undefined,
+    token: signedIn ? 'mock-token' : undefined, userId: signedIn ? 555 : undefined, theme: theme,
   });
 </script>
 </body></html>

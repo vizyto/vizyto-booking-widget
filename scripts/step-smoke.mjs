@@ -80,6 +80,25 @@ const addService = (name) => page.evaluate((name) => {
   return 'ok'
 }, name)
 
+/** What the mock was asked (src/mock.ts): GET /loyalty reads, rental reads and the last create's input. */
+const journal = () => page.evaluate(() => ({ loyaltyReads: 0, rentalReads: 0, lastCreate: null, ...(window.__VIZYTO_MOCK_JOURNAL__ ?? {}) }))
+/** The CTA bar's two text lines (offer name, meta line). */
+const ctaLines = () => page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  const t = (s) => host.shadowRoot.querySelector(s)?.textContent?.replace(/\s+/g, ' ').trim() ?? null
+  return { svc: t('.vz-cta .vz-cta-svc'), meta: t('.vz-cta .vz-cta-meta') }
+})
+/** Polls the widget until its text matches `re` or `ms` pass; returns the state then. */
+const waitForText = async (re, ms) => {
+  const end = Date.now() + ms
+  let st = await state()
+  while (!re.test(st?.body ?? '') && Date.now() < end) {
+    await page.waitForTimeout(150)
+    st = await state()
+  }
+  return st
+}
+
 const next = () => clickByText('Dalej')
 const back = () => page.evaluate(() => {
   const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
@@ -99,6 +118,24 @@ const closeConfigure = async () => {
   return closed
 }
 const reload = async () => { await page.goto(URL); await page.waitForTimeout(800) }
+/** On a visit's time step: the first free day, then its 10:00 or 11:00. */
+const pickTerm = async () => {
+  await page.evaluate(() => {
+    const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+    host.shadowRoot.querySelector('.vz-day:not(.is-disabled)')?.click()
+  })
+  await page.waitForTimeout(1000)
+  await page.evaluate(() => {
+    const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+    ;[...host.shadowRoot.querySelectorAll('.vz-slot')].find((x) => /1[01]:00/.test(x.textContent))?.click()
+  })
+  await page.waitForTimeout(300)
+}
+/** Hour tiles shown as picked. */
+const pickedSlots = () => page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  return [...host.shadowRoot.querySelectorAll('.vz-slot[aria-pressed="true"], .vz-slot.selected')].map((x) => x.textContent.trim())
+})
 
 /**
  * The mock business sells BOTH visits and classes, so every visit-path scenario
@@ -300,6 +337,14 @@ ok('prefill egzemplarza bez kind: od razu kalendarz przyczepy',
    s.stepName === 'WYBÓR TERMINU' && /Na jak długo\?/.test(s.body) && /1 doba/.test(s.body) && !/Wizyta indywidualna/.test(s.body),
    `${s.stepName} | ${s.body.slice(0, 200)}`)
 
+// A pool's rentalTypeId (the lane card on /r/) opens that pool's calendar: no
+// fork, no list, and the server assigns the lane.
+await page.goto(URL + '?prefillRentalType=7'); await page.waitForTimeout(1200)
+s = await state()
+ok('prefill puli bez kind: od razu kalendarz toru',
+   s.stepName === 'WYBÓR TERMINU' && /Przydzielimy wolny egzemplarz na wybrany termin\./.test(s.body) && /Ile osób\?/.test(s.body) && !/Wizyta indywidualna/.test(s.body),
+   `${s.stepName} | ${s.body.slice(0, 200)}`)
+
 // --- range mode (daily instance) ---
 await reload()
 await clickByText('Wynajem'); await page.waitForTimeout(500)
@@ -314,6 +359,110 @@ ok('dobowy: progi cenowe w pigułkach', /1 doba/.test(s.body) && /120,00/.test(s
 await clickByText('3 doby'); await page.waitForTimeout(900)
 s = await state()
 ok('dobowy: próg "od 3 dób" przelicza kwotę', /270,00/.test(s.body), s.body.slice(0, 420))
+
+// --- one offer (no list step) ---
+// A business that rents one thing never shows the list, so nothing but the
+// start can pick the offer: a bare kind=rental link, the fork and "Nowa
+// rezerwacja" must all land on its calendar, for a pool and for one instance.
+await page.goto(URL + '?oneRental=7&prefillKind=rental'); await page.waitForTimeout(1200)
+s = await state()
+ok('jedna pula: kind=rental od razu kalendarz toru',
+   s.krok === 'KROK 1 Z 2' && s.stepName === 'WYBÓR TERMINU' && /Przydzielimy wolny egzemplarz na wybrany termin\./.test(s.body) && /Ile osób\?/.test(s.body),
+   `${s.krok} | ${s.stepName} | ${s.body.slice(0, 200)}`)
+await page.goto(URL + '?oneRental=8&prefillKind=rental'); await page.waitForTimeout(1200)
+s = await state()
+ok('jeden egzemplarz: kind=rental od razu kalendarz przyczepy',
+   s.stepName === 'WYBÓR TERMINU' && /Na jak długo\?/.test(s.body) && /1 doba/.test(s.body),
+   `${s.stepName} | ${s.body.slice(0, 200)}`)
+// Next to services the one offer is not a prefill: the fork still asks first.
+await page.goto(URL + '?oneRental=7&signedIn=1'); await page.waitForTimeout(1200)
+s = await state()
+ok('jedna pula obok usług: widelec zostaje', /Wynajem/.test(s.body) && s.stepName !== 'WYBÓR TERMINU', `${s.stepName} | ${s.body.slice(0, 160)}`)
+await clickByText('Wynajem'); await page.waitForTimeout(800)
+s = await state()
+ok('jedna pula z widelca: kalendarz toru', s.stepName === 'WYBÓR TERMINU' && /Ile osób\?/.test(s.body), `${s.stepName} | ${s.body.slice(0, 200)}`)
+await clickByText('11:00'); await page.waitForTimeout(400)
+await next(); await page.waitForTimeout(1600)
+s = await state()
+ok('jedna pula: rezerwacja toru', /Zarezerwowane!/.test(s.body), s.body.slice(0, 200))
+await clickByText('Nowa rezerwacja'); await page.waitForTimeout(500)
+await clickByText('Wynajem'); await page.waitForTimeout(800)
+s = await state()
+ok('jedna pula po "Nowa rezerwacja": znowu kalendarz toru', s.stepName === 'WYBÓR TERMINU' && /Ile osób\?/.test(s.body), `${s.stepName} | ${s.body.slice(0, 200)}`)
+
+// A day and an hour picked for a visit are not the lane's: the visit keys its
+// hour in UTC, the lane reads it as a wall clock, so a carried hour lit a tile an
+// hour off and unlocked "Dalej" for an hour never picked there. Switching
+// families starts the other family's term from scratch, both ways.
+await page.goto(URL + '?oneRental=7'); await page.waitForTimeout(1000)
+await toServices()
+await addService('Golenie brzytwą'); await page.waitForTimeout(250)
+await closeConfigure()
+await next(); await page.waitForTimeout(900)
+await pickTerm()
+s = await state()
+ok('wizyta przed zmianą rodziny: godzina wybrana', s.stepName === 'WYBÓR TERMINU' && !s.ctaDisabled && (await pickedSlots()).length === 1, `${s.stepName} | ${s.ctaText}`)
+await back(); await page.waitForTimeout(300)
+await back(); await page.waitForTimeout(300)
+await clickByText('Wynajem'); await page.waitForTimeout(1200)
+s = await state()
+let picked = await pickedSlots()
+ok('jedna pula po wizycie: kalendarz bez godziny z wizyty, Dalej zamknięte',
+   s.stepName === 'WYBÓR TERMINU' && /Ile osób\?/.test(s.body) && s.ctaDisabled && picked.length === 0,
+   `${s.stepName} | ${s.ctaDisabled} | ${picked.join(',')} | ${s.body.slice(0, 200)}`)
+await clickByText('11:00'); await page.waitForTimeout(400)
+await back(); await page.waitForTimeout(300)
+await clickByText('Wizyta indywidualna'); await page.waitForTimeout(400)
+await next(); await page.waitForTimeout(900)
+s = await state()
+picked = await pickedSlots()
+ok('wizyta po wynajmie: termin bez godziny z wynajmu, Dalej zamknięte',
+   s.stepName === 'WYBÓR TERMINU' && s.ctaDisabled && picked.length === 0,
+   `${s.stepName} | ${s.ctaDisabled} | ${picked.join(',')}`)
+
+// Rentals next to tables only: the fork stands on the rental family (the first
+// one), with its single offer picked from the start. The fork still reads nothing
+// of that offer and its CTA names none, as in v1.16.0; the family's own calendar
+// does both.
+for (const one of [7, 8]) {
+  await page.goto(URL + `?noServices=1&oneRental=${one}`); await page.waitForTimeout(1500)
+  s = await state()
+  let j = await journal()
+  let cta = await ctaLines()
+  ok(`wynajem obok stolików (${one}): widelec bez zapytań o wynajem`,
+     s.krok === null && /Wynajem/.test(s.body) && /Stolik/.test(s.body) && j.rentalReads === 0,
+     `${s.krok} | ${j.rentalReads} | ${s.body.slice(0, 160)}`)
+  ok(`wynajem obok stolików (${one}): CTA widelca bez oferty`, cta.svc === null && cta.meta === 'Wybierz, co chcesz zarezerwować', JSON.stringify(cta))
+  await clickByText('Wynajem'); await page.waitForTimeout(1200)
+  s = await state()
+  j = await journal()
+  ok(`wynajem obok stolików (${one}): z widelca kalendarz oferty`,
+     s.stepName === 'WYBÓR TERMINU' && (one === 7 ? /Ile osób\?/ : /Na jak długo\?/).test(s.body) && j.rentalReads > 0,
+     `${s.stepName} | ${j.rentalReads} | ${s.body.slice(0, 200)}`)
+  await back(); await page.waitForTimeout(800)
+  s = await state()
+  cta = await ctaLines()
+  ok(`wynajem obok stolików (${one}): z powrotem na widelcu CTA bez oferty`,
+     s.krok === null && /Stolik/.test(s.body) && cta.svc === null && cta.meta === 'Wybierz, co chcesz zarezerwować', JSON.stringify(cta))
+  // Into the table family and back to the rental one: its calendar again.
+  await clickByText('Stolik'); await page.waitForTimeout(600)
+  await back(); await page.waitForTimeout(300)
+  await clickByText('Wynajem'); await page.waitForTimeout(1200)
+  s = await state()
+  ok(`wynajem obok stolików (${one}): po stolikach znowu kalendarz oferty`,
+     s.stepName === 'WYBÓR TERMINU' && (one === 7 ? /Ile osób\?/ : /Na jak długo\?/).test(s.body), `${s.stepName} | ${s.body.slice(0, 200)}`)
+}
+
+// A business whose only family is one rental opens on its calendar: no fork,
+// no list, and the CTA names the offer.
+for (const one of [7, 8]) {
+  await page.goto(URL + `?noServices=1&noTables=1&oneRental=${one}`); await page.waitForTimeout(1500)
+  s = await state()
+  const cta = await ctaLines()
+  ok(`tylko jedna oferta wynajmu (${one}): od razu jej kalendarz`,
+     s.krok === 'KROK 1 Z 2' && s.stepName === 'WYBÓR TERMINU' && (one === 7 ? /Ile osób\?/ : /Na jak długo\?/).test(s.body) && !!cta.svc,
+     `${s.krok} | ${s.stepName} | ${JSON.stringify(cta)} | ${s.body.slice(0, 200)}`)
+}
 
 // ── 12. A single-family business shows NO fork (regression guard for barbershops).
 await page.goto(URL + '?onlyServices=1')
@@ -412,6 +561,273 @@ await page.evaluate(() => window.VizytoBooking.open({}))
 await page.waitForTimeout(900)
 s = await state()
 ok('683: ponowne otwarcie - widelec bez wizyt', !/Wizyta indywidualna/.test(s.body) && /Zajęcia grupowe/.test(s.body) && /Wynajem/.test(s.body), s.body.slice(0, 200))
+
+// ── 14. Loyalty rewards (#471 F37). 471 = Points, 472 = stamps, 24 = no program.
+/** What has keyboard focus inside the widget (null = it fell out to the page). */
+const focused = () => page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  const a = host.shadowRoot.activeElement
+  if (!a) return null
+  return {
+    role: a.getAttribute('role'),
+    label: a.getAttribute('aria-label'),
+    checked: a.getAttribute('aria-checked'),
+    inConfirm: !!a.closest('.vz-rw-confirm'),
+    cls: a.className || '',
+    text: (a.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+  }
+})
+const fmt = (f) => (f ? `${f.role ?? ''}|${f.label ?? ''}|${f.cls}|${f.text}` : 'null')
+let f
+/** A create input with no reward: the v1.16.0 request (tests/loyalty.test.js pins its bytes). */
+const noReward = (input) => input?.reward == null && !['rewardSelection', 'discountChoice', 'pricingToken'].some((k) => k in input)
+/**
+ * Watches every frame from now on and keeps the first one that shows the
+ * success screen: whether its program block and the card's progress were
+ * already there (nothing may push "Gotowe" down after that frame).
+ */
+const watchDoneFrame = () => page.evaluate(() => {
+  window.__doneFrame = null
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  const tick = () => {
+    const r = host.shadowRoot
+    if (r.querySelector('.vz-done')) {
+      window.__doneFrame = { block: !!r.querySelector('.vz-lp'), progress: !!r.querySelector('.vz-lp-progress') }
+      return
+    }
+    requestAnimationFrame(tick)
+  }
+  requestAnimationFrame(tick)
+})
+const doneFrame = () => page.evaluate(() => window.__doneFrame)
+/** A keyboard press on a button in the reward step: it has focus first, as from Tab. */
+const pressRewardButton = (sel, text) => page.evaluate(({ sel, text }) => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  const b = [...host.shadowRoot.querySelectorAll(sel)].find((x) => x.textContent.includes(text) || (x.getAttribute('aria-label') || '').includes(text))
+  if (!b) return false
+  b.focus()
+  b.click()
+  return true
+}, { sel, text })
+/** A haircut with its day and hour picked, one "Dalej" before the booking. */
+const haircutToTerm = async (query) => {
+  await page.goto(URL + query); await page.waitForTimeout(1000)
+  await toServices()
+  await addService('Strzyżenie'); await page.waitForTimeout(300)
+  await closeConfigure()
+  await next(); await page.waitForTimeout(800)
+  if ((await state()).stepName === 'WYBÓR SPECJALISTY') { await clickByText('Bez preferencji'); await page.waitForTimeout(250); await next(); await page.waitForTimeout(900) }
+  await pickTerm()
+}
+const haircutToReward = async (query) => {
+  await haircutToTerm(query)
+  await next(); await page.waitForTimeout(2200)
+}
+
+await haircutToReward('?business=471&signedIn=1')
+s = await state()
+ok('lojalność: krok Nagroda po terminie (sesja z hosta)', s.title === 'Nagroda', `${s.title} | ${s.body.slice(0, 200)}`)
+// A sub-step of the last step: its number, but its own name - this customer never saw "Twoje dane".
+ok('lojalność: pasek postępu nazywa krok NAGRODA', s.stepName === 'NAGRODA' && /^KROK (\d+) Z \1$/.test(s.krok ?? ''), `${s.krok} | ${s.stepName}`)
+ok('lojalność: postęp klienta', /Punkty: 120/.test(s.body) && /Do poziomu Złoty: 30/.test(s.body), s.body.slice(0, 300))
+ok('lojalność: obecna cena i ceny z nagrodą', /Obecna cena: 50,00/.test(s.body) && /Z nagrodą: 30,00/.test(s.body) && /Z nagrodą: bezpłatnie/.test(s.body), s.body.slice(0, 500))
+ok('lojalność: nagroda z katalogu do odebrania', /Do odebrania za Punkty/.test(s.body) && /Koszt: 100/.test(s.body) && !/Rabat 25%/.test(s.body), s.body.slice(0, 700))
+ok('lojalność: CTA Rezerwuję', s.ctaText === 'Rezerwuję' && !s.ctaDisabled, `${s.ctaText}`)
+
+await pressRewardButton('.vz-rw-claim button', 'Odbierz: Rabat 10%'); await page.waitForTimeout(400)
+s = await state()
+ok('lojalność: potwierdzenie odbioru w miejscu', /Saldo po odebraniu/.test(s.body) && /Anuluj/.test(s.body), s.body.slice(0, 900))
+// Focus never falls out to the page when the control that had it goes away.
+f = await focused()
+ok('lojalność: fokus na tytule potwierdzenia', !!f?.inConfirm && /vz-rw-confirm-title/.test(f.cls), fmt(f))
+await pressRewardButton('.vz-rw-confirm button', 'Anuluj'); await page.waitForTimeout(300)
+f = await focused()
+ok('lojalność: Anuluj oddaje fokus na Odbierz w wierszu', f?.label === 'Odbierz: Rabat 10%', fmt(f))
+await pressRewardButton('.vz-rw-claim button', 'Odbierz: Rabat 10%'); await page.waitForTimeout(400)
+await pressRewardButton('.vz-rw-confirm button', 'Odbierz')
+await page.waitForTimeout(2200)
+s = await state()
+ok('lojalność: odebrana nagroda wybrana z ceną', /Nagroda odebrana/.test(s.body) && /Punkty: 20/.test(s.body) && /Rabat 10%\. Do zapłaty: 45,00/.test(s.body), s.body.slice(0, 700))
+f = await focused()
+ok('lojalność: po odebraniu fokus na wybranej nagrodzie', f?.role === 'radio' && f.checked === 'true' && /Rabat 10%/.test(f.text), fmt(f))
+await watchDoneFrame()
+await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  host.shadowRoot.querySelector('.vz-cta button')?.click()
+})
+await page.waitForTimeout(1800)
+s = await state()
+ok('lojalność: potwierdzenie z nagrodą i blokiem programu', /Zarezerwowane!/.test(s.body) && /NagrodaRabat 10%/.test(s.body) && /Program lojalnościowy/.test(s.body) && /Jak to działa/.test(s.body), s.body.slice(0, 700))
+const frame = await doneFrame()
+ok('lojalność: blok programu z postępem od pierwszej klatki potwierdzenia', !!frame?.block && !!frame?.progress && /Punkty: 20/.test(s.body), `${JSON.stringify(frame)} | ${s.body.slice(0, 700)}`)
+ok('lojalność: bez obietnicy Punktów za rezerwację', !/otrzymasz|dostaniesz \d+ Punkt/i.test(s.body), s.body.slice(0, 700))
+
+// A reward taken by another booking meanwhile: back on the step, price without it.
+await haircutToReward('?business=471&signedIn=1')
+await clickByText('Rabat 15 zł'); await page.waitForTimeout(300)
+await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  host.shadowRoot.querySelector('.vz-cta button')?.click()
+})
+await page.waitForTimeout(2600)
+s = await state()
+ok('lojalność: REWARD_UNAVAILABLE wraca na krok z wyjaśnieniem', s.title === 'Nagroda' && /Ta nagroda jest już niedostępna/.test(s.body) && !/Rabat 15 zł/.test(s.body), s.body.slice(0, 500))
+
+// A promotion that started after the quote: the create-time conflict.
+await page.goto(URL + '?business=471&signedIn=1&prefillRentalType=7'); await page.waitForTimeout(1200)
+await clickByText('18:00'); await page.waitForTimeout(400)
+await next(); await page.waitForTimeout(2200)
+await clickByText('Rabat 20 zł'); await page.waitForTimeout(300)
+await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  host.shadowRoot.querySelector('.vz-cta button')?.click()
+})
+await page.waitForTimeout(2600)
+s = await state()
+ok('lojalność: konflikt z promocją przy zapisie wynajmu', /Ta nagroda nie łączy się z promocją/.test(s.body) && /Niedostępna/.test(s.body) && /Użyjesz jej przy wynajmie bez promocji/.test(s.body), s.body.slice(0, 700))
+
+// A class entry: the expired token with the same total retries silently.
+await page.goto(URL + '?business=471&signedIn=1&prefillSession=912'); await page.waitForTimeout(1500)
+await next(); await page.waitForTimeout(2400)
+s = await state()
+ok('lojalność: zajęcia - CTA Zapisuję się', s.title === 'Nagroda' && s.ctaText === 'Zapisuję się', `${s.title} | ${s.ctaText}`)
+await clickByText('Rabat 20 zł'); await page.waitForTimeout(300)
+await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  host.shadowRoot.querySelector('.vz-cta button')?.click()
+})
+await page.waitForTimeout(2800)
+s = await state()
+ok('lojalność: wygasła wycena - ciche ponowienie', /Zapisano!/.test(s.body) && /20,00/.test(s.body), s.body.slice(0, 400))
+
+// A price that failed: "Spróbuj ponownie" goes with the failure, the card keeps focus.
+await haircutToReward('?business=471&signedIn=1&failRewardQuote=4701')
+s = await state()
+ok('lojalność: nieudana wycena nagrody', /Nie udało się policzyć ceny z nagrodą/.test(s.body) && /Spróbuj ponownie/.test(s.body), s.body.slice(0, 600))
+await pressRewardButton('.vz-rw-fail button', 'Spróbuj ponownie'); await page.waitForTimeout(100)
+f = await focused()
+ok('lojalność: Spróbuj ponownie oddaje fokus karcie nagrody', f?.role === 'radio' && /Rabat 20 zł/.test(f.text), fmt(f))
+await page.waitForTimeout(900)
+s = await state()
+f = await focused()
+ok('lojalność: ponowiona wycena z ceną, fokus zostaje', !/Nie udało się policzyć/.test(s.body) && /Z nagrodą: 30,00/.test(s.body) && f?.role === 'radio' && /Rabat 20 zł/.test(f.text), `${fmt(f)} | ${s.body.slice(0, 400)}`)
+
+// A claim the API refuses and closes: focus goes back to the entry's "Odbierz".
+await haircutToReward('?business=471&signedIn=1&claimRefusal=REWARD_CLAIM_LIMIT')
+await pressRewardButton('.vz-rw-claim button', 'Odbierz: Rabat 10%'); await page.waitForTimeout(400)
+await pressRewardButton('.vz-rw-confirm button', 'Odbierz'); await page.waitForTimeout(1600)
+s = await state()
+f = await focused()
+ok('lojalność: odmowa zamykająca odbiór - fokus na Odbierz w wierszu', !/Saldo po odebraniu/.test(s.body) && f?.label === 'Odbierz: Rabat 10%', `${fmt(f)} | ${s.body.slice(0, 500)}`)
+
+// A refusal that keeps the confirmation open: its own "Odbierz" gets focus back.
+await haircutToReward('?business=471&signedIn=1&claimRefusal=NETWORK')
+await pressRewardButton('.vz-rw-claim button', 'Odbierz: Rabat 10%'); await page.waitForTimeout(400)
+await pressRewardButton('.vz-rw-confirm button', 'Odbierz'); await page.waitForTimeout(1600)
+s = await state()
+f = await focused()
+ok('lojalność: odmowa bez zamknięcia - fokus wraca na Odbierz w potwierdzeniu', /Brak połączenia/.test(s.body) && /Saldo po odebraniu/.test(s.body) && !!f?.inConfirm && /Odbierz/.test(f.text) && !/ghost/.test(f.cls), `${fmt(f)} | ${s.body.slice(0, 500)}`)
+// Enter again on that same button: the claim goes through and the card takes focus.
+await page.keyboard.press('Enter'); await page.waitForTimeout(2200)
+s = await state()
+f = await focused()
+ok('lojalność: ponowny odbiór z klawiatury - fokus na wybranej nagrodzie', /Nagroda odebrana/.test(s.body) && !/Brak połączenia/.test(s.body) && f?.role === 'radio' && f.checked === 'true' && /Rabat 10%/.test(f.text), `${fmt(f)} | ${s.body.slice(0, 400)}`)
+
+// Stamps wording.
+await haircutToReward('?business=472&signedIn=1')
+s = await state()
+ok('lojalność: karta z pieczątkami', /Nagroda gotowa/.test(s.body) && /Do odebrania za pieczątki/.test(s.body) && /Pieczątki: 5/.test(s.body) && /Pieczątki na koncie: 9/.test(s.body), s.body.slice(0, 600))
+
+// No program: the booking goes straight through, as before.
+await haircutToReward('?signedIn=1')
+s = await state()
+ok('lojalność: biznes bez programu rezerwuje bez kroku', /Zarezerwowane!/.test(s.body) && !/Program lojalnościowy/.test(s.body), s.body.slice(0, 300))
+let j = await journal()
+ok('lojalność: bez programu wizyta bez pól nagrody', j.lastCreate?.flow === 'appointment' && noReward(j.lastCreate.input), JSON.stringify(j.lastCreate))
+ok('lojalność: bez programu jedno zapytanie o program na rezerwację', j.loyaltyReads === 1, `${j.loyaltyReads}`)
+
+// An inline embed that opens on its last select step (a single rentable, a term,
+// a pool prefill): a visitor who only looks, or even picks an hour, makes no
+// loyalty request, also where the business has a program.
+for (const query of ['?prefillRentalType=7', '?prefillSession=901', '?business=471&prefillSession=912', '?business=471&signedIn=1&prefillRentalType=7']) {
+  await page.goto(URL + query); await page.waitForTimeout(1400)
+  j = await journal()
+  ok(`lojalność: oglądanie bez zapytania o program (${query})`, j.loyaltyReads === 0, `${j.loyaltyReads}`)
+}
+await clickByText('18:00'); await page.waitForTimeout(600)
+j = await journal()
+ok('lojalność: wybrana godzina bez Dalej nie pyta o program', j.loyaltyReads === 0, `${j.loyaltyReads}`)
+
+// A guest asks for it once, on the details step, so it is ready after the SMS code.
+await page.goto(URL + '?business=471&prefillSession=912'); await page.waitForTimeout(1400)
+await next(); await page.waitForTimeout(500)
+s = await state()
+j = await journal()
+ok('lojalność: dane klienta pytają o program raz', s.stepName === 'TWOJE DANE' && j.loyaltyReads === 1, `${s.stepName} | ${j.loyaltyReads}`)
+
+// A signed-in "Dalej" reads the program first: the term locks at the tap, under a
+// spinner, so a later tap cannot change what is booked (the mock answers in 120 ms).
+for (const [query, label] of [['?signedIn=1&prefillSession=901', 'bez programu'], ['?business=471&signedIn=1&prefillSession=912', 'z programem']]) {
+  await page.goto(URL + query); await page.waitForTimeout(1400)
+  await next(); await page.waitForTimeout(40)
+  const locked = await page.evaluate(() => {
+    const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+    const r = host.shadowRoot
+    return { sessions: !!r.querySelector('.vz-sessions'), spinner: !!r.querySelector('.vz-spin') }
+  })
+  ok(`lojalność: Dalej blokuje termin od razu (${label})`, !locked.sessions && locked.spinner, JSON.stringify(locked))
+}
+await page.goto(URL + '?signedIn=1&prefillSession=901'); await page.waitForTimeout(1400)
+await next(); await page.waitForTimeout(1800)
+s = await state()
+j = await journal()
+ok('lojalność: bez programu zapis na zajęcia bez pól nagrody', /Zapisano!/.test(s.body) && j.lastCreate?.flow === 'class' && noReward(j.lastCreate.input), `${JSON.stringify(j.lastCreate)} | ${s.body.slice(0, 200)}`)
+await page.goto(URL + '?signedIn=1&prefillRentalType=7'); await page.waitForTimeout(1400)
+await clickByText('18:00'); await page.waitForTimeout(500)
+await next(); await page.waitForTimeout(1800)
+s = await state()
+j = await journal()
+ok('lojalność: bez programu wynajem bez pól nagrody', /Zarezerwowane!/.test(s.body) && j.lastCreate?.flow === 'rental' && noReward(j.lastCreate.input), `${JSON.stringify(j.lastCreate)} | ${s.body.slice(0, 200)}`)
+
+// A loyalty read that does not answer in time never holds the booking on its
+// spinner (it has no way back): after its wait the booking goes out as without a
+// program, and the late answer (the mock's 6 s, past every wait) changes nothing.
+for (const [slow, query, done, flow] of [
+  ['program', '?business=471&signedIn=1', /Zarezerwowane!/, 'appointment'],
+  ['card', '?business=471&signedIn=1', /Zarezerwowane!/, 'appointment'],
+  ['price', '?business=471&signedIn=1', /Zarezerwowane!/, 'appointment'],
+  ['entry', '?business=471&signedIn=1&prefillSession=912', /Zapisano!/, 'class'],
+]) {
+  if (flow === 'class') { await page.goto(URL + `${query}&slowLoyalty=${slow}`); await page.waitForTimeout(1500) }
+  else await haircutToTerm(`${query}&slowLoyalty=${slow}`)
+  const tapped = Date.now()
+  await next()
+  s = await waitForText(done, 7000)
+  const took = Date.now() - tapped
+  j = await journal()
+  ok(`lojalność: odczyt bez odpowiedzi (${slow}) - rezerwacja bez nagrody`,
+     done.test(s.body) && j.lastCreate?.flow === flow && noReward(j.lastCreate.input) && took < 5500,
+     `${took} ms | ${JSON.stringify(j.lastCreate)} | ${s.body.slice(0, 200)}`)
+  await page.waitForTimeout(6500)
+  s = await state()
+  ok(`lojalność: spóźniona odpowiedź (${slow}) niczego nie zmienia`, done.test(s.body) && s.title !== 'Nagroda', `${s.title} | ${s.body.slice(0, 200)}`)
+}
+
+// A loyalty answer the reward step cannot read (a class entry's line, a reward
+// without its terms): the booking goes on without the step, not on a spinner.
+for (const [broken, query, done, flow] of [
+  ['entry', '?business=471&signedIn=1&prefillSession=912', /Zapisano!/, 'class'],
+  ['reward', '?business=471&signedIn=1', /Zarezerwowane!/, 'appointment'],
+]) {
+  if (flow === 'class') { await page.goto(URL + `${query}&brokenLoyalty=${broken}`); await page.waitForTimeout(1500) }
+  else await haircutToTerm(`${query}&brokenLoyalty=${broken}`)
+  await next()
+  s = await waitForText(done, 5000)
+  j = await journal()
+  ok(`lojalność: nieczytelna odpowiedź (${broken}) - rezerwacja bez kroku Nagroda`,
+     done.test(s.body) && j.lastCreate?.flow === flow && noReward(j.lastCreate.input),
+     `${JSON.stringify(j.lastCreate)} | ${s.body.slice(0, 200)}`)
+}
 
 await browser.close()
 console.log(`\n${pass} pass, ${fail} fail`)

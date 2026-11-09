@@ -67,7 +67,7 @@ export function PhoneField({
     if (!open) return
     const onDoc = (e: MouseEvent) => {
       // composedPath (not e.target) so this works inside the widget's shadow
-      // root — events get retargeted to the host at the document boundary,
+      // root - events get retargeted to the host at the document boundary,
       // which would otherwise read as an outside click on every interaction.
       if (wrapRef.current && !e.composedPath().includes(wrapRef.current)) setOpen(false)
     }

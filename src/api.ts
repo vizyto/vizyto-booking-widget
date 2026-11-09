@@ -229,6 +229,10 @@ export type PriceQuoteLine = {
   priorPrice: number | null
   advertised: boolean
   badge: string | null
+  /** The line's loyalty prices (#471 F10): regular B, adjusted C, promotion P, tier. */
+  loyalty?: LoyaltyPriceSnapshot | null
+  /** Present on a quote with a selected reward, conflict pricing included. */
+  rewardEligibility?: RewardLineEligibility
 }
 export type PriceQuote = {
   lines: PriceQuoteLine[]
@@ -238,7 +242,145 @@ export type PriceQuote = {
   advertised: boolean
   badge: string | null
   assignedResourceId: number | null
+  /** Signed for five minutes; sent back on create with the same reward selection. */
+  pricingToken?: string
+  /** The reward's allocation when the quote was asked with a reward selection. */
+  reward?: QuoteReward | null
 }
+
+// ---- loyalty (vizyto #471 F37) ----------------------------------------------
+// Local copies of the public contract (docs/BOOKING_WIDGET.md "Loyalty"), like the
+// promotion types above: the widget is released on its own and cannot import
+// @vizyto/shared. Every field the widget does not read is left out.
+export type LoyaltyPriceSnapshot = {
+  basePrice: number
+  adjustmentPrice: number
+  source: string
+  tierId?: number
+  bonusPercent?: number
+  promotionId?: number
+  promotionPrice?: number
+  rewardId?: number
+  rewardDiscount?: number
+}
+export type RewardLineEligibility = {
+  eligible: boolean
+  reason: 'promotion_not_stackable' | 'outside_reward_scope' | 'price_unavailable' | null
+}
+export type RewardAllocation = {
+  index: number
+  price: number
+  discount: number
+  promotionPrice?: number
+  targetKey: string
+  basePrice?: number
+  adjustmentPrice?: number
+}
+export type QuoteReward = { rewardId: number; discount: number; unusedAmount: number; lines: RewardAllocation[] }
+
+/** What a reward or a promotion targets: "service:12", "service_variant:12:45", "addon:5", ... */
+export type LoyaltyTarget = {
+  kind: 'service' | 'service_variant' | 'group_class_entry' | 'enrollment_option' | 'rental_type' | 'rental_resource' | 'addon'
+  businessServiceId?: number | null
+  variantMinutes?: number | null
+  groupClassId?: number | null
+  enrollmentOptionId?: number | null
+  rentalTypeId?: number | null
+  resourceId?: number | null
+  addonId?: number | null
+}
+export type LoyaltyEarnRule = {
+  id: number
+  kind: 'amount' | 'visit' | 'online_booking' | 'review'
+  points: number
+  amountUnitGrosze: number | null
+  minimumTotalGrosze: number | null
+  includePassVisits: boolean
+  includeFreeRewardVisits: boolean
+}
+export type LoyaltyTier = {
+  id: number
+  name: string
+  threshold: number
+  bonusPercent: number | null
+  stacksWithPromotions: boolean
+}
+/** `GET B/loyalty`: an active program (404 without one). */
+export type LoyaltyProgramPublic = {
+  id: number
+  status: 'draft' | 'active' | 'paused' | 'closed'
+  /** False = referrals only: no card, rules or rewards (the widget shows nothing). */
+  earningEnabled: boolean
+  welcomePoints: number | null
+  pointsExpiryMonths: number | null
+  termsText: string | null
+  termsVersion: number | null
+  card: { displayMode: 'points' | 'stamps' | null }
+  tiers: LoyaltyTier[]
+  earnRules: LoyaltyEarnRule[]
+  stampReward: { catalogId: number; stampCount: number } | null
+}
+export type LoyaltyRewardKind = 'amount' | 'percent' | 'free_item'
+/** `GET B/loyalty/rewards`: one catalog entry; `id` is the catalog id. */
+export type LoyaltyCatalogReward = {
+  id: number
+  name: string
+  kind: LoyaltyRewardKind
+  value: number
+  pointsCostMin: number
+  pointsCostMax: number
+  pointsCostStep: number
+  valueAtMin: number
+  valuePerStep: number
+  minimumTotalGrosze: number | null
+  stacksWithPromotions: boolean
+  onSiteOnly: boolean
+  validityDays: number | null
+  scope: 'all' | 'selected'
+  targets: Array<LoyaltyTarget & { id: number; targetKey: string; pointsCostOverride?: number | null }>
+}
+/** `GET B/loyalty/me`: the session's own card here (null without one). */
+export type LoyaltyWallet = {
+  balance: number
+  tierPoints: number
+  tier: { currentTier: LoyaltyTier | null; nextTier: LoyaltyTier | null; pointsToNext: number; progress: number }
+  stamps: { catalogId: number; stampCount: number; filled: number } | null
+  program: LoyaltyProgramPublic
+}
+/** Frozen at claim: what the reward gives, whatever the catalog says later. */
+export type LoyaltyRewardTerms = {
+  name: string
+  kind: LoyaltyRewardKind
+  resolvedValue: number
+  scope: 'all' | 'selected'
+  targets: Array<LoyaltyTarget & { targetKey?: string | null }>
+  selectedTargetKey: string | null
+  minimumTotalGrosze: number | null
+  onSiteOnly: boolean
+  /** Historical rewards predate the flag: missing means false. */
+  stacksWithPromotions?: boolean
+}
+/** `GET B/loyalty/me/rewards`: `reserved` is held by another booking. */
+export type MyLoyaltyReward = {
+  id: number
+  catalogId: number
+  status: 'available' | 'reserved' | 'redeemed' | 'expired'
+  expiresAt: string | null
+  termsSnapshot: LoyaltyRewardTerms
+}
+export type RewardSelection = { rewardId: number; lineIndexes: number[] }
+/** Sent on create next to `expectedTotal` (the reward quote's total). */
+export type RewardFields = { rewardSelection: RewardSelection; discountChoice: 'reward'; pricingToken: string }
+export type ClaimInput = { catalogId: number; idempotencyKey: string; pointsCost: number; targetKey?: string | null }
+export type ClaimResult = { ok: true; rewardId: number } | { ok: false; code: string; message?: string }
+/** Which quote route prices a reward: the cart of a visit, a rental window or one class entry. */
+export type RewardQuoteTarget =
+  | { flow: 'appointment'; payload: AppointmentQuoteRequest }
+  | { flow: 'rental'; payload: RentalQuoteRequest }
+  | { flow: 'class'; sessionId: number }
+export type RewardQuoteResult =
+  | { ok: true; quote: PriceQuote }
+  | { ok: false; code: string; lineIndexes?: number[]; message?: string }
 export type PublicPromotionSummary = {
   maxSavePercent: number | null
   services: Array<{ businessServiceId: number; saveUpToPercent: number; priorPrice: number; priorPriceIsFrom: boolean }>
@@ -290,7 +432,31 @@ export type RentalQuoteRequest = {
   bookedById?: number | null
 }
 export type PriceChangedError = { code: 'PRICE_CHANGED'; message: string; pricing: PriceQuote }
-export type BookingWriteResult = { ok: true; data: any } | { ok: false; code: string; pricing?: PriceQuote }
+/**
+ * `pricing` comes back with PRICE_CHANGED and the reward refusals that carry a
+ * fresh quote; `lineIndexes` with a line conflict (REWARD_DISCOUNT_CONFLICT);
+ * `message` is the API's own Polish sentence where it has one.
+ */
+export type BookingWriteResult =
+  | { ok: true; data: any }
+  | { ok: false; code: string; pricing?: PriceQuote; lineIndexes?: number[]; message?: string }
+
+/** Refusals whose body carries a quote the flow can show or book with. */
+const PRICED_FAILURES: ReadonlySet<string> = new Set(['PRICE_CHANGED', 'REWARD_QUOTE_EXPIRED', 'REWARD_DISCOUNT_CONFLICT'])
+
+/** A refused create as the flow reads it: the code, plus the quote, lines and sentence when present. */
+function writeFailure(status: number, data: any): BookingWriteResult {
+  const code = typeof data?.code === 'string' ? data.code : `HTTP_${status}`
+  const pricing = PRICED_FAILURES.has(code) ? normalizeQuote(data?.pricing) ?? undefined : undefined
+  const indexes = data?.details?.lineIndexes
+  return {
+    ok: false,
+    code,
+    ...(pricing ? { pricing } : {}),
+    ...(Array.isArray(indexes) ? { lineIndexes: indexes.filter((i: unknown) => Number.isInteger(i)) } : {}),
+    ...(typeof data?.message === 'string' && data.message !== code ? { message: data.message } : {}),
+  }
+}
 
 // mode: 'login' = the phone already belongs to a Vizyto account and the SAME
 // code will log the customer into it (no duplicate guest account); 'guest' =
@@ -443,10 +609,10 @@ export async function fetchTimetable(cfg: Cfg, p: { from: string; to: string }):
  */
 export async function registerForSession(
   cfg: Cfg,
-  p: { sessionId: number; bookedById: number; notes?: string; idempotencyKey: string; expectedTotal?: number | null },
+  p: { sessionId: number; bookedById: number; notes?: string; idempotencyKey: string; expectedTotal?: number | null; reward?: RewardFields | null },
   token: string | null,
 ): Promise<BookingWriteResult> {
-  if (cfg.mock) return mock.registerForSession({ sessionId: p.sessionId, expectedTotal: p.expectedTotal }, token)
+  if (cfg.mock) return mock.registerForSession({ sessionId: p.sessionId, expectedTotal: p.expectedTotal, reward: p.reward }, token)
   try {
     const extra: Record<string, string> = { 'Idempotency-Key': p.idempotencyKey }
     if (token) extra.authorization = `Bearer ${token}`
@@ -455,11 +621,17 @@ export async function registerForSession(
       {
         method: 'POST',
         headers: headers(cfg, extra),
-        body: JSON.stringify({ bookedById: p.bookedById, notes: p.notes, ...(p.expectedTotal !== undefined ? { expectedTotal: p.expectedTotal } : {}) }),
+        body: JSON.stringify({
+          bookedById: p.bookedById,
+          notes: p.notes,
+          ...(p.expectedTotal !== undefined ? { expectedTotal: p.expectedTotal } : {}),
+          // A class reward covers this one entry (#471 F37); absent = as before.
+          ...(p.reward ?? {}),
+        }),
       },
     )
     const data = await r.json().catch(() => ({}))
-    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}`, pricing: data?.code === 'PRICE_CHANGED' ? normalizeQuote(data?.pricing) ?? undefined : undefined }
+    if (!r.ok) return writeFailure(r.status, data)
     return { ok: true, data }
   } catch {
     return { ok: false, code: 'NETWORK' }
@@ -547,10 +719,12 @@ export async function checkRentalRange(
 
 export async function createRental(
   cfg: Cfg,
-  p: RentalTarget & { startDate: string; endDate: string; bookedById: number; notes?: string; partySize?: number | null; idempotencyKey: string; expectedTotal?: number | null },
+  p: RentalTarget & { startDate: string; endDate: string; bookedById: number; notes?: string; partySize?: number | null; idempotencyKey: string; expectedTotal?: number | null; reward?: RewardFields | null },
   token: string | null,
 ): Promise<BookingWriteResult> {
-  if (cfg.mock) return mock.createRental({ startDate: p.startDate, expectedTotal: p.expectedTotal }, token)
+  if (cfg.mock) {
+    return mock.createRental({ resourceId: p.resourceId, rentalTypeId: p.rentalTypeId, startDate: p.startDate, endDate: p.endDate, expectedTotal: p.expectedTotal, reward: p.reward }, token)
+  }
   try {
     const extra: Record<string, string> = { 'Idempotency-Key': p.idempotencyKey }
     if (token) extra.authorization = `Bearer ${token}`
@@ -566,10 +740,11 @@ export async function createRental(
         notes: p.notes,
         partySize: p.partySize ?? null,
         ...(p.expectedTotal !== undefined ? { expectedTotal: p.expectedTotal } : {}),
+        ...(p.reward ?? {}),
       }),
     })
     const data = await r.json().catch(() => ({}))
-    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}`, pricing: data?.code === 'PRICE_CHANGED' ? normalizeQuote(data?.pricing) ?? undefined : undefined }
+    if (!r.ok) return writeFailure(r.status, data)
     return { ok: true, data }
   } catch {
     return { ok: false, code: 'NETWORK' }
@@ -717,6 +892,10 @@ const normalizeQuote = (value: any): PriceQuote | null => {
     advertised: value.advertised === true,
     badge: typeof value.badge === 'string' ? value.badge : null,
     assignedResourceId: typeof value.assignedResourceId === 'number' ? value.assignedResourceId : null,
+    // A reward quote (#471 F37): kept only when present, so an ordinary quote
+    // keeps exactly the shape it always had.
+    ...(typeof value.pricingToken === 'string' ? { pricingToken: value.pricingToken } : {}),
+    ...(value.reward && typeof value.reward === 'object' ? { reward: value.reward as QuoteReward } : {}),
   }
 }
 
@@ -796,6 +975,166 @@ export async function quoteRental(
     return r.ok ? normalizeQuote(await r.json()) : null
   } catch {
     return null
+  }
+}
+
+// ---- loyalty (vizyto #471 F37) ----------------------------------------------
+// Everything lives under the public business prefix: the widget's session gets
+// 401 on /api/protected. Reads are fail-soft like the promotion reads above: a
+// business without a program, an older API or a network error all look like "no
+// loyalty", and the booking goes on exactly as before.
+
+const loyaltyBase = (cfg: Cfg) => `${cfg.apiBase}/api/public/businesses/${cfg.businessId}/loyalty`
+
+/** The public program; null without one (404), on any error, and for a referrals-only program. */
+export async function getLoyaltyProgram(cfg: Cfg): Promise<LoyaltyProgramPublic | null> {
+  if (cfg.mock) return mock.getLoyaltyProgram(cfg.businessId)
+  try {
+    const r = await fetch(loyaltyBase(cfg), { headers: viewerHeaders(cfg) })
+    if (!r.ok) return null
+    const program = (await r.json()) as LoyaltyProgramPublic | null
+    if (!program || typeof program !== 'object' || program.earningEnabled === false) return null
+    return program
+  } catch {
+    return null
+  }
+}
+
+/** The public reward catalog; [] on any failure. */
+export async function getLoyaltyCatalog(cfg: Cfg): Promise<LoyaltyCatalogReward[]> {
+  if (cfg.mock) return mock.getLoyaltyCatalog(cfg.businessId)
+  try {
+    const r = await fetch(`${loyaltyBase(cfg)}/rewards`, { headers: viewerHeaders(cfg) })
+    if (!r.ok) return []
+    const data = await r.json()
+    return Array.isArray(data) ? (data as LoyaltyCatalogReward[]) : []
+  } catch {
+    return []
+  }
+}
+
+/** The session's own card in this business; null without a session, a card or a program. */
+export async function getMyLoyalty(cfg: Cfg, token: string | null | undefined): Promise<LoyaltyWallet | null> {
+  if (!token) return null
+  if (cfg.mock) return mock.getMyLoyalty(cfg.businessId, token)
+  try {
+    const r = await fetch(`${loyaltyBase(cfg)}/me`, { headers: viewerHeaders(cfg, token) })
+    if (!r.ok) return null
+    const data = await r.json()
+    return data && typeof data === 'object' ? (data as LoyaltyWallet) : null
+  } catch {
+    return null
+  }
+}
+
+/** The card's rewards (available and reserved); [] without a card or on any failure. */
+export async function getMyLoyaltyRewards(cfg: Cfg, token: string | null | undefined): Promise<MyLoyaltyReward[]> {
+  if (!token) return []
+  if (cfg.mock) return mock.getMyLoyaltyRewards(cfg.businessId, token)
+  try {
+    const r = await fetch(`${loyaltyBase(cfg)}/me/rewards`, { headers: viewerHeaders(cfg, token) })
+    if (!r.ok) return []
+    const data = await r.json()
+    return Array.isArray(data) ? (data as MyLoyaltyReward[]) : []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Claim a catalog reward for Points (or stamps). Guarded like a create: the site
+ * key goes in the headers, identity comes from the Bearer. A retry with the same
+ * key returns the same reward.
+ */
+export async function claimLoyaltyReward(cfg: Cfg, p: ClaimInput, token: string | null): Promise<ClaimResult> {
+  if (cfg.mock) return mock.claimLoyaltyReward(cfg.businessId, p, token)
+  try {
+    const extra: Record<string, string> = {}
+    if (token) extra.authorization = `Bearer ${token}`
+    const r = await fetch(`${loyaltyBase(cfg)}/rewards/${p.catalogId}/claim`, {
+      method: 'POST',
+      headers: headers(cfg, extra),
+      body: JSON.stringify({
+        idempotencyKey: p.idempotencyKey,
+        pointsCost: p.pointsCost,
+        ...(p.targetKey ? { targetKey: p.targetKey } : {}),
+      }),
+    })
+    const data = await r.json().catch(() => ({}))
+    if (!r.ok || typeof data?.rewardId !== 'number') {
+      const code = typeof data?.code === 'string' ? data.code : `HTTP_${r.status}`
+      return { ok: false, code, ...(typeof data?.message === 'string' && data.message !== code ? { message: data.message } : {}) }
+    }
+    return { ok: true, rewardId: data.rewardId }
+  } catch {
+    return { ok: false, code: 'NETWORK' }
+  }
+}
+
+/**
+ * The ordinary price of one class entry for this viewer (promotion and tier, as
+ * the API prices them). The public route: the protected one refuses widget tokens.
+ */
+export async function quoteClassEntry(
+  cfg: Cfg,
+  sessionId: number,
+  input: { rewardSelection?: RewardSelection; discountChoice?: 'reward' } = {},
+  token?: string | null,
+): Promise<PriceQuote | null> {
+  if (cfg.mock) return mock.quoteClassEntry(sessionId)
+  try {
+    const r = await fetch(`${cfg.apiBase}/api/public/businesses/${cfg.businessId}/group-class-sessions/${sessionId}/quote`, {
+      method: 'POST',
+      headers: viewerHeaders(cfg, token),
+      body: JSON.stringify(input),
+    })
+    return r.ok ? normalizeQuote(await r.json()) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Price one reward on this booking. Unlike the ordinary quotes it tells a refusal
+ * (409 REWARD_DISCOUNT_CONFLICT with the conflicting `lineIndexes`,
+ * REWARD_UNAVAILABLE, a paused program) apart from a network failure, because
+ * each leads somewhere else.
+ */
+export async function quoteWithReward(
+  cfg: Cfg,
+  target: RewardQuoteTarget,
+  selection: RewardSelection,
+  token: string | null,
+): Promise<RewardQuoteResult> {
+  if (cfg.mock) return mock.quoteWithReward(cfg.businessId, target, selection, token)
+  const base = `${cfg.apiBase}/api/public/businesses/${cfg.businessId}`
+  const url = target.flow === 'appointment'
+    ? `${base}/appointments/quote`
+    : target.flow === 'rental'
+      ? `${base}/rentals/quote`
+      : `${base}/group-class-sessions/${target.sessionId}/quote`
+  const payload = target.flow === 'class' ? {} : target.payload
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: viewerHeaders(cfg, token),
+      body: JSON.stringify({ ...payload, rewardSelection: selection, discountChoice: 'reward' }),
+    })
+    const data = await r.json().catch(() => null)
+    if (r.ok) {
+      const quote = normalizeQuote(data)
+      return quote ? { ok: true, quote } : { ok: false, code: 'INVALID_QUOTE' }
+    }
+    const code = typeof data?.code === 'string' ? data.code : `HTTP_${r.status}`
+    const indexes = data?.details?.lineIndexes
+    return {
+      ok: false,
+      code,
+      ...(Array.isArray(indexes) ? { lineIndexes: indexes.filter((i: unknown) => Number.isInteger(i)) } : {}),
+      ...(typeof data?.message === 'string' && data.message !== code ? { message: data.message } : {}),
+    }
+  } catch {
+    return { ok: false, code: 'NETWORK' }
   }
 }
 
@@ -1265,10 +1604,10 @@ export async function joinTableWaitlist(
 
 export async function createAppointment(
   cfg: Cfg,
-  p: { items: CartItem[]; startDate: string; bookedById: number; notes?: string; idempotencyKey: string; expectedTotal?: number | null },
+  p: { items: CartItem[]; startDate: string; bookedById: number; notes?: string; idempotencyKey: string; expectedTotal?: number | null; reward?: RewardFields | null },
   token: string | null,
 ): Promise<BookingWriteResult> {
-  if (cfg.mock) return mock.createAppointment({ startDate: p.startDate, expectedTotal: p.expectedTotal }, token)
+  if (cfg.mock) return mock.createAppointment({ items: p.items, startDate: p.startDate, expectedTotal: p.expectedTotal, reward: p.reward }, token)
   try {
     const extra: Record<string, string> = { 'Idempotency-Key': p.idempotencyKey }
     if (token) extra.authorization = `Bearer ${token}`
@@ -1285,10 +1624,12 @@ export async function createAppointment(
         ...(p.expectedTotal !== undefined ? { expectedTotal: p.expectedTotal } : {}),
         // vizyto.com's short link: where the visitor came from. Visits only.
         ...(cfg.entryPoint ? { entryPoint: cfg.entryPoint } : {}),
+        // The reward of the quote this booking was priced with (#471 F37).
+        ...(p.reward ?? {}),
       }),
     })
     const data = await r.json().catch(() => ({}))
-    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}`, pricing: data?.code === 'PRICE_CHANGED' ? normalizeQuote(data?.pricing) ?? undefined : undefined }
+    if (!r.ok) return writeFailure(r.status, data)
     return { ok: true, data }
   } catch {
     return { ok: false, code: 'NETWORK' }

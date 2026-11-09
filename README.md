@@ -33,7 +33,9 @@ weryfikacja SMS i potwierdzenie):
 | wynajem | Przedmiot → Termin → Dane | 3, albo 2 przy jednej ofercie (trafiony prefill egzemplarza zaczyna od kroku 2) |
 
 Biznes, który sprzedaje więcej niż jedną rodzinę, dostaje przed licznikiem
-pytanie „co rezerwujesz” (bez numeru kroku).
+pytanie „co rezerwujesz” (bez numeru kroku). Klient z nagrodą programu
+lojalnościowego tej firmy widzi po weryfikacji jeszcze krok „Nagroda” (zob.
+„Program lojalnościowy”).
 
 Wariant **inline**: wstaw `<div data-vizyto-booking></div>` w miejscu, gdzie
 kreator ma się pojawić na stałe (przycisk się wtedy nie pokazuje).
@@ -251,6 +253,68 @@ monorepo. Tak samo jak CLIENT i WEB:
 Starsze API bez `bookingChannels`: wizyty idą za
 `hasWebsiteReservationsEnabled`, reszta zostaje otwarta (jak przed #680).
 
+## Program lojalnościowy (vizyto #471)
+
+Gdy firma prowadzi aktywny program (Punkty albo karta z pieczątkami), widget,
+tak jak aplikacja Vizyto i vizyto.com, pozwala klientowi wybrać nagrodę przy
+rezerwacji i pokazuje jego postęp. Program dotyczy tylko tej firmy. Kontrakt opisuje `docs/BOOKING_WIDGET.md`
+(„Loyalty (#471 F37)”) w monorepo; widget trzyma lokalną kopię reguł w
+`src/loyalty.ts` (bliźniak `bookingRewards.ts` i wyboru nagrody z
+`packages/shared`).
+
+Kiedy pojawia się krok **„Nagroda”**:
+
+- dopiero gdy wiadomo, kto rezerwuje: po kodzie SMS, po zalogowaniu albo od razu
+  przy sesji przekazanej przez stronę (`data-vizyto-token`), przed zapisem
+  rezerwacji;
+- tylko dla wizyty, wynajmu i pojedynczego wejścia na zajęcia; rezerwacja
+  stolika i zapis na listę oczekujących nie korzystają z programu;
+- tylko gdy klient ma kartę w tej firmie i jest co wybrać: nagroda, która obniża
+  cenę tej rezerwacji, albo nagroda z katalogu, za którą wystarczy Punktów
+  (pieczątek). W przeciwnym razie rezerwacja idzie od razu, po cenie bez nagrody,
+  bez dodatkowego kroku. Bezpłatna rezerwacja nie pokazuje kroku.
+
+Na kroku klient widzi swój postęp („Punkty: 120”, poziom, „Do nagrody: 2”),
+„Bez nagrody” z obecną ceną i każdą nagrodę z ceną policzoną przez serwer („Z
+nagrodą: 30,00 zł”). Nagroda, której nie da się tu użyć (promocja, minimalna
+kwota, brak oszczędności), mówi dlaczego i zostaje na koncie klienta. Nagrodę z
+katalogu odbiera się w miejscu („Odbierz”, potwierdzenie pod listą) i od razu
+trafia ona do tej rezerwacji. Zasady programu i regulamin firmy są zwinięte pod
+listą.
+
+Ekran potwierdzenia pokazuje użytą nagrodę i zapłaconą cenę, a pod podsumowaniem
+krótki blok „Program lojalnościowy”: opis programu, postęp klienta (gdy ma już
+kartę) i zwinięte „Jak to działa” oraz „Regulamin programu”. Widget nigdy nie
+obiecuje Punktów za tę rezerwację: przyznaje je firma przy rozliczeniu wizyty.
+Blok czyta się równolegle z zapisem rezerwacji i pokazuje od razu w całości;
+gdy odczyt nie zdąży, ekran pojawia się bez bloku, żeby nic nie przesuwało
+przycisków po pierwszej klatce.
+
+Odczyty są oszczędne i odporne na błędy: program pobiera się raz, dopiero gdy
+klient zaczyna podawać dane kontaktowe, a przy sesji przekazanej przez stronę
+po „Dalej” (krok wyboru znika wtedy od razu pod wskaźnikiem ładowania). Osoba,
+która tylko przegląda ofertę, nie wysyła żadnego zapytania o program, także w
+osadzeniu otwartym od razu na kalendarzu albo grafiku, a firma bez programu
+kosztuje jedno 404 na rezerwację. Każdy błąd odczytu znaczy „bez programu” i
+rezerwacja idzie dokładnie jak wcześniej, z tym samym zapytaniem. Tak samo
+odczyt, który nie zdąży (program 1,5 s; karta z nagrodami i katalogiem, cena
+wejścia na zajęcia i wszystkie wyceny nagród po 3 s), i odpowiedź, z której nie
+da się zbudować kroku: wskaźnik ładowania po „Dalej” nie ma drogi wstecz, więc
+rezerwacja nigdy na nich nie utknie, a spóźniona odpowiedź niczego już nie
+zmienia.
+
+Odmowy przy zapisie z nagrodą (przed zwykłą obsługą błędów, która uznałaby je
+za utracony termin): wygasła wycena z tą samą ceną ponawia zapis po cichu, z
+inną ceną prosi o potwierdzenie („Zmieniła się cena z nagrodą”); zmiana ceny,
+konflikt z promocją, nagroda użyta gdzie indziej i wstrzymany program wracają
+na krok „Nagroda” z wyjaśnieniem i ceną bez nagrody. Klucz idempotencji
+rezerwacji z nagrodą ma dopisek `-r<id nagrody>`, jak w aplikacji i na
+vizyto.com.
+
+Poza zakresem: **kody poleceń** (API odrzuca je dla sesji widgetu, link polecający
+prowadzi do rezerwacji na vizyto.com), **karty podarunkowe**, historia Punktów i
+nagród (aplikacja Vizyto i vizyto.com).
+
 ## Wymagane endpointy API (public)
 
 Widget korzysta z (wszystkie pod `/api/public`, nagłówek `x-vizyto-site-key`,
@@ -313,6 +377,20 @@ zalogowanego gościa; lokal spoza pilotażu odpowiada `404 TABLES_NOT_AVAILABLE`
   wybiera serwer, tak jak dla wizyty; polityka kanału sprawdza akcję `book`).
 - `POST /businesses/:id/tables/waitlist` - zapis na pusty dzień `{bookedById,
   dateFrom, dateTo, partySize, zoneId?, source: 'web'}`.
+
+Program lojalnościowy (vizyto #471 F37; prywatne odczyty z `Authorization`):
+
+- `GET  /businesses/:id/loyalty` - publiczny program (404 bez aktywnego programu:
+  widget nie pokazuje nic o programie).
+- `GET  /businesses/:id/loyalty/rewards` - katalog nagród.
+- `GET  /businesses/:id/loyalty/me` i `GET .../loyalty/me/rewards` - karta i
+  nagrody klienta (`null` / `[]` bez karty w tej firmie).
+- `POST /businesses/:id/loyalty/rewards/:catalogId/claim` - odebranie nagrody za
+  Punkty `{idempotencyKey, pointsCost, targetKey?}` (site key + sesja).
+- `POST /businesses/:id/group-class-sessions/:sessionId/quote` - cena wejścia na
+  zajęcia; ta trasa i `appointments/quote` oraz `rentals/quote` z
+  `rewardSelection` + `discountChoice: 'reward'` wyceniają nagrodę i zwracają
+  `pricingToken`, który zapis odsyła razem z `expectedTotal`.
 
 Promocje i lista oczekujących:
 
@@ -420,6 +498,8 @@ VizytoBooking.open({ kind: 'rental' })
 // wynajem konkretnego egzemplarza (karta pojazdu na stronie wypożyczalni);
 // sam `resourceId` egzemplarza wystarcza, `kind` jest tu opcjonalny
 VizytoBooking.open({ resourceId: 31 })
+// wynajem z puli (tor, sala): od razu kalendarz puli, serwer przydziela egzemplarz
+VizytoBooking.open({ rentalTypeId: 7 })
 
 // stolik w restauracji - od liczby osób
 VizytoBooking.open({ kind: 'table' })
@@ -429,6 +509,7 @@ VizytoBooking.open({ kind: 'table' })
 | --- | --- | --- |
 | `serviceId` | wizyta | usługa do koszyka; z wariantami zostaje na kroku usługi, żeby je wybrać |
 | `resourceId` | wizyta, wynajem | wizyta: wykonawca albo egzemplarz z puli, ignorowany, gdy usługa przydziela automatycznie; wynajem: egzemplarz - pomija listę i wchodzi od razu na jego kalendarz, także bez `kind` (egzemplarz z puli albo zdjęty z oferty zostawia listę) |
+| `rentalTypeId` | wynajem | pula typu (`'pool'` albo `'choice'`): wchodzi od razu na kalendarz puli; nieznany typ zostawia listę |
 | `classId` | zajęcia | kurs; wchodzi od razu na jego grafik |
 | `sessionId` | zajęcia | konkretny termin; **pełny termin jest odrzucany** i klient staje na liście |
 | `kind` | wszystkie | `'service' \| 'class' \| 'rental' \| 'table'` - jawny wybór rodziny, gdy nie znasz id |
@@ -540,12 +621,41 @@ przepływ offline:
     kanał zamknięty,
   - **683** - profil mówi „otwarte”, ale firma wyłącza akcje pojedynczo: każdy
     zapis dostaje 409 `CHANNEL_ACTION_DISABLED`, a kolejne pobranie profilu
-    pokazuje zamkniętą tylko tę akcję (stolik zamyka `book`, razem z wizytami).
+    pokazuje zamkniętą tylko tę akcję (stolik zamyka `book`, razem z wizytami),
+- program lojalnościowy (#471) wybierasz id biznesu; każde inne id nie ma
+  programu, więc demo **24** nie pokazuje kroku „Nagroda”:
+  - **471** - Punkty: saldo 120, poziomy Srebrny i Złoty, na koncie „Rabat 20
+    zł” (nie łączy się z promocją), „Darmowe strzyżenie” i „Rabat 15 zł”, w
+    katalogu „Rabat 10%” za 100 Punktów (do odebrania) i „Rabat 25%” za 500
+    (za drogi). Dźwignie: „Rabat 15 zł” przy zapisie okazuje się użyty gdzie
+    indziej (`REWARD_UNAVAILABLE`); dodatek „Peeling twarzy” jest w promocji,
+    której zwykła wycena nie pokazuje (wycena nagrody dostaje 409
+    `REWARD_DISCOUNT_CONFLICT` i widget liczy ją ponownie bez tej pozycji);
+    wynajem toru o 18:00 z nagrodą, która nie łączy się z promocją, dostaje ten
+    sam kod dopiero przy zapisie; pierwszy zapis z nagrodą na termin zajęć
+    **912** dostaje `REWARD_QUOTE_EXPIRED` z tą samą ceną (ciche ponowienie),
+  - **472** - karta z pieczątkami: 9 z 9, nagroda za pieczątki na koncie i
+    „Rabat 10 zł” za 5 pieczątek w katalogu;
+  - kod SMS jak zawsze **123456**, a `?signedIn=1` w harnessie zaczyna z sesją;
+  - tylko z harnessu: `?failRewardQuote=4701` - pierwsza wycena tej nagrody
+    kończy się błędem sieci („Spróbuj ponownie”), `?claimRefusal=<kod>` -
+    pierwsze odebranie nagrody z katalogu dostaje ten kod (np.
+    `REWARD_CLAIM_LIMIT` zamyka potwierdzenie, `NETWORK` je zostawia),
+    `?slowLoyalty=program` (albo `card`, `entry`, `price`) - każdy taki odczyt
+    odpowiada dopiero po 6 s, dłużej, niż rezerwacja na niego czeka, więc
+    rezerwacja idzie bez nagrody, `?brokenLoyalty=entry` (albo `reward`) - cena
+    wejścia na zajęcia ma pozycję, której krok nie odczyta (albo nagroda na
+    koncie nie ma warunków), więc rezerwacja idzie bez kroku „Nagroda”.
 
 `scripts/mock-harness.html` przyjmuje te same dźwignie w adresie:
-`?business=680`, `?signedIn=1` (sesja bez kodu SMS), `?prefillClass=41`,
-`?prefillSession=901`, `?prefillService=1`, `?prefillResource=31`, `?prefillKind=rental`
-(albo `table`), `?onlyServices=1`.
+`?business=680` (albo `471`, `472`), `?signedIn=1` (sesja bez kodu SMS), `?theme=dark`, `?prefillClass=41`,
+`?prefillSession=901`, `?prefillService=1`, `?prefillResource=31`, `?prefillRentalType=7`,
+`?prefillKind=rental` (albo `table`), `?onlyServices=1`, `?failRewardQuote=4701`,
+`?claimRefusal=REWARD_CLAIM_LIMIT`, `?slowLoyalty=card`, `?brokenLoyalty=entry`, a do tego `?oneRental=7` (albo `8`): biznes
+wynajmuje jedną ofertę (pulę torów albo przyczepę) obok usług i zajęć, więc
+wynajem nie ma kroku z listą i od razu otwiera jej kalendarz. `?noServices=1`
+zabiera usługi i zajęcia (zostaje wynajem i stoliki, więc pytanie „co
+rezerwujesz” zaczyna się od wynajmu), a `?noTables=1` także stoliki.
 
 ### Test na prawdziwym API
 
