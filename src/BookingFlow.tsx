@@ -109,7 +109,7 @@ import {
   type RewardFlow,
   type RewardQuoteState,
 } from './loyalty'
-import { StepReward, type RewardNotice } from './steps/StepReward'
+import { StepReward, type RewardFocus, type RewardNotice } from './steps/StepReward'
 import { resolveCartPolicy } from './policy'
 import { classifyWriteFailure, publicChannelAllows, refusedActions, type CustomerAction } from './channel'
 import {
@@ -933,6 +933,10 @@ export function BookingFlow({
   const [rewardChoice, setRewardChoice] = useState<number | null>(null)
   // A reward claimed in the step: chosen as soon as it is priced.
   const preferredReward = useRef<number | null>(null)
+  // The claim panel that had focus closed with a claim: focus waits for its reward.
+  const claimFocus = useRef(false)
+  // Where focus goes once the control that had it left the step (StepReward applies it).
+  const [rewardFocus, setRewardFocus] = useState<RewardFocus | null>(null)
   const [rewardNotice, setRewardNotice] = useState<RewardNotice | null>(null)
   // The card, rewards and prices are being read: a quiet spinner, not "Rezerwuję".
   const [rewardChecking, setRewardChecking] = useState(false)
@@ -2399,6 +2403,8 @@ export function BookingFlow({
       }
       setRewardChoice(null)
       preferredReward.current = null
+      claimFocus.current = false
+      setRewardFocus(null)
       setRewardNotice(null)
       setClaim(null)
       setClaimErr('')
@@ -2432,6 +2438,8 @@ export function BookingFlow({
     const ordinary = patch.ordinary ?? s.ordinary
     setRewardChoice(null)
     preferredReward.current = null
+    claimFocus.current = false
+    setRewardFocus(null)
     setClaim(null)
     setClaimErr('')
     setRewardNotice(notice)
@@ -2529,6 +2537,8 @@ export function BookingFlow({
     const quotes = { ...s.quotes }
     delete quotes[rewardId]
     setOffer({ ...s, quotes })
+    // The link goes with the failure; the card, enabled while it loads, takes focus.
+    setRewardFocus({ to: 'reward', id: rewardId })
     void priceRewards(s.gen)
   }
 
@@ -2546,7 +2556,10 @@ export function BookingFlow({
     const { item, key } = claim
     const r = await claimLoyaltyReward(cfg, { catalogId: item.catalog.id, idempotencyKey: key, pointsCost: item.cost, targetKey: item.targetKey }, s.auth.token)
     // Chosen as soon as it is priced (set before the reread, like the shared sheet).
-    if (r.ok) preferredReward.current = r.rewardId
+    if (r.ok) {
+      preferredReward.current = r.rewardId
+      claimFocus.current = true
+    }
     const [wallet, owned] = await Promise.all([getMyLoyalty(cfg, s.auth.token), getMyLoyaltyRewards(cfg, s.auth.token)])
     setClaimBusy(false)
     const now = offerRef.current
@@ -2554,7 +2567,11 @@ export function BookingFlow({
     if (r.ok) setClaim(null)
     else {
       setClaimErr(claimErrorMessage(r.code, r.message))
-      if (CLAIM_CLOSES.has(r.code)) setClaim(null)
+      if (CLAIM_CLOSES.has(r.code)) {
+        setClaim(null)
+        // Back on the entry's own "Odbierz" (the heading when the reread took it away).
+        setRewardFocus({ to: 'claim', id: item.catalog.id })
+      }
     }
     // A reread that failed keeps what the step had; a claimed reward the reread
     // does not list yet is added from the catalog entry it came from.
@@ -3082,11 +3099,21 @@ export function BookingFlow({
         preferredReward.current = null
         setRewardChoice(preferred)
         setRewardNotice({ title: 'Nagroda odebrana', text: 'Dodaliśmy ją do tej rezerwacji. Sprawdź cenę i potwierdź.', tone: 'plain' })
+        // The claim panel had focus: it moves to the card the claim chose.
+        if (claimFocus.current) {
+          claimFocus.current = false
+          setRewardFocus({ to: 'reward', id: preferred })
+        }
         return
       }
       // Priced and still not usable here (it saves nothing, say): it stays on the list as it is.
       const settled = !rewardView.usable.some((u) => !u.quote || u.quote.status === 'loading')
       if (settled && !item) preferredReward.current = null
+      // Nothing to choose now (or its price failed): focus waits on the step's heading.
+      if (settled && claimFocus.current) {
+        claimFocus.current = false
+        setRewardFocus({ to: 'heading' })
+      }
     }
     // The chosen reward stopped fitting this booking (a refusal, a reread).
     if (rewardChoice != null && !rewardView.usable.some((u) => u.reward.id === rewardChoice)) setRewardChoice(null)
@@ -3369,6 +3396,8 @@ export function BookingFlow({
     setOffer(null)
     setRewardChoice(null)
     preferredReward.current = null
+    claimFocus.current = false
+    setRewardFocus(null)
     offering.current = false
     setRewardNotice(null)
     setRewardChecking(false)
@@ -3882,10 +3911,17 @@ export function BookingFlow({
             claimBusy={claimBusy}
             claimError={claimErr}
             onOpenClaim={openClaim}
-            onCancelClaim={() => { setClaim(null); setClaimErr('') }}
+            onCancelClaim={() => {
+              // The panel goes; its entry's "Odbierz" comes back and takes focus.
+              if (claim) setRewardFocus({ to: 'claim', id: claim.item.catalog.id })
+              setClaim(null)
+              setClaimErr('')
+            }}
             onConfirmClaim={() => void confirmClaim()}
             notice={rewardNotice}
             serviceNames={serviceNames}
+            focus={rewardFocus}
+            onFocused={() => setRewardFocus(null)}
           />
         )}
         {phase === 'confirming' &&

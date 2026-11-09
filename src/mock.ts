@@ -886,6 +886,10 @@ export async function joinTableWaitlist(
 //                                 widget retries silently with the fresh token).
 //  - 472, stamps: 9 of 9, the stamp reward ("Darmowe strzyżenie") on the card and
 //    a catalog "Rabat 10 zł" for 5 stamps.
+//  Harness levers for both (window globals, set from the harness address):
+//      __VIZYTO_MOCK_FAIL_REWARD_QUOTE__ = <reward id> -> the first quote of that
+//                                 reward fails (NETWORK): "Spróbuj ponownie",
+//      __VIZYTO_MOCK_CLAIM_REFUSAL__ = <code> -> the first claim answers that code.
 // A reward quote answers pricingToken `mock-reward-<id>`; a create with a reward
 // moves it to `reserved`; a claim lowers the balance and adds the reward.
 
@@ -1052,9 +1056,23 @@ export async function getMyLoyaltyRewards(businessId: number, _token: string): P
   return card ? card.owned.filter((r) => r.status === 'available' || r.status === 'reserved').map((r) => ({ ...r })) : []
 }
 
+/**
+ * The harness levers above, each used once per page load. `typeof` guard: the
+ * mock also runs under bun:test, where there is no window.
+ */
+const usedLevers = new Set<string>()
+function leverOnce<T>(name: string): T | null {
+  const value = typeof window !== 'undefined' ? (window as any)[name] : undefined
+  if (value == null || value === '' || usedLevers.has(name)) return null
+  usedLevers.add(name)
+  return value as T
+}
+
 export async function claimLoyaltyReward(businessId: number, p: ClaimInput, token: string | null): Promise<ClaimResult> {
   await wait(450)
   if (!token) return { ok: false, code: 'UNAUTHENTICATED' }
+  const refusal = leverOnce<string>('__VIZYTO_MOCK_CLAIM_REFUSAL__')
+  if (refusal) return { ok: false, code: refusal }
   const card = cardOf(businessId)
   if (!card) return { ok: false, code: 'LOYALTY_PROGRAM_NOT_FOUND' }
   const known = card.claims.get(p.idempotencyKey)
@@ -1162,6 +1180,9 @@ export async function quoteWithReward(
   const card = cardOf(businessId)
   if (!token) return { ok: false, code: 'UNAUTHENTICATED' }
   if (!card) return { ok: false, code: 'LOYALTY_PROGRAM_NOT_FOUND' }
+  if (typeof window !== 'undefined' && Number((window as any).__VIZYTO_MOCK_FAIL_REWARD_QUOTE__) === selection.rewardId && leverOnce('__VIZYTO_MOCK_FAIL_REWARD_QUOTE__')) {
+    return { ok: false, code: 'NETWORK' }
+  }
   const reward = card.owned.find((r) => r.id === selection.rewardId)
   if (!reward || reward.status !== 'available' || reward.termsSnapshot.onSiteOnly) return { ok: false, code: 'REWARD_UNAVAILABLE', message: UNAVAILABLE }
   const ordinary = await ordinaryQuoteOf(target)

@@ -29,6 +29,13 @@ import { Disclosure, LoyaltyProgress, ProgramRules, ProgramTerms } from './Loyal
 export type RewardNotice = { title: string; text: string; tone?: 'warn' | 'plain' }
 
 /**
+ * Where keyboard focus goes when the control that had it leaves the step: a
+ * reward's card, a catalog entry's "Odbierz", or the step's heading when that
+ * target is gone. Applied once by the step, which then calls `onFocused`.
+ */
+export type RewardFocus = { to: 'reward'; id: number } | { to: 'claim'; id: number } | { to: 'heading' }
+
+/**
  * "Nagroda" (vizyto #471 F37): after the customer is known, keep the current
  * price or use one of their rewards, each with the price the server quoted
  * ("Obecna cena: 72,00 zł", "Z nagrodą: 50,00 zł"). Rewards this booking cannot
@@ -58,6 +65,8 @@ export function StepReward({
   onConfirmClaim,
   notice,
   serviceNames,
+  focus,
+  onFocused,
 }: {
   flow: RewardFlow
   program: LoyaltyProgramPublic
@@ -81,14 +90,30 @@ export function StepReward({
   notice: RewardNotice | null
   /** Service names, to name the item of a free service. */
   serviceNames: ReadonlyMap<number, string>
+  focus: RewardFocus | null
+  onFocused: () => void
 }) {
   const stamps = !!wallet.stamps
   const chosen = choice != null ? usable.find((item) => item.reward.id === choice) ?? null : null
   const chosenQuote = chosen?.quote?.status === 'ok' ? chosen.quote.quote : null
   const claimHeadingId = useId()
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  // The claim panel closed or a failed price is asked for again: the control that
+  // had focus is gone, so focus lands on what replaced it instead of the page.
+  useEffect(() => {
+    if (!focus) return
+    const root = rootRef.current
+    const target =
+      focus.to === 'reward' ? root?.querySelector<HTMLElement>(`[data-reward="${focus.id}"] [role=radio]`)
+        : focus.to === 'claim' ? root?.querySelector<HTMLElement>(`[data-claim="${focus.id}"]`)
+          : null
+    ;(target ?? root?.querySelector<HTMLElement>('.vz-h h2'))?.focus()
+    onFocused()
+  }, [focus])
 
   return (
-    <div class="vz-fade-in">
+    <div class="vz-fade-in" ref={rootRef}>
       <StepHeader title="Nagroda" />
       {notice && <Notice title={notice.title} tone={notice.tone}>{notice.text || undefined}</Notice>}
 
@@ -126,7 +151,10 @@ export function StepReward({
         {claimables.length > 0 && (
           <section class="vz-rw-section" aria-labelledby={claimHeadingId}>
             <div class="vz-rw-h" id={claimHeadingId}>{claimHeading(stamps)}</div>
-            {claimError && <div class="vz-err vz-rw-err" role="alert">{claimError}</div>}
+            {/* null, not '': an empty-string child is a text node, and the error
+                replacing it made Preact match it to the list below and remount
+                the list - the open confirmation with it. */}
+            {claimError ? <div class="vz-err vz-rw-err" role="alert">{claimError}</div> : null}
             <div class="vz-list">
               {claimables.map((item) => item.catalog.id === claimOpen ? (
                 <ClaimConfirm
@@ -148,6 +176,7 @@ export function StepReward({
                   <button
                     class="vz-mini-btn"
                     type="button"
+                    data-claim={item.catalog.id}
                     onClick={() => onOpenClaim(item)}
                     disabled={claimBusy}
                     aria-label={`Odbierz: ${item.catalog.name}`}
@@ -184,7 +213,7 @@ function RewardOption({ item, lines, checked, onChoose, onRetry }: {
   const quote = item.quote?.status === 'ok' ? item.quote.quote : null
   const notes = failed ? [] : rewardNotes(item, lines, quote)
   return (
-    <div class="vz-rw-opt">
+    <div class="vz-rw-opt" data-reward={item.reward.id}>
       <SelectCard
         title={item.reward.termsSnapshot.name}
         selected={checked}
@@ -254,16 +283,25 @@ function ClaimConfirm({ item, stamps, balance, busy, serviceNames, onConfirm, on
   onConfirm: () => void
   onCancel: () => void
 }) {
+  const rootRef = useRef<HTMLDivElement>(null)
   const titleRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
+  const wasBusy = useRef(busy)
   // The row's button is gone: keyboard and screen-reader focus follow the panel.
   useEffect(() => { titleRef.current?.focus() }, [])
+  // "Odbierz" is disabled while the claim goes out, which drops its focus. A
+  // refusal that keeps the panel open gives it back (the error is read out on
+  // its own); a claim that closes the panel is handled by the step.
+  useEffect(() => {
+    if (wasBusy.current && !busy) rootRef.current?.querySelector<HTMLButtonElement>('.vz-btn:not(.ghost)')?.focus()
+    wasBusy.current = busy
+  }, [busy])
   const entry = item.catalog
   const target = entry.targets.find((t) => t.targetKey === item.targetKey) ?? null
   const freeName = entry.kind === 'free_item' && target?.businessServiceId ? serviceNames.get(target.businessServiceId) ?? null : null
   const benefit = freeName ? `Darmowa usługa: ${freeName}` : rewardBenefit({ ...entry, targets: target ? [target] : entry.targets })
   return (
-    <div class="vz-rw-confirm" role="group" aria-labelledby={titleId}>
+    <div class="vz-rw-confirm" role="group" aria-labelledby={titleId} ref={rootRef}>
       <div class="vz-card-title vz-rw-confirm-title" id={titleId} ref={titleRef} tabIndex={-1}>{entry.name}</div>
       <SummaryCard
         rows={[

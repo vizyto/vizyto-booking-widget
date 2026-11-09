@@ -21,6 +21,10 @@
   // src/mock.ts), 471|472 a loyalty program (#471); ?signedIn=1 mounts with a
   // session, so a write needs no SMS code.
   var signedIn = !!q.get('signedIn');
+  // ?failRewardQuote=4701 fails the first quote of that reward ("Spróbuj ponownie");
+  // ?claimRefusal=REWARD_CLAIM_LIMIT refuses the first claim with that code.
+  if (q.get('failRewardQuote')) window.__VIZYTO_MOCK_FAIL_REWARD_QUOTE__ = Number(q.get('failRewardQuote'));
+  if (q.get('claimRefusal')) window.__VIZYTO_MOCK_CLAIM_REFUSAL__ = q.get('claimRefusal');
   // ?theme=dark (or auto) renders the dark tokens, for checks in both themes.
   var theme = q.get('theme') || undefined;
   VizytoBooking.mount({

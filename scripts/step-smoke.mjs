@@ -434,6 +434,31 @@ const pickTerm = async () => {
   })
   await page.waitForTimeout(300)
 }
+/** What has keyboard focus inside the widget (null = it fell out to the page). */
+const focused = () => page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  const a = host.shadowRoot.activeElement
+  if (!a) return null
+  return {
+    role: a.getAttribute('role'),
+    label: a.getAttribute('aria-label'),
+    checked: a.getAttribute('aria-checked'),
+    inConfirm: !!a.closest('.vz-rw-confirm'),
+    cls: a.className || '',
+    text: (a.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+  }
+})
+const fmt = (f) => (f ? `${f.role ?? ''}|${f.label ?? ''}|${f.cls}|${f.text}` : 'null')
+let f
+/** A keyboard press on a button in the reward step: it has focus first, as from Tab. */
+const pressRewardButton = (sel, text) => page.evaluate(({ sel, text }) => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  const b = [...host.shadowRoot.querySelectorAll(sel)].find((x) => x.textContent.includes(text) || (x.getAttribute('aria-label') || '').includes(text))
+  if (!b) return false
+  b.focus()
+  b.click()
+  return true
+}, { sel, text })
 const haircutToReward = async (query) => {
   await page.goto(URL + query); await page.waitForTimeout(1000)
   await toServices()
@@ -455,16 +480,22 @@ ok('lojalność: obecna cena i ceny z nagrodą', /Obecna cena: 50,00/.test(s.bod
 ok('lojalność: nagroda z katalogu do odebrania', /Do odebrania za Punkty/.test(s.body) && /Koszt: 100/.test(s.body) && !/Rabat 25%/.test(s.body), s.body.slice(0, 700))
 ok('lojalność: CTA Rezerwuję', s.ctaText === 'Rezerwuję' && !s.ctaDisabled, `${s.ctaText}`)
 
-await clickByText('Odbierz: Rabat 10%'); await page.waitForTimeout(400)
+await pressRewardButton('.vz-rw-claim button', 'Odbierz: Rabat 10%'); await page.waitForTimeout(400)
 s = await state()
 ok('lojalność: potwierdzenie odbioru w miejscu', /Saldo po odebraniu/.test(s.body) && /Anuluj/.test(s.body), s.body.slice(0, 900))
-await page.evaluate(() => {
-  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
-  ;[...host.shadowRoot.querySelectorAll('.vz-rw-confirm button')].find((b) => /Odbierz/.test(b.textContent))?.click()
-})
+// Focus never falls out to the page when the control that had it goes away.
+f = await focused()
+ok('lojalność: fokus na tytule potwierdzenia', !!f?.inConfirm && /vz-rw-confirm-title/.test(f.cls), fmt(f))
+await pressRewardButton('.vz-rw-confirm button', 'Anuluj'); await page.waitForTimeout(300)
+f = await focused()
+ok('lojalność: Anuluj oddaje fokus na Odbierz w wierszu', f?.label === 'Odbierz: Rabat 10%', fmt(f))
+await pressRewardButton('.vz-rw-claim button', 'Odbierz: Rabat 10%'); await page.waitForTimeout(400)
+await pressRewardButton('.vz-rw-confirm button', 'Odbierz')
 await page.waitForTimeout(2200)
 s = await state()
 ok('lojalność: odebrana nagroda wybrana z ceną', /Nagroda odebrana/.test(s.body) && /Punkty: 20/.test(s.body) && /Rabat 10%\. Do zapłaty: 45,00/.test(s.body), s.body.slice(0, 700))
+f = await focused()
+ok('lojalność: po odebraniu fokus na wybranej nagrodzie', f?.role === 'radio' && f.checked === 'true' && /Rabat 10%/.test(f.text), fmt(f))
 await page.evaluate(() => {
   const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
   host.shadowRoot.querySelector('.vz-cta button')?.click()
@@ -511,6 +542,39 @@ await page.evaluate(() => {
 await page.waitForTimeout(2800)
 s = await state()
 ok('lojalność: wygasła wycena - ciche ponowienie', /Zapisano!/.test(s.body) && /20,00/.test(s.body), s.body.slice(0, 400))
+
+// A price that failed: "Spróbuj ponownie" goes with the failure, the card keeps focus.
+await haircutToReward('?business=471&signedIn=1&failRewardQuote=4701')
+s = await state()
+ok('lojalność: nieudana wycena nagrody', /Nie udało się policzyć ceny z nagrodą/.test(s.body) && /Spróbuj ponownie/.test(s.body), s.body.slice(0, 600))
+await pressRewardButton('.vz-rw-fail button', 'Spróbuj ponownie'); await page.waitForTimeout(100)
+f = await focused()
+ok('lojalność: Spróbuj ponownie oddaje fokus karcie nagrody', f?.role === 'radio' && /Rabat 20 zł/.test(f.text), fmt(f))
+await page.waitForTimeout(900)
+s = await state()
+f = await focused()
+ok('lojalność: ponowiona wycena z ceną, fokus zostaje', !/Nie udało się policzyć/.test(s.body) && /Z nagrodą: 30,00/.test(s.body) && f?.role === 'radio' && /Rabat 20 zł/.test(f.text), `${fmt(f)} | ${s.body.slice(0, 400)}`)
+
+// A claim the API refuses and closes: focus goes back to the entry's "Odbierz".
+await haircutToReward('?business=471&signedIn=1&claimRefusal=REWARD_CLAIM_LIMIT')
+await pressRewardButton('.vz-rw-claim button', 'Odbierz: Rabat 10%'); await page.waitForTimeout(400)
+await pressRewardButton('.vz-rw-confirm button', 'Odbierz'); await page.waitForTimeout(1600)
+s = await state()
+f = await focused()
+ok('lojalność: odmowa zamykająca odbiór - fokus na Odbierz w wierszu', !/Saldo po odebraniu/.test(s.body) && f?.label === 'Odbierz: Rabat 10%', `${fmt(f)} | ${s.body.slice(0, 500)}`)
+
+// A refusal that keeps the confirmation open: its own "Odbierz" gets focus back.
+await haircutToReward('?business=471&signedIn=1&claimRefusal=NETWORK')
+await pressRewardButton('.vz-rw-claim button', 'Odbierz: Rabat 10%'); await page.waitForTimeout(400)
+await pressRewardButton('.vz-rw-confirm button', 'Odbierz'); await page.waitForTimeout(1600)
+s = await state()
+f = await focused()
+ok('lojalność: odmowa bez zamknięcia - fokus wraca na Odbierz w potwierdzeniu', /Brak połączenia/.test(s.body) && /Saldo po odebraniu/.test(s.body) && !!f?.inConfirm && /Odbierz/.test(f.text) && !/ghost/.test(f.cls), `${fmt(f)} | ${s.body.slice(0, 500)}`)
+// Enter again on that same button: the claim goes through and the card takes focus.
+await page.keyboard.press('Enter'); await page.waitForTimeout(2200)
+s = await state()
+f = await focused()
+ok('lojalność: ponowny odbiór z klawiatury - fokus na wybranej nagrodzie', /Nagroda odebrana/.test(s.body) && !/Brak połączenia/.test(s.body) && f?.role === 'radio' && f.checked === 'true' && /Rabat 10%/.test(f.text), `${fmt(f)} | ${s.body.slice(0, 400)}`)
 
 // Stamps wording.
 await haircutToReward('?business=472&signedIn=1')

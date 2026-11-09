@@ -626,12 +626,17 @@ przepływ offline:
     **912** dostaje `REWARD_QUOTE_EXPIRED` z tą samą ceną (ciche ponowienie),
   - **472** - karta z pieczątkami: 9 z 9, nagroda za pieczątki na koncie i
     „Rabat 10 zł” za 5 pieczątek w katalogu;
-  - kod SMS jak zawsze **123456**, a `?signedIn=1` w harnessie zaczyna z sesją.
+  - kod SMS jak zawsze **123456**, a `?signedIn=1` w harnessie zaczyna z sesją;
+  - tylko z harnessu: `?failRewardQuote=4701` - pierwsza wycena tej nagrody
+    kończy się błędem sieci („Spróbuj ponownie”), `?claimRefusal=<kod>` -
+    pierwsze odebranie nagrody z katalogu dostaje ten kod (np.
+    `REWARD_CLAIM_LIMIT` zamyka potwierdzenie, `NETWORK` je zostawia).
 
 `scripts/mock-harness.html` przyjmuje te same dźwignie w adresie:
 `?business=680` (albo `471`, `472`), `?signedIn=1` (sesja bez kodu SMS), `?theme=dark`, `?prefillClass=41`,
 `?prefillSession=901`, `?prefillService=1`, `?prefillResource=31`, `?prefillRentalType=7`,
-`?prefillKind=rental` (albo `table`), `?onlyServices=1`.
+`?prefillKind=rental` (albo `table`), `?onlyServices=1`, `?failRewardQuote=4701`,
+`?claimRefusal=REWARD_CLAIM_LIMIT`.
 
 ### Test na prawdziwym API
 
