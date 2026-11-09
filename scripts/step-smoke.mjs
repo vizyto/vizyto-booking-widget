@@ -80,8 +80,14 @@ const addService = (name) => page.evaluate((name) => {
   return 'ok'
 }, name)
 
-/** What the mock was asked (src/mock.ts): GET /loyalty reads and the last create's input. */
-const journal = () => page.evaluate(() => ({ loyaltyReads: 0, lastCreate: null, ...(window.__VIZYTO_MOCK_JOURNAL__ ?? {}) }))
+/** What the mock was asked (src/mock.ts): GET /loyalty reads, rental reads and the last create's input. */
+const journal = () => page.evaluate(() => ({ loyaltyReads: 0, rentalReads: 0, lastCreate: null, ...(window.__VIZYTO_MOCK_JOURNAL__ ?? {}) }))
+/** The CTA bar's two text lines (offer name, meta line). */
+const ctaLines = () => page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  const t = (s) => host.shadowRoot.querySelector(s)?.textContent?.replace(/\s+/g, ' ').trim() ?? null
+  return { svc: t('.vz-cta .vz-cta-svc'), meta: t('.vz-cta .vz-cta-meta') }
+})
 /** Polls the widget until its text matches `re` or `ms` pass; returns the state then. */
 const waitForText = async (re, ms) => {
   const end = Date.now() + ms
@@ -125,6 +131,11 @@ const pickTerm = async () => {
   })
   await page.waitForTimeout(300)
 }
+/** Hour tiles shown as picked. */
+const pickedSlots = () => page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  return [...host.shadowRoot.querySelectorAll('.vz-slot[aria-pressed="true"], .vz-slot.selected')].map((x) => x.textContent.trim())
+})
 
 /**
  * The mock business sells BOTH visits and classes, so every visit-path scenario
@@ -378,6 +389,80 @@ await clickByText('Nowa rezerwacja'); await page.waitForTimeout(500)
 await clickByText('Wynajem'); await page.waitForTimeout(800)
 s = await state()
 ok('jedna pula po "Nowa rezerwacja": znowu kalendarz toru', s.stepName === 'WYBÓR TERMINU' && /Ile osób\?/.test(s.body), `${s.stepName} | ${s.body.slice(0, 200)}`)
+
+// A day and an hour picked for a visit are not the lane's: the visit keys its
+// hour in UTC, the lane reads it as a wall clock, so a carried hour lit a tile an
+// hour off and unlocked "Dalej" for an hour never picked there. Switching
+// families starts the other family's term from scratch, both ways.
+await page.goto(URL + '?oneRental=7'); await page.waitForTimeout(1000)
+await toServices()
+await addService('Golenie brzytwą'); await page.waitForTimeout(250)
+await closeConfigure()
+await next(); await page.waitForTimeout(900)
+await pickTerm()
+s = await state()
+ok('wizyta przed zmianą rodziny: godzina wybrana', s.stepName === 'WYBÓR TERMINU' && !s.ctaDisabled && (await pickedSlots()).length === 1, `${s.stepName} | ${s.ctaText}`)
+await back(); await page.waitForTimeout(300)
+await back(); await page.waitForTimeout(300)
+await clickByText('Wynajem'); await page.waitForTimeout(1200)
+s = await state()
+let picked = await pickedSlots()
+ok('jedna pula po wizycie: kalendarz bez godziny z wizyty, Dalej zamknięte',
+   s.stepName === 'WYBÓR TERMINU' && /Ile osób\?/.test(s.body) && s.ctaDisabled && picked.length === 0,
+   `${s.stepName} | ${s.ctaDisabled} | ${picked.join(',')} | ${s.body.slice(0, 200)}`)
+await clickByText('11:00'); await page.waitForTimeout(400)
+await back(); await page.waitForTimeout(300)
+await clickByText('Wizyta indywidualna'); await page.waitForTimeout(400)
+await next(); await page.waitForTimeout(900)
+s = await state()
+picked = await pickedSlots()
+ok('wizyta po wynajmie: termin bez godziny z wynajmu, Dalej zamknięte',
+   s.stepName === 'WYBÓR TERMINU' && s.ctaDisabled && picked.length === 0,
+   `${s.stepName} | ${s.ctaDisabled} | ${picked.join(',')}`)
+
+// Rentals next to tables only: the fork stands on the rental family (the first
+// one), with its single offer picked from the start. The fork still reads nothing
+// of that offer and its CTA names none, as in v1.16.0; the family's own calendar
+// does both.
+for (const one of [7, 8]) {
+  await page.goto(URL + `?noServices=1&oneRental=${one}`); await page.waitForTimeout(1500)
+  s = await state()
+  let j = await journal()
+  let cta = await ctaLines()
+  ok(`wynajem obok stolików (${one}): widelec bez zapytań o wynajem`,
+     s.krok === null && /Wynajem/.test(s.body) && /Stolik/.test(s.body) && j.rentalReads === 0,
+     `${s.krok} | ${j.rentalReads} | ${s.body.slice(0, 160)}`)
+  ok(`wynajem obok stolików (${one}): CTA widelca bez oferty`, cta.svc === null && cta.meta === 'Wybierz, co chcesz zarezerwować', JSON.stringify(cta))
+  await clickByText('Wynajem'); await page.waitForTimeout(1200)
+  s = await state()
+  j = await journal()
+  ok(`wynajem obok stolików (${one}): z widelca kalendarz oferty`,
+     s.stepName === 'WYBÓR TERMINU' && (one === 7 ? /Ile osób\?/ : /Na jak długo\?/).test(s.body) && j.rentalReads > 0,
+     `${s.stepName} | ${j.rentalReads} | ${s.body.slice(0, 200)}`)
+  await back(); await page.waitForTimeout(800)
+  s = await state()
+  cta = await ctaLines()
+  ok(`wynajem obok stolików (${one}): z powrotem na widelcu CTA bez oferty`,
+     s.krok === null && /Stolik/.test(s.body) && cta.svc === null && cta.meta === 'Wybierz, co chcesz zarezerwować', JSON.stringify(cta))
+  // Into the table family and back to the rental one: its calendar again.
+  await clickByText('Stolik'); await page.waitForTimeout(600)
+  await back(); await page.waitForTimeout(300)
+  await clickByText('Wynajem'); await page.waitForTimeout(1200)
+  s = await state()
+  ok(`wynajem obok stolików (${one}): po stolikach znowu kalendarz oferty`,
+     s.stepName === 'WYBÓR TERMINU' && (one === 7 ? /Ile osób\?/ : /Na jak długo\?/).test(s.body), `${s.stepName} | ${s.body.slice(0, 200)}`)
+}
+
+// A business whose only family is one rental opens on its calendar: no fork,
+// no list, and the CTA names the offer.
+for (const one of [7, 8]) {
+  await page.goto(URL + `?noServices=1&noTables=1&oneRental=${one}`); await page.waitForTimeout(1500)
+  s = await state()
+  const cta = await ctaLines()
+  ok(`tylko jedna oferta wynajmu (${one}): od razu jej kalendarz`,
+     s.krok === 'KROK 1 Z 2' && s.stepName === 'WYBÓR TERMINU' && (one === 7 ? /Ile osób\?/ : /Na jak długo\?/).test(s.body) && !!cta.svc,
+     `${s.krok} | ${s.stepName} | ${JSON.stringify(cta)} | ${s.body.slice(0, 200)}`)
+}
 
 // ── 12. A single-family business shows NO fork (regression guard for barbershops).
 await page.goto(URL + '?onlyServices=1')

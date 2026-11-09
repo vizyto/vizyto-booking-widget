@@ -361,8 +361,20 @@ export async function fetchBusiness(businessId?: number): Promise<Business> {
   // the trailer) next to its services and classes. It has no list step, so the
   // time step must open on that offer.
   const oneRental = typeof window !== 'undefined' ? Number((window as any).__VIZYTO_MOCK_ONE_RENTAL__) || null : null
-  if (oneRental != null) {
-    return { ...BUSINESS, resources: BUSINESS.resources.filter((r) => !(r as any).isRentable || (r as any).rentalTypeId === oneRental) }
+  // Test levers: no services and no classes, so rentals and tables are what is
+  // left (the fork then starts on the rental family); no tables pilot either, so
+  // rentals are the only family.
+  const noServices = typeof window !== 'undefined' && !!(window as any).__VIZYTO_MOCK_NO_SERVICES__
+  const noTables = typeof window !== 'undefined' && !!(window as any).__VIZYTO_MOCK_NO_TABLES__
+  if (oneRental != null || noServices || noTables) {
+    return {
+      ...BUSINESS,
+      ...(noServices ? { services: [] } : {}),
+      ...(noTables ? { capabilities: [] } : {}),
+      resources: oneRental != null
+        ? BUSINESS.resources.filter((r) => !(r as any).isRentable || (r as any).rentalTypeId === oneRental)
+        : BUSINESS.resources,
+    }
   }
   return BUSINESS
 }
@@ -387,6 +399,7 @@ export async function getPromotionSummary(_bookedById?: number | null): Promise<
 }
 
 export async function getPromoBadges(p: PromoBadgesRequest): Promise<PromoBadges> {
+  if (p.target.kind === 'rental') record((j) => { j.rentalReads++ })
   await wait(100)
   const days: Record<string, string | null> = {}
   const slots: Record<string, string | null> = {}
@@ -429,6 +442,7 @@ export async function quoteAppointment(p: AppointmentQuoteRequest): Promise<Pric
 }
 
 export async function quoteRental(p: RentalQuoteRequest): Promise<PriceQuote> {
+  record((j) => { j.rentalReads++ })
   await wait(150)
   const resource = BUSINESS.resources.find((r) =>
     p.resourceId != null ? r.id === p.resourceId : r.rentalTypeId === p.rentalTypeId,
@@ -629,15 +643,18 @@ type MockWrite = { ok: true; data: any } | MockFailure
 
 /**
  * What the widget asked the mock, for scripts/step-smoke.mjs: the GET /loyalty
- * reads (a visitor who only looks makes none) and what the last create carried
- * (no reward without a program). On window as `__VIZYTO_MOCK_JOURNAL__` from the
- * first answer it records, so a page on the real API never gets the global.
+ * reads (a visitor who only looks makes none), the rental reads (counts, day
+ * slots, rental promotion badges, range checks, quotes: the offering fork makes
+ * none) and what the last create carried (no reward without a program). On
+ * window as `__VIZYTO_MOCK_JOURNAL__` from the first answer it records, so a page
+ * on the real API never gets the global.
  */
 type MockJournal = {
   loyaltyReads: number
+  rentalReads: number
   lastCreate: { flow: 'appointment' | 'rental' | 'class'; input: Record<string, unknown> } | null
 }
-const journal: MockJournal = { loyaltyReads: 0, lastCreate: null }
+const journal: MockJournal = { loyaltyReads: 0, rentalReads: 0, lastCreate: null }
 function record(change: (j: MockJournal) => void) {
   change(journal)
   if (typeof window !== 'undefined') (window as any).__VIZYTO_MOCK_JOURNAL__ = journal
@@ -734,6 +751,7 @@ const day = (offset: number) => {
 }
 
 export async function getRentalCounts(p: { from: string; to: string }): Promise<DayCounts> {
+  record((j) => { j.rentalReads++ })
   await wait(200)
   const out: DayCounts = {}
   for (let i = 0; i < 21; i++) {
@@ -746,6 +764,7 @@ export async function getRentalCounts(p: { from: string; to: string }): Promise<
 }
 
 export async function getRentalDaySlots(p: { resourceId?: number; rentalTypeId?: number; date: string }): Promise<RentalDaySlots> {
+  record((j) => { j.rentalReads++ })
   await wait(250)
   // The trailer (resource 31) is billed per day -> no grid at all.
   if (p.resourceId === 31) return { mode: 'range' }
@@ -763,6 +782,7 @@ export async function getRentalDaySlots(p: { resourceId?: number; rentalTypeId?:
 
 /** Deliberately refuses a window that starts on the third day (a closed day). */
 export async function checkRentalRange(p: { startDate: string }): Promise<boolean> {
+  record((j) => { j.rentalReads++ })
   await wait(250)
   return !p.startDate.startsWith(day(2))
 }

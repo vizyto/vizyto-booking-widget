@@ -18,6 +18,10 @@
   if (q.get('onlyServices')) window.__VIZYTO_MOCK_ONLY_SERVICES__ = true;
   // ?oneRental=7 (the pool of lanes) or 8 (the trailer) keeps one rental offer.
   if (q.get('oneRental')) window.__VIZYTO_MOCK_ONE_RENTAL__ = Number(q.get('oneRental'));
+  // ?noServices=1 strips every service and class: rentals and tables are left;
+  // ?noTables=1 takes the tables pilot away too.
+  if (q.get('noServices')) window.__VIZYTO_MOCK_NO_SERVICES__ = true;
+  if (q.get('noTables')) window.__VIZYTO_MOCK_NO_TABLES__ = true;
   if (q.get('prefillKind')) prefill.kind = q.get('prefillKind');
   // ?business=680|681|682|683 picks a per-channel policy lever of the mock (#680, see
   // src/mock.ts), 471|472 a loyalty program (#471); ?signedIn=1 mounts with a

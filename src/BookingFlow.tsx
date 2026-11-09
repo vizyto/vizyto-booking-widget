@@ -849,6 +849,23 @@ export function BookingFlow({
    * apps had. The effect below clamps it instead.
    */
   const stepIndex = selectSteps.indexOf(stepId)
+  /**
+   * The rental family's own steps are on screen. Not just effKind: on the fork
+   * effKind already names the first family, which is the rental one for a
+   * business that rents next to its tables only, and a single offer is picked
+   * from the start (startingRentalOption). The fork reads nothing of that offer
+   * and names none of it, as in v1.16.0, so every rental read and the rental CTA
+   * wait for this.
+   */
+  const rentalOn = effKind === 'rental' && stepId !== 'offering'
+  /**
+   * The family whose steps were on screen last: the term (date, slotKey) is
+   * theirs. The fork's pick starts any other family's term from scratch.
+   */
+  const termFamily = useRef<OfferingKind | null>(null)
+  useEffect(() => {
+    if (stepId !== 'offering') termFamily.current = effKind
+  }, [stepId, effKind])
   // Second availability answer for an empty day, asked with every pin removed:
   // 'others' = the chosen people are busy but somebody else is free, 'none' =
   // the day itself is closed/full. Without it an empty day cannot say WHY.
@@ -1278,7 +1295,7 @@ export function BookingFlow({
    * hours the create path refuses.
    */
   useEffect(() => {
-    if (effKind !== 'rental' || !rentalPick) return
+    if (!rentalOn || !rentalPick) return
     const target = rentalTarget(rentalPick)
     const from = days[0]
     const to = days[days.length - 1]
@@ -1288,7 +1305,7 @@ export function BookingFlow({
       if (!cancelled) setRentalCounts(c)
     })
     return () => { cancelled = true }
-  }, [effKind, rentalPick, rentalUnits, rentalParty, days[0], refetch])
+  }, [rentalOn, rentalPick, rentalUnits, rentalParty, days[0], refetch])
 
   /**
    * Seed the day when the rental time step opens.
@@ -1300,14 +1317,14 @@ export function BookingFlow({
    * so a closed Monday does not greet the customer with "brak wolnych godzin".
    */
   useEffect(() => {
-    if (effKind !== 'rental' || !rentalPick || date) return
+    if (!rentalOn || !rentalPick || date) return
     const firstFree = days.find((d) => (rentalCounts[d] ?? 0) > 0)
     const seedDay = firstFree ?? days[0]
     if (seedDay) setDate(seedDay)
-  }, [effKind, rentalPick, date, rentalCounts, days[0]])
+  }, [rentalOn, rentalPick, date, rentalCounts, days[0]])
 
   useEffect(() => {
-    if (effKind !== 'rental' || !rentalPick || !date) return
+    if (!rentalOn || !rentalPick || !date) return
     const target = rentalTarget(rentalPick)
     let cancelled = false
     setRentalLoading(true)
@@ -1317,10 +1334,10 @@ export function BookingFlow({
       setRentalLoading(false)
     })
     return () => { cancelled = true }
-  }, [effKind, rentalPick, date, rentalUnits, rentalParty, refetch])
+  }, [rentalOn, rentalPick, date, rentalUnits, rentalParty, refetch])
 
   useEffect(() => {
-    if (effKind !== 'rental' || !rentalPick) {
+    if (!rentalOn || !rentalPick) {
       setRentalBadges(null)
       return
     }
@@ -1337,7 +1354,7 @@ export function BookingFlow({
       if (!cancelled) setRentalBadges(badges)
     })
     return () => { cancelled = true }
-  }, [effKind, rentalPick, date, rentalSlots, rentalUnits, auth?.userId, auth?.token])
+  }, [rentalOn, rentalPick, date, rentalSlots, rentalUnits, auth?.userId, auth?.token])
 
   /**
    * Range mode has no grid to pick from, so the window itself has to be checked
@@ -1345,7 +1362,7 @@ export function BookingFlow({
    * identity only to be refused at create.
    */
   useEffect(() => {
-    if (effKind !== 'rental' || !rentalPick || !date) return
+    if (!rentalOn || !rentalPick || !date) return
     if (rentalSlots?.mode !== 'range') { setRentalRangeOk(null); return }
     const win = rentalWindow(rentalPick, date, rentalUnits, '', business)
     // No opening hours that weekday: the window cannot exist, so say so instead
@@ -1357,7 +1374,7 @@ export function BookingFlow({
       if (!cancelled) setRentalRangeOk(ok)
     })
     return () => { cancelled = true }
-  }, [effKind, rentalPick, date, rentalUnits, rentalSlots?.mode, refetch])
+  }, [rentalOn, rentalPick, date, rentalUnits, rentalSlots?.mode, refetch])
 
   /**
    * Restaurant tables (#903 F11). The options (zones, limits, confirmation mode) are
@@ -1434,7 +1451,7 @@ export function BookingFlow({
         startDate: slotStartDate(date, slotKey, business.timezone || 'Europe/Warsaw'),
         bookedById: auth?.userId,
       }, auth?.token).then((next) => { if (!cancelled) setQuote(next) })
-    } else if (effKind === 'rental' && rentalPick && date) {
+    } else if (rentalOn && rentalPick && date) {
       const ready = rentalSlots?.mode === 'range' ? rentalRangeOk === true : !!slotKey
       const win = ready ? rentalWindow(rentalPick, date, rentalUnits, slotKey, business, rentalSlots) : null
       if (win) {
@@ -1447,7 +1464,7 @@ export function BookingFlow({
       }
     }
     return () => { cancelled = true }
-  }, [effKind, cartKey, quoteResourceKey, date, slotKey, rentalPick ? rentalOptionKey(rentalPick) : '', rentalUnits, rentalParty, rentalSlots?.mode, rentalRangeOk, auth?.userId, auth?.token])
+  }, [effKind, rentalOn, cartKey, quoteResourceKey, date, slotKey, rentalPick ? rentalOptionKey(rentalPick) : '', rentalUnits, rentalParty, rentalSlots?.mode, rentalRangeOk, auth?.userId, auth?.token])
 
   /**
    * Clamp when the step on screen stops existing.
@@ -3623,6 +3640,23 @@ export function BookingFlow({
           <StepOffering
             selected={kind}
             onPick={(k) => {
+              // Another family's term is not this one's: a visit keys its hour in
+              // UTC and a lane reads its own as a wall clock, so a carried hour
+              // would unlock "Dalej" for an hour never picked here. The rental
+              // family starts on its own offer again, at that offer's minimum.
+              // (A visit's slot-scoped specialist goes with its next day pick.)
+              if (k !== termFamily.current) {
+                setDate('')
+                setSlotKey('')
+                if (k === 'rental') {
+                  const start = startingRentalOption(rentalOptions, prefill)
+                  setRentalPick(start)
+                  setRentalUnits(startingRentalUnits(start))
+                  setRentalParty(1)
+                  setRentalSlots(null)
+                  setRentalRangeOk(null)
+                }
+              }
               setKind(k)
               // A day picked in another family says nothing about free tables:
               // the table branch seeds its own from the counts.
@@ -4139,7 +4173,7 @@ export function BookingFlow({
                   </>
                 )
               ) : effKind === 'rental' ? (
-                rentalPick ? (
+                rentalPick && rentalOn ? (
                   <>
                     <div class="vz-cta-svc">
                       {rentalPick.pooled ? (rentalPick.head.rentalTypeName ?? rentalPick.head.name) : rentalPick.head.name}

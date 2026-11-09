@@ -653,7 +653,9 @@ przepływ offline:
 `?prefillKind=rental` (albo `table`), `?onlyServices=1`, `?failRewardQuote=4701`,
 `?claimRefusal=REWARD_CLAIM_LIMIT`, `?slowLoyalty=card`, `?brokenLoyalty=entry`, a do tego `?oneRental=7` (albo `8`): biznes
 wynajmuje jedną ofertę (pulę torów albo przyczepę) obok usług i zajęć, więc
-wynajem nie ma kroku z listą i od razu otwiera jej kalendarz.
+wynajem nie ma kroku z listą i od razu otwiera jej kalendarz. `?noServices=1`
+zabiera usługi i zajęcia (zostaje wynajem i stoliki, więc pytanie „co
+rezerwujesz” zaczyna się od wynajmu), a `?noTables=1` także stoliki.
 
 ### Test na prawdziwym API
 
