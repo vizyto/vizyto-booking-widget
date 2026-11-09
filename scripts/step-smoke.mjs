@@ -421,6 +421,105 @@ await page.waitForTimeout(900)
 s = await state()
 ok('683: ponowne otwarcie - widelec bez wizyt', !/Wizyta indywidualna/.test(s.body) && /Zajęcia grupowe/.test(s.body) && /Wynajem/.test(s.body), s.body.slice(0, 200))
 
+// ── 14. Loyalty rewards (#471 F37). 471 = Points, 472 = stamps, 24 = no program.
+const pickTerm = async () => {
+  await page.evaluate(() => {
+    const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+    host.shadowRoot.querySelector('.vz-day:not(.is-disabled)')?.click()
+  })
+  await page.waitForTimeout(1000)
+  await page.evaluate(() => {
+    const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+    ;[...host.shadowRoot.querySelectorAll('.vz-slot')].find((x) => /1[01]:00/.test(x.textContent))?.click()
+  })
+  await page.waitForTimeout(300)
+}
+const haircutToReward = async (query) => {
+  await page.goto(URL + query); await page.waitForTimeout(1000)
+  await toServices()
+  await addService('Strzyżenie'); await page.waitForTimeout(300)
+  await closeConfigure()
+  await next(); await page.waitForTimeout(800)
+  if ((await state()).stepName === 'WYBÓR SPECJALISTY') { await clickByText('Bez preferencji'); await page.waitForTimeout(250); await next(); await page.waitForTimeout(900) }
+  await pickTerm()
+  await next(); await page.waitForTimeout(2200)
+}
+
+await haircutToReward('?business=471&signedIn=1')
+s = await state()
+ok('lojalność: krok Nagroda po terminie (sesja z hosta)', s.title === 'Nagroda', `${s.title} | ${s.body.slice(0, 200)}`)
+ok('lojalność: postęp klienta', /Punkty: 120/.test(s.body) && /Do poziomu Złoty: 30/.test(s.body), s.body.slice(0, 300))
+ok('lojalność: obecna cena i ceny z nagrodą', /Obecna cena: 50,00/.test(s.body) && /Z nagrodą: 30,00/.test(s.body) && /Z nagrodą: bezpłatnie/.test(s.body), s.body.slice(0, 500))
+ok('lojalność: nagroda z katalogu do odebrania', /Do odebrania za Punkty/.test(s.body) && /Koszt: 100/.test(s.body) && !/Rabat 25%/.test(s.body), s.body.slice(0, 700))
+ok('lojalność: CTA Rezerwuję', s.ctaText === 'Rezerwuję' && !s.ctaDisabled, `${s.ctaText}`)
+
+await clickByText('Odbierz: Rabat 10%'); await page.waitForTimeout(400)
+s = await state()
+ok('lojalność: potwierdzenie odbioru w miejscu', /Saldo po odebraniu/.test(s.body) && /Anuluj/.test(s.body), s.body.slice(0, 900))
+await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  ;[...host.shadowRoot.querySelectorAll('.vz-rw-confirm button')].find((b) => /Odbierz/.test(b.textContent))?.click()
+})
+await page.waitForTimeout(2200)
+s = await state()
+ok('lojalność: odebrana nagroda wybrana z ceną', /Nagroda odebrana/.test(s.body) && /Punkty: 20/.test(s.body) && /Rabat 10%\. Do zapłaty: 45,00/.test(s.body), s.body.slice(0, 700))
+await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  host.shadowRoot.querySelector('.vz-cta button')?.click()
+})
+await page.waitForTimeout(1800)
+s = await state()
+ok('lojalność: potwierdzenie z nagrodą i blokiem programu', /Zarezerwowane!/.test(s.body) && /NagrodaRabat 10%/.test(s.body) && /Program lojalnościowy/.test(s.body) && /Jak to działa/.test(s.body), s.body.slice(0, 700))
+ok('lojalność: bez obietnicy Punktów za rezerwację', !/otrzymasz|dostaniesz \d+ Punkt/i.test(s.body), s.body.slice(0, 700))
+
+// A reward taken by another booking meanwhile: back on the step, price without it.
+await haircutToReward('?business=471&signedIn=1')
+await clickByText('Rabat 15 zł'); await page.waitForTimeout(300)
+await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  host.shadowRoot.querySelector('.vz-cta button')?.click()
+})
+await page.waitForTimeout(2600)
+s = await state()
+ok('lojalność: REWARD_UNAVAILABLE wraca na krok z wyjaśnieniem', s.title === 'Nagroda' && /Ta nagroda jest już niedostępna/.test(s.body) && !/Rabat 15 zł/.test(s.body), s.body.slice(0, 500))
+
+// A promotion that started after the quote: the create-time conflict.
+await page.goto(URL + '?business=471&signedIn=1&prefillRentalType=7'); await page.waitForTimeout(1200)
+await clickByText('18:00'); await page.waitForTimeout(400)
+await next(); await page.waitForTimeout(2200)
+await clickByText('Rabat 20 zł'); await page.waitForTimeout(300)
+await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  host.shadowRoot.querySelector('.vz-cta button')?.click()
+})
+await page.waitForTimeout(2600)
+s = await state()
+ok('lojalność: konflikt z promocją przy zapisie wynajmu', /Ta nagroda nie łączy się z promocją/.test(s.body) && /Niedostępna/.test(s.body) && /Użyjesz jej przy wynajmie bez promocji/.test(s.body), s.body.slice(0, 700))
+
+// A class entry: the expired token with the same total retries silently.
+await page.goto(URL + '?business=471&signedIn=1&prefillSession=912'); await page.waitForTimeout(1500)
+await next(); await page.waitForTimeout(2400)
+s = await state()
+ok('lojalność: zajęcia - CTA Zapisuję się', s.title === 'Nagroda' && s.ctaText === 'Zapisuję się', `${s.title} | ${s.ctaText}`)
+await clickByText('Rabat 20 zł'); await page.waitForTimeout(300)
+await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  host.shadowRoot.querySelector('.vz-cta button')?.click()
+})
+await page.waitForTimeout(2800)
+s = await state()
+ok('lojalność: wygasła wycena - ciche ponowienie', /Zapisano!/.test(s.body) && /20,00/.test(s.body), s.body.slice(0, 400))
+
+// Stamps wording.
+await haircutToReward('?business=472&signedIn=1')
+s = await state()
+ok('lojalność: karta z pieczątkami', /Nagroda gotowa/.test(s.body) && /Do odebrania za pieczątki/.test(s.body) && /Pieczątki: 5/.test(s.body) && /Pieczątki na koncie: 9/.test(s.body), s.body.slice(0, 600))
+
+// No program: the booking goes straight through, as before.
+await haircutToReward('?signedIn=1')
+s = await state()
+ok('lojalność: biznes bez programu rezerwuje bez kroku', /Zarezerwowane!/.test(s.body) && !/Program lojalnościowy/.test(s.body), s.body.slice(0, 300))
+
 await browser.close()
 console.log(`\n${pass} pass, ${fail} fail`)
 process.exit(fail ? 1 : 0)
