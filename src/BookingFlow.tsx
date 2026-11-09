@@ -2636,9 +2636,19 @@ export function BookingFlow({
    * one, or when the quote fails, the sign-up goes exactly as before.
    */
   async function startClassBooking(a: Auth, id: number) {
-    if (a.token && await ensureProgram()) {
-      const ordinary = await quoteClassEntry(cfg, id, {}, a.token)
-      if (ordinary && await offerReward(a, ordinary, 'class')) return
+    if (offering.current) return
+    offering.current = true
+    try {
+      if (a.token && await ensureProgram()) {
+        // The entry's price is read first: the same quiet spinner as the card read.
+        setRewardChecking(true)
+        setPhase('confirming')
+        const ordinary = await quoteClassEntry(cfg, id, {}, a.token)
+        if (ordinary && await offerReward(a, ordinary, 'class')) return
+      }
+    } finally {
+      offering.current = false
+      setRewardChecking(false)
     }
     void register(a, id)
   }
