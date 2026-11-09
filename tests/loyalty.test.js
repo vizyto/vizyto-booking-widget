@@ -18,11 +18,13 @@ import {
   claimHeading,
   claimable,
   classEntryKey,
+  classExpectedTotalOf,
   costLine,
   currentPriceLine,
   daysPhrase,
   deriveRewardChoice,
   earnRuleSubtitle,
+  expectedTotalOf,
   formatPersonalTotalInline,
   judgeBookingReward,
   monthsPhrase,
@@ -45,6 +47,7 @@ import {
   withRewardKey,
 } from '../src/loyalty.ts'
 import {
+  bookingIdempotencyKey,
   claimLoyaltyReward,
   createAppointment,
   createRental,
@@ -497,7 +500,7 @@ describe('reward fields in the HTTP bodies', () => {
   async function exchange(write, status = 200, answer = {}) {
     const calls = []
     globalThis.fetch = async (url, init) => {
-      calls.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : null, headers: init?.headers ?? {} })
+      calls.push({ url: String(url), method: init?.method ?? 'GET', raw: init?.body ?? null, body: init?.body ? JSON.parse(init.body) : null, headers: init?.headers ?? {} })
       return new Response(JSON.stringify(answer), { status, headers: { 'content-type': 'application/json' } })
     }
     const result = await write()
@@ -511,6 +514,97 @@ describe('reward fields in the HTTP bodies', () => {
     expect(withReward.calls[0].body).toMatchObject({ expectedTotal: 3000, rewardSelection: { rewardId: 9, lineIndexes: [0] }, discountChoice: 'reward', pricingToken: 'tok' })
     const plainWrite = await exchange(() => registerForSession(cfg, { sessionId: 1, bookedById: 1, idempotencyKey: 'k' }, 't'))
     for (const key of ['rewardSelection', 'discountChoice', 'pricingToken']) expect(key in plainWrite.calls[0].body).toBe(false)
+  })
+
+  // v1.16.0 (before loyalty) sent exactly these bytes. A create with no reward (no
+  // program, no card, nothing to offer, "Bez nagrody") must still send them: no
+  // reward keys, not even `reward: null`, and no "-r" in the Idempotency-Key. Each
+  // write is called the way BookingFlow calls it then: `reward: null`, the key
+  // through withRewardKey(base, undefined) and expectedTotal through the same helper.
+  describe('a create without a reward is the v1.16.0 request, byte for byte', () => {
+    const v116Headers = (key) => ({ 'content-type': 'application/json', 'x-vizyto-site-key': 'pk_x', 'Idempotency-Key': key, authorization: 'Bearer t' })
+
+    test('a visit (createAppointment)', async () => {
+      const items = [{ businessServiceId: 1, resourceId: null, addonIds: [103, 101], durationMinutes: 45 }]
+      const startDate = '2030-01-07T08:00:00.000Z'
+      const notes = 'Proszę o ciszę'
+      const write = (pricing, writeCfg = cfg) => createAppointment(writeCfg, {
+        items,
+        startDate,
+        bookedById: 555,
+        notes,
+        ...expectedTotalOf(pricing, null),
+        idempotencyKey: withRewardKey(bookingIdempotencyKey({ businessId: 24, startDate, items, bookedById: 555, notes }), undefined),
+        reward: null,
+      }, 't')
+      const key = 'vzw-24-2030-01-07T08:00:00.000Z-1-any-101.103-45-555-14'
+      const items116 = '[{"businessServiceId":1,"resourceId":null,"addonIds":[103,101],"durationMinutes":45}]'
+
+      const priced = await exchange(() => write(quote(5000)))
+      expect(priced.calls[0].url).toBe('https://api.example.test/api/public/businesses/24/appointments')
+      expect(priced.calls[0].method).toBe('POST')
+      expect(priced.calls[0].raw).toBe(`{"bookedById":555,"items":${items116},"startDate":"2030-01-07T08:00:00.000Z","notes":"Proszę o ciszę","expectedTotal":5000}`)
+      expect(priced.calls[0].headers).toEqual(v116Headers(key))
+
+      // A failed quote sends no expectedTotal; a vizyto.com short link adds entryPoint last.
+      const unpriced = await exchange(() => write(null, { ...cfg, entryPoint: 'qr' }))
+      expect(unpriced.calls[0].raw).toBe(`{"bookedById":555,"items":${items116},"startDate":"2030-01-07T08:00:00.000Z","notes":"Proszę o ciszę","entryPoint":"qr"}`)
+      expect(unpriced.calls[0].headers).toEqual(v116Headers(key))
+    })
+
+    test('a rental (createRental), a pool and one unit', async () => {
+      const startDate = '2030-01-07T09:00:00.000Z'
+      const endDate = '2030-01-07T11:00:00.000Z'
+      const write = (target, pricing, partySize) => createRental(cfg, {
+        ...target,
+        startDate,
+        endDate,
+        bookedById: 555,
+        notes: undefined,
+        partySize,
+        ...expectedTotalOf(pricing, null),
+        idempotencyKey: withRewardKey(`vzw-rnt-24-${startDate}-${target.resourceId ?? 't' + target.rentalTypeId}-2-555`, undefined),
+        reward: null,
+      }, 't')
+
+      const pool = await exchange(() => write({ rentalTypeId: 7 }, quote(6400), 3))
+      expect(pool.calls[0].url).toBe('https://api.example.test/api/public/businesses/24/rentals')
+      expect(pool.calls[0].method).toBe('POST')
+      expect(pool.calls[0].raw).toBe('{"resourceId":null,"rentalTypeId":7,"startDate":"2030-01-07T09:00:00.000Z","endDate":"2030-01-07T11:00:00.000Z","bookedById":555,"partySize":3,"expectedTotal":6400}')
+      expect(pool.calls[0].headers).toEqual(v116Headers('vzw-rnt-24-2030-01-07T09:00:00.000Z-t7-2-555'))
+
+      const unit = await exchange(() => write({ resourceId: 31 }, null, null))
+      expect(unit.calls[0].raw).toBe('{"resourceId":31,"rentalTypeId":null,"startDate":"2030-01-07T09:00:00.000Z","endDate":"2030-01-07T11:00:00.000Z","bookedById":555,"partySize":null}')
+      expect(unit.calls[0].headers).toEqual(v116Headers('vzw-rnt-24-2030-01-07T09:00:00.000Z-31-2-555'))
+    })
+
+    test('a class entry (registerForSession)', async () => {
+      const write = (pricing, promoPrice) => registerForSession(cfg, {
+        sessionId: 901,
+        bookedById: 555,
+        notes: undefined,
+        ...classExpectedTotalOf(pricing, promoPrice, null),
+        idempotencyKey: withRewardKey('vzw-gc-24-901-555-0', undefined),
+        reward: null,
+      }, 't')
+
+      const promo = await exchange(() => write(null, 5000))
+      expect(promo.calls[0].url).toBe('https://api.example.test/api/public/businesses/24/group-class-sessions/901/register')
+      expect(promo.calls[0].method).toBe('POST')
+      expect(promo.calls[0].raw).toBe('{"bookedById":555,"expectedTotal":5000}')
+      expect(promo.calls[0].headers).toEqual(v116Headers('vzw-gc-24-901-555-0'))
+      // A quote wins over the term's promotion price; with neither, no expectedTotal.
+      expect((await exchange(() => write(quote(4500), 5000))).calls[0].raw).toBe('{"bookedById":555,"expectedTotal":4500}')
+      expect((await exchange(() => write(null, null))).calls[0].raw).toBe('{"bookedById":555}')
+    })
+
+    test('with a reward the total is always sent, null included', () => {
+      const chosen = { fields: reward }
+      expect(expectedTotalOf(quote(3000), chosen)).toEqual({ expectedTotal: 3000 })
+      expect(expectedTotalOf(null, chosen)).toEqual({ expectedTotal: null })
+      // The promotion price never stands in for a reward quote.
+      expect(classExpectedTotalOf(null, 5000, chosen)).toEqual({ expectedTotal: null })
+    })
   })
 
   test('a refused create keeps the fresh quote, the lines and the API sentence', async () => {

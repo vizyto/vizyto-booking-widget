@@ -92,7 +92,9 @@ import {
   claimErrorMessage,
   claimedTerms,
   classEntryKey,
+  classExpectedTotalOf,
   deriveRewardChoice,
+  expectedTotalOf,
   formatPersonalTotal,
   formatPersonalTotalInline,
   hasRewardPricing,
@@ -291,17 +293,6 @@ function registerErrorMessage(code: string): string {
     default:
       return 'Nie udało się zapisać na zajęcia. Spróbuj ponownie.'
   }
-}
-
-/**
- * `expectedTotal` of a create. A reward always sends its quote's total (null
- * included: the API refuses a reward without the field, 422
- * REWARD_EXPECTED_TOTAL_REQUIRED); an ordinary booking sends a known total only,
- * exactly as before loyalty.
- */
-function expectedTotalOf(pricing: PriceQuote | null, reward: ChosenReward | null): { expectedTotal?: number | null } {
-  if (reward) return { expectedTotal: pricing?.total ?? null }
-  return pricing?.total != null ? { expectedTotal: pricing.total } : {}
 }
 
 /** The receipt of a booking with a reward: the reward named, and the price it was booked at. */
@@ -2184,11 +2175,7 @@ export function BookingFlow({
         sessionId: id,
         bookedById: a.userId,
         notes: trimmedNotes,
-        ...(reward
-          ? expectedTotalOf(pricing, reward)
-          : (pricing?.total ?? chosenSession?.promo?.price) != null
-            ? { expectedTotal: pricing?.total ?? chosenSession?.promo?.price }
-            : {}),
+        ...classExpectedTotalOf(pricing, chosenSession?.promo?.price, reward),
         // Deterministic from the payload, like the appointment key: it must survive
         // a remount and the phone-verification detour without minting a new one.
         idempotencyKey: withRewardKey(`vzw-gc-${business.id}-${id}-${a.userId}-${(trimmedNotes ?? '').length}`, reward?.fields.rewardSelection.rewardId),

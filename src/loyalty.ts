@@ -412,6 +412,31 @@ export function refuseLines(refused: Readonly<Record<number, readonly number[]>>
 export const withRewardKey = (key: string, rewardId: number | null | undefined) =>
   rewardId != null ? `${key}-r${rewardId}` : key
 
+/**
+ * `expectedTotal` of a create. A reward always sends its quote's total (null
+ * included: the API refuses a reward without the field, 422
+ * REWARD_EXPECTED_TOTAL_REQUIRED); an ordinary booking sends a known total only,
+ * exactly as before loyalty.
+ */
+export function expectedTotalOf(pricing: Pick<PriceQuote, 'total'> | null | undefined, reward: object | null | undefined): { expectedTotal?: number | null } {
+  if (reward) return { expectedTotal: pricing?.total ?? null }
+  return pricing?.total != null ? { expectedTotal: pricing.total } : {}
+}
+
+/**
+ * The class entry's `expectedTotal`: without a reward the term's promotion price
+ * stands in for a missing quote, exactly as before loyalty.
+ */
+export function classExpectedTotalOf(
+  pricing: Pick<PriceQuote, 'total'> | null | undefined,
+  promoPrice: number | null | undefined,
+  reward: object | null | undefined,
+): { expectedTotal?: number | null } {
+  if (reward) return expectedTotalOf(pricing, reward)
+  const total = pricing?.total ?? promoPrice
+  return total != null ? { expectedTotal: total } : {}
+}
+
 // ---------------------------------------------------------------------------
 // Create errors
 // ---------------------------------------------------------------------------
