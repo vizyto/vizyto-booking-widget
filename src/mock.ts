@@ -21,15 +21,27 @@
 //              profile reads say that one action is closed (a table books
 //              under `book`, like a visit, as on the API)
 //   - tables: Mondays full (waitlist path), 20:00 a lost table (see below)
+//   - loyalty (#471 F37), by business id; every other id has no program:
+//       471 -> Points: balance 120, two tiers, three rewards on the card and two
+//              catalog entries (one the balance pays for); the levers are listed
+//              at the loyalty section below
+//       472 -> a stamp card: 9 of 9 stamps, the stamp reward on the card and one
+//              more catalog entry the stamps pay for
 import type { TableDay, TableOptions, TablePeriod, TableSlot } from './tables'
 import type {
   Business,
   CartItem,
   CartItemTime,
   CheckEmailResult,
+  ClaimInput,
+  ClaimResult,
   DayCounts,
   GroupClass,
   GroupSession,
+  LoyaltyCatalogReward,
+  LoyaltyProgramPublic,
+  LoyaltyWallet,
+  MyLoyaltyReward,
   RentalDaySlots,
   LoginResult,
   OtpSendResult,
@@ -42,6 +54,10 @@ import type {
   PromoPriceFields,
   PublicPromotionSummary,
   RentalQuoteRequest,
+  RewardFields,
+  RewardQuoteResult,
+  RewardQuoteTarget,
+  RewardSelection,
   ServiceCategory,
   Slots,
   WaitlistCheck,
@@ -95,6 +111,9 @@ export const MOCK_CHANNEL_CLOSED = 680
 export const MOCK_CHANNEL_PARTIAL = 681
 export const MOCK_CHANNEL_CLOSES_ON_SUBMIT = 682
 export const MOCK_ACTIONS_CLOSE_ON_SUBMIT = 683
+/** Mock business ids with a loyalty program (#471 F37): Points, and a stamp card. */
+export const MOCK_LOYALTY_POINTS = 471
+export const MOCK_LOYALTY_STAMPS = 472
 // Set by fetchBusiness: the write mocks below take no business id.
 let mockBusinessId = 24
 // What the owner has switched off since the page loaded (682: the whole channel,
@@ -325,6 +344,8 @@ export async function fetchBusiness(businessId?: number): Promise<Business> {
     for (const a of mockActionsSwitchedOff) actions[a] = false
     return { ...BUSINESS, id: businessId, bookingChannels: { ...BUSINESS.bookingChannels, widget: { enabled: true, actions } } }
   }
+  // The loyalty scenarios are the demo business under their own id.
+  if (businessId === MOCK_LOYALTY_POINTS || businessId === MOCK_LOYALTY_STAMPS) return { ...BUSINESS, id: businessId }
   // Test lever: a single-family business (plain barbershop) must never see the
   // offering fork. Strips the group services and the rentables from the payload.
   // `typeof` guard: the mock also runs under bun:test, where there is no window.
@@ -409,6 +430,15 @@ export async function quoteRental(p: RentalQuoteRequest): Promise<PriceQuote> {
   const units = Math.max(1, Math.round((new Date(p.endDate).getTime() - new Date(p.startDate).getTime()) / unitMs))
   const tier = (resource?.pricingTiers ?? []).find((x) => units >= x.minUnits && (x.maxUnits == null || units <= x.maxUnits))
   const listPrice = (tier?.unitPrice ?? resource?.rentalRate ?? 0) * units
+  // A promotion that started after the reward was priced (the loyalty lever
+  // below): quiet, not advertised, so only the reward conflict reveals it.
+  if (latePromotionStarts.has(p.startDate)) {
+    const late = promoFields(listPrice)
+    return quoteOf([{
+      kind: 'rental', name: resource?.rentalTypeName ?? resource?.name ?? 'Wynajem', quantity: 1, listPrice,
+      price: late.price, promotionId: 2, priorPrice: null, advertised: false, badge: null,
+    }])
+  }
   const promoted = isPromoDay(p.startDate) && isPromoTime(p.startDate.slice(11, 16))
   const promo = promoted ? promoFields(listPrice) : null
   return quoteOf([{
@@ -586,31 +616,39 @@ export async function oauthLogin(provider: string): Promise<LoginResult> {
   return { ok: true, data: { userId: 888, token: 'mock-token' } }
 }
 
+/** A refused mock write, with the reward fields the API adds to some refusals. */
+type MockFailure = { ok: false; code: string; message?: string; lineIndexes?: number[]; pricing?: PriceQuote }
+type MockWrite = { ok: true; data: any } | MockFailure
+
 export async function createAppointment(
-  p: { startDate: string; expectedTotal?: number | null },
+  p: { items?: CartItem[]; startDate: string; expectedTotal?: number | null; reward?: RewardFields | null },
   token: string | null,
-): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
+): Promise<MockWrite> {
   await wait(600)
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   const closed = channelRefusal('book')
   if (closed) return closed
   if (/T\d{2}:55/.test(p.startDate)) return { ok: false, code: 'SLOT_TAKEN' }
+  const refused = await rewardCreateRefusal({ flow: 'appointment', payload: { items: p.items ?? [], startDate: p.startDate } }, p.reward)
+  if (refused) return refused
   return { ok: true, data: { id: 12345, status: 'confirmed' } }
 }
 
 // ---- group classes -------------------------------------------------------
 // Wrapper rows. The 'fixed' one must never reach the picker: its roster comes
 // from linked customer groups and the server refuses self sign-up.
+const GROUP_CLASSES: GroupClass[] = [
+  // Available via period enrollment, but never bookable as a single entry.
+  { id: 45, businessServiceId: 34, entryEnabled: false, availability: 'available', capacity: 12, spotsLeft: null, attendanceMode: 'open', cancellationCutoffHours: null },
+  { id: 41, entryEnabled: true, businessServiceId: 31, availability: 'available', capacity: 12, spotsLeft: 9, attendanceMode: 'open', cancellationCutoffHours: 12 },
+  { id: 42, entryEnabled: true, businessServiceId: 32, availability: 'last_spots', capacity: 8, spotsLeft: 2, attendanceMode: 'open', cancellationCutoffHours: null },
+  { id: 44, entryEnabled: true, businessServiceId: 33, availability: 'full', capacity: 8, spotsLeft: 0, attendanceMode: 'open', cancellationCutoffHours: null },
+  { id: 43, entryEnabled: true, businessServiceId: 32, availability: 'full', capacity: 6, spotsLeft: 0, attendanceMode: 'fixed', cancellationCutoffHours: null },
+]
+
 export async function fetchGroupClasses(): Promise<GroupClass[]> {
   await wait(200)
-  return [
-    // Available via period enrollment, but never bookable as a single entry.
-    { id: 45, businessServiceId: 34, entryEnabled: false, availability: 'available', capacity: 12, spotsLeft: null, attendanceMode: 'open', cancellationCutoffHours: null },
-    { id: 41, entryEnabled: true, businessServiceId: 31, availability: 'available', capacity: 12, spotsLeft: 9, attendanceMode: 'open', cancellationCutoffHours: 12 },
-    { id: 42, entryEnabled: true, businessServiceId: 32, availability: 'last_spots', capacity: 8, spotsLeft: 2, attendanceMode: 'open', cancellationCutoffHours: null },
-    { id: 44, entryEnabled: true, businessServiceId: 33, availability: 'full', capacity: 8, spotsLeft: 0, attendanceMode: 'open', cancellationCutoffHours: null },
-    { id: 43, entryEnabled: true, businessServiceId: 32, availability: 'full', capacity: 6, spotsLeft: 0, attendanceMode: 'fixed', cancellationCutoffHours: null },
-  ]
+  return GROUP_CLASSES
 }
 
 /**
@@ -620,6 +658,10 @@ export async function fetchGroupClasses(): Promise<GroupClass[]> {
  */
 export async function fetchTimetable(): Promise<GroupSession[]> {
   await wait(300)
+  return timetableRows()
+}
+
+function timetableRows(): GroupSession[] {
   const day = (offset: number) => {
     const d = new Date()
     d.setDate(d.getDate() + offset)
@@ -641,15 +683,17 @@ export async function fetchTimetable(): Promise<GroupSession[]> {
 
 /** Session 903 is full in the timetable above - reject it the way the server does. */
 export async function registerForSession(
-  p: { sessionId: number; expectedTotal?: number | null },
+  p: { sessionId: number; expectedTotal?: number | null; reward?: RewardFields | null },
   token: string | null,
-): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
+): Promise<MockWrite> {
   await wait(600)
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   const closed = channelRefusal('groupClasses')
   if (closed) return closed
   if (p.sessionId === 921) return { ok: false, code: 'ENTRY_DISABLED' }
   if (p.sessionId === 903) return { ok: false, code: 'SESSION_FULL' }
+  const refused = await rewardCreateRefusal({ flow: 'class', sessionId: p.sessionId }, p.reward)
+  if (refused) return refused
   return { ok: true, data: { id: 5150, sessionId: p.sessionId, status: 'registered' } }
 }
 
@@ -699,14 +743,19 @@ export async function checkRentalRange(p: { startDate: string }): Promise<boolea
 }
 
 export async function createRental(
-  p: { startDate: string; expectedTotal?: number | null },
+  p: { resourceId?: number; rentalTypeId?: number; startDate: string; endDate?: string; expectedTotal?: number | null; reward?: RewardFields | null },
   token: string | null,
-): Promise<{ ok: true; data: any } | { ok: false; code: string }> {
+): Promise<MockWrite> {
   await wait(600)
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   const closed = channelRefusal('rentals')
   if (closed) return closed
   if (/T\d{2}:55/.test(p.startDate)) return { ok: false, code: 'RENTAL_SLOT_UNAVAILABLE' }
+  if (p.endDate) {
+    const payload = { resourceId: p.resourceId ?? null, rentalTypeId: p.rentalTypeId ?? null, startDate: p.startDate, endDate: p.endDate }
+    const refused = await rewardCreateRefusal({ flow: 'rental', payload }, p.reward)
+    if (refused) return refused
+  }
   return { ok: true, data: { id: 7700, status: 'reserved' } }
 }
 
@@ -812,4 +861,373 @@ export async function joinTableWaitlist(
   const closed = channelRefusal('waitlist')
   if (closed) return closed
   return { ok: true, data: { id: 8800 } }
+}
+
+// ---- loyalty (vizyto #471 F37) ---------------------------------------------
+// Two programs on the demo business, by id (every other id has none, so the
+// default demo and the tests make no loyalty request of consequence):
+//  - 471, Points: balance 120, tiers Srebrny (from 0) and Złoty (from 200), three
+//    rewards on the card and two catalog entries:
+//      "Rabat 20 zł"         amount, every position, does not stack,
+//      "Darmowe strzyżenie"  free item, any length of service 1,
+//      "Rabat 15 zł"         stacks, but a parallel booking takes it: the create
+//                            answers REWARD_UNAVAILABLE (recovery path),
+//      catalog "Rabat 10%"   100 Points: the balance pays for it,
+//      catalog "Rabat 25%"   500 Points: it does not.
+//    Levers:
+//      add-on "Peeling twarzy" -> a reward that does not stack is refused on it at
+//                                 quote (409 REWARD_DISCOUNT_CONFLICT with its line):
+//                                 the widget prices the reward again without it,
+//      a lane rented at 18:00  -> a create with a reward that does not stack answers
+//                                 409 REWARD_DISCOUNT_CONFLICT: a quiet promotion
+//                                 started meanwhile (later quotes show it),
+//      class term 912          -> the first create with a reward answers
+//                                 REWARD_QUOTE_EXPIRED with the same total (the
+//                                 widget retries silently with the fresh token).
+//  - 472, stamps: 9 of 9, the stamp reward ("Darmowe strzyżenie") on the card and
+//    a catalog "Rabat 10 zł" for 5 stamps.
+// A reward quote answers pricingToken `mock-reward-<id>`; a create with a reward
+// moves it to `reserved`; a claim lowers the balance and adds the reward.
+
+const LOYALTY_TERMS = [
+  'Regulamin programu lojalnościowego',
+  '',
+  '1. Punkty przyznaje obsługa po rozliczeniu wizyty.',
+  '2. Punkty i nagrody wykorzystasz tylko w tym miejscu.',
+  '3. Odebraną nagrodę wybierzesz przy rezerwacji online albo pokażesz na miejscu.',
+].join('\n')
+
+const TIERS = [
+  { id: 1, name: 'Srebrny', threshold: 0, bonusPercent: null, stacksWithPromotions: false },
+  { id: 2, name: 'Złoty', threshold: 200, bonusPercent: 5, stacksWithPromotions: false },
+]
+
+const POINTS_PROGRAM: LoyaltyProgramPublic = {
+  id: 4710,
+  status: 'active',
+  earningEnabled: true,
+  welcomePoints: 20,
+  pointsExpiryMonths: 12,
+  termsText: LOYALTY_TERMS,
+  termsVersion: 2,
+  card: { displayMode: 'points' },
+  tiers: TIERS,
+  earnRules: [
+    { id: 1, kind: 'amount', points: 1, amountUnitGrosze: 1000, minimumTotalGrosze: null, includePassVisits: false, includeFreeRewardVisits: false },
+    { id: 2, kind: 'online_booking', points: 5, amountUnitGrosze: null, minimumTotalGrosze: null, includePassVisits: false, includeFreeRewardVisits: false },
+  ],
+  stampReward: null,
+}
+
+const STAMP_PROGRAM: LoyaltyProgramPublic = {
+  id: 4720,
+  status: 'active',
+  earningEnabled: true,
+  welcomePoints: null,
+  pointsExpiryMonths: null,
+  termsText: LOYALTY_TERMS,
+  termsVersion: 1,
+  card: { displayMode: 'stamps' },
+  tiers: [],
+  earnRules: [
+    { id: 3, kind: 'visit', points: 1, amountUnitGrosze: null, minimumTotalGrosze: null, includePassVisits: false, includeFreeRewardVisits: false },
+  ],
+  stampReward: { catalogId: 47201, stampCount: 9 },
+}
+
+/** Every length of service 1 ("Strzyżenie"): what the API keys a variant line with. */
+const HAIRCUT_TARGETS = [30, 45, 60].map((minutes, i) => ({
+  id: 900 + i, kind: 'service_variant' as const, businessServiceId: 1, variantMinutes: minutes, targetKey: `service_variant:1:${minutes}`,
+}))
+
+const catalogEntry = (patch: Partial<LoyaltyCatalogReward> & Pick<LoyaltyCatalogReward, 'id' | 'name' | 'kind' | 'value' | 'pointsCostMin'>): LoyaltyCatalogReward => ({
+  pointsCostMax: patch.pointsCostMin,
+  pointsCostStep: 1,
+  valueAtMin: patch.value,
+  valuePerStep: 0,
+  minimumTotalGrosze: null,
+  stacksWithPromotions: false,
+  onSiteOnly: false,
+  validityDays: 90,
+  scope: 'all',
+  targets: [],
+  ...patch,
+})
+
+const CATALOGS: Record<number, LoyaltyCatalogReward[]> = {
+  [MOCK_LOYALTY_POINTS]: [
+    catalogEntry({ id: 47104, name: 'Rabat 10%', kind: 'percent', value: 10, pointsCostMin: 100, stacksWithPromotions: true }),
+    catalogEntry({ id: 47105, name: 'Rabat 25%', kind: 'percent', value: 25, pointsCostMin: 500 }),
+  ],
+  [MOCK_LOYALTY_STAMPS]: [
+    catalogEntry({ id: 47201, name: 'Darmowe strzyżenie', kind: 'free_item', value: 0, pointsCostMin: 9, scope: 'selected', targets: HAIRCUT_TARGETS, validityDays: 60 }),
+    catalogEntry({ id: 47202, name: 'Rabat 10 zł', kind: 'amount', value: 1000, pointsCostMin: 5 }),
+  ],
+}
+
+const ownedReward = (id: number, catalogId: number, terms: Partial<MyLoyaltyReward['termsSnapshot']> & Pick<MyLoyaltyReward['termsSnapshot'], 'name' | 'kind' | 'resolvedValue'>): MyLoyaltyReward => ({
+  id,
+  catalogId,
+  status: 'available',
+  expiresAt: null,
+  termsSnapshot: { scope: 'all', targets: [], selectedTargetKey: null, minimumTotalGrosze: null, onSiteOnly: false, stacksWithPromotions: false, ...terms },
+})
+
+/** The reward "used in another booking" between the quote and the create. */
+const MOCK_REWARD_TAKEN_ELSEWHERE = 4703
+/** The class term whose first create with a reward finds its token expired. */
+const MOCK_TOKEN_EXPIRES_SESSION = 912
+
+type MockCard = { balance: number; owned: MyLoyaltyReward[]; claims: Map<string, number>; nextId: number }
+const loyaltyCards = new Map<number, MockCard>()
+/** Rental starts where a quiet promotion began after the reward was priced. */
+const latePromotionStarts = new Set<string>()
+const expiredTokens = new Set<string>()
+
+function cardOf(businessId: number): MockCard | null {
+  if (businessId !== MOCK_LOYALTY_POINTS && businessId !== MOCK_LOYALTY_STAMPS) return null
+  let card = loyaltyCards.get(businessId)
+  if (!card) {
+    card = businessId === MOCK_LOYALTY_POINTS
+      ? {
+          balance: 120,
+          owned: [
+            ownedReward(4701, 47101, { name: 'Rabat 20 zł', kind: 'amount', resolvedValue: 2000 }),
+            ownedReward(4702, 47102, { name: 'Darmowe strzyżenie', kind: 'free_item', resolvedValue: 0, scope: 'selected', targets: HAIRCUT_TARGETS }),
+            ownedReward(MOCK_REWARD_TAKEN_ELSEWHERE, 47103, { name: 'Rabat 15 zł', kind: 'amount', resolvedValue: 1500, stacksWithPromotions: true }),
+          ],
+          claims: new Map(),
+          nextId: 4710,
+        }
+      : {
+          balance: 9,
+          owned: [ownedReward(4721, 47201, { name: 'Darmowe strzyżenie', kind: 'free_item', resolvedValue: 0, scope: 'selected', targets: HAIRCUT_TARGETS })],
+          claims: new Map(),
+          nextId: 4730,
+        }
+    loyaltyCards.set(businessId, card)
+  }
+  return card
+}
+
+const programOf = (businessId: number) =>
+  businessId === MOCK_LOYALTY_POINTS ? POINTS_PROGRAM : businessId === MOCK_LOYALTY_STAMPS ? STAMP_PROGRAM : null
+
+export async function getLoyaltyProgram(businessId: number): Promise<LoyaltyProgramPublic | null> {
+  await wait(120)
+  return programOf(businessId)
+}
+
+export async function getLoyaltyCatalog(businessId: number): Promise<LoyaltyCatalogReward[]> {
+  await wait(120)
+  return CATALOGS[businessId] ?? []
+}
+
+export async function getMyLoyalty(businessId: number, _token: string): Promise<LoyaltyWallet | null> {
+  await wait(160)
+  const program = programOf(businessId)
+  const card = cardOf(businessId)
+  if (!program || !card) return null
+  if (program === STAMP_PROGRAM) {
+    return {
+      balance: card.balance,
+      tierPoints: 9,
+      tier: { currentTier: null, nextTier: null, pointsToNext: 0, progress: 0 },
+      stamps: { catalogId: 47201, stampCount: 9, filled: Math.max(0, Math.min(9, card.balance)) },
+      program,
+    }
+  }
+  return {
+    balance: card.balance,
+    tierPoints: 170,
+    tier: { currentTier: TIERS[0]!, nextTier: TIERS[1]!, pointsToNext: 30, progress: 0.85 },
+    stamps: null,
+    program,
+  }
+}
+
+export async function getMyLoyaltyRewards(businessId: number, _token: string): Promise<MyLoyaltyReward[]> {
+  await wait(160)
+  const card = cardOf(businessId)
+  return card ? card.owned.filter((r) => r.status === 'available' || r.status === 'reserved').map((r) => ({ ...r })) : []
+}
+
+export async function claimLoyaltyReward(businessId: number, p: ClaimInput, token: string | null): Promise<ClaimResult> {
+  await wait(450)
+  if (!token) return { ok: false, code: 'UNAUTHENTICATED' }
+  const card = cardOf(businessId)
+  if (!card) return { ok: false, code: 'LOYALTY_PROGRAM_NOT_FOUND' }
+  const known = card.claims.get(p.idempotencyKey)
+  if (known != null) return { ok: true, rewardId: known }
+  const entry = (CATALOGS[businessId] ?? []).find((e) => e.id === p.catalogId)
+  if (!entry) return { ok: false, code: 'REWARD_CATALOG_NOT_FOUND' }
+  if (card.balance < p.pointsCost) {
+    return { ok: false, code: 'INSUFFICIENT_POINTS', message: businessId === MOCK_LOYALTY_STAMPS ? 'Masz za mało pieczątek, aby odebrać tę nagrodę.' : 'Masz za mało Punktów, aby odebrać tę nagrodę.' }
+  }
+  const id = card.nextId++
+  card.owned.push({
+    id,
+    catalogId: entry.id,
+    status: 'available',
+    expiresAt: entry.validityDays ? new Date(Date.now() + entry.validityDays * 86_400_000).toISOString() : null,
+    termsSnapshot: {
+      name: entry.name,
+      kind: entry.kind,
+      resolvedValue: entry.valueAtMin,
+      scope: entry.scope,
+      targets: entry.targets,
+      selectedTargetKey: entry.kind === 'free_item' ? p.targetKey ?? null : null,
+      minimumTotalGrosze: entry.minimumTotalGrosze,
+      onSiteOnly: entry.onSiteOnly,
+      stacksWithPromotions: entry.stacksWithPromotions,
+    },
+  })
+  card.balance -= p.pointsCost
+  card.claims.set(p.idempotencyKey, id)
+  return { ok: true, rewardId: id }
+}
+
+/** The ordinary price of one class entry, as the timetable prices it. */
+export async function quoteClassEntry(sessionId: number): Promise<PriceQuote | null> {
+  await wait(150)
+  const session = timetableRows().find((s) => s.id === sessionId)
+  const cls = session ? GROUP_CLASSES.find((c) => c.id === session.groupClassId) : undefined
+  const service = cls ? BUSINESS.services.find((s) => s.id === cls.businessServiceId) : undefined
+  if (!session || !service) return null
+  const listPrice = session.priceOverride ?? service.price
+  const promo = session.promo ?? null
+  return quoteOf([{
+    kind: 'group_class_entry', name: service.name, quantity: 1, listPrice: promo?.listPrice ?? listPrice,
+    price: promo?.price ?? listPrice, promotionId: promo ? 1 : null,
+    priorPrice: promo?.priorPrice ?? null, advertised: promo?.advertised ?? false, badge: promo?.badge ?? null,
+  }])
+}
+
+const ordinaryQuoteOf = (target: RewardQuoteTarget): Promise<PriceQuote | null> =>
+  target.flow === 'appointment' ? quoteAppointment(target.payload)
+    : target.flow === 'rental' ? quoteRental(target.payload)
+      : quoteClassEntry(target.sessionId)
+
+/** The appointment lever: a promotion on this add-on that the ordinary quote does not show. */
+const hiddenPromotion = (target: RewardQuoteTarget, line: PriceQuoteLine | undefined) =>
+  target.flow === 'appointment' && line?.kind === 'addon' && line.name === 'Peeling twarzy'
+
+/** Applies one reward to the selected lines, the way the API allocates it. */
+function applyMockReward(base: PriceQuote, reward: MyLoyaltyReward, lineIndexes: number[]): PriceQuote {
+  const terms = reward.termsSnapshot
+  let left = terms.kind === 'amount' ? terms.resolvedValue : 0
+  const allocations: NonNullable<PriceQuote['reward']>['lines'] = []
+  const lines = base.lines.map((line, index): PriceQuoteLine => {
+    if (!lineIndexes.includes(index) || line.price == null) return line
+    const before = line.price
+    const discount = terms.kind === 'free_item'
+      ? before
+      : terms.kind === 'percent' ? Math.round((before * terms.resolvedValue) / 100) : Math.min(left, before)
+    if (terms.kind === 'amount') left -= discount
+    const price = before - discount
+    allocations.push({
+      index, price, discount, targetKey: `line:${index}`,
+      // D29: a stacking reward counts from P; a free item replaces the promotion.
+      ...(line.promotionId != null && terms.kind !== 'free_item' ? { promotionPrice: before } : {}),
+    })
+    return {
+      ...line,
+      price,
+      rewardEligibility: { eligible: true, reason: null },
+      ...(terms.kind === 'free_item' ? { promotionId: null, advertised: false, priorPrice: null, badge: null } : {}),
+    }
+  })
+  const quote = quoteOf(lines)
+  return {
+    ...quote,
+    pricingToken: `mock-reward-${reward.id}`,
+    reward: {
+      rewardId: reward.id,
+      discount: allocations.reduce((sum, a) => sum + a.discount, 0),
+      unusedAmount: terms.kind === 'amount' ? left : 0,
+      lines: allocations,
+    },
+  }
+}
+
+const UNAVAILABLE = 'Ta nagroda jest niedostępna. Odśwież listę nagród.'
+
+export async function quoteWithReward(
+  businessId: number,
+  target: RewardQuoteTarget,
+  selection: RewardSelection,
+  token: string | null,
+): Promise<RewardQuoteResult> {
+  await wait(220)
+  const card = cardOf(businessId)
+  if (!token) return { ok: false, code: 'UNAUTHENTICATED' }
+  if (!card) return { ok: false, code: 'LOYALTY_PROGRAM_NOT_FOUND' }
+  const reward = card.owned.find((r) => r.id === selection.rewardId)
+  if (!reward || reward.status !== 'available' || reward.termsSnapshot.onSiteOnly) return { ok: false, code: 'REWARD_UNAVAILABLE', message: UNAVAILABLE }
+  const ordinary = await ordinaryQuoteOf(target)
+  if (!ordinary) return { ok: false, code: 'SESSION_NOT_FOUND' }
+  const terms = reward.termsSnapshot
+  if (terms.kind === 'free_item' && selection.lineIndexes.length !== 1) return { ok: false, code: 'REWARD_UNAVAILABLE', message: UNAVAILABLE }
+  if (terms.kind !== 'free_item' && !terms.stacksWithPromotions) {
+    const conflicts = selection.lineIndexes.filter((i) => ordinary.lines[i]?.promotionId != null || hiddenPromotion(target, ordinary.lines[i]))
+    if (conflicts.length) {
+      return {
+        ok: false,
+        code: 'REWARD_DISCOUNT_CONFLICT',
+        lineIndexes: conflicts,
+        message: `Ta nagroda nie łączy się z promocją na pozycjach: ${conflicts.map((i) => ordinary.lines[i]!.name).join(', ')}. Wybierz inne pozycje.`,
+      }
+    }
+  }
+  return { ok: true, quote: applyMockReward(ordinary, reward, selection.lineIndexes) }
+}
+
+/** "18:00" in the business timezone. */
+const localHour = (iso: string) => {
+  try {
+    return new Intl.DateTimeFormat('pl-PL', { hour: '2-digit', minute: '2-digit', timeZone: BUSINESS.timezone || 'Europe/Warsaw' }).format(new Date(iso))
+  } catch {
+    return iso.slice(11, 16)
+  }
+}
+
+/**
+ * The reward checks of a create, after the slot checks: the reward must still be
+ * on the card, the token must be the quote's, and the levers above fire here.
+ * Success reserves the reward for this booking.
+ */
+async function rewardCreateRefusal(target: RewardQuoteTarget, reward: RewardFields | null | undefined): Promise<MockFailure | null> {
+  if (!reward) return null
+  const card = cardOf(mockBusinessId)
+  const owned = card?.owned.find((r) => r.id === reward.rewardSelection.rewardId)
+  if (!owned || owned.status !== 'available') return { ok: false, code: 'REWARD_UNAVAILABLE', message: UNAVAILABLE }
+  if (owned.id === MOCK_REWARD_TAKEN_ELSEWHERE) {
+    owned.status = 'reserved'
+    return { ok: false, code: 'REWARD_UNAVAILABLE', message: UNAVAILABLE }
+  }
+  const terms = owned.termsSnapshot
+  if (target.flow === 'rental' && localHour(target.payload.startDate) === '18:00' && terms.kind !== 'free_item' && !terms.stacksWithPromotions) {
+    latePromotionStarts.add(target.payload.startDate)
+    const pricing = await quoteRental(target.payload)
+    return {
+      ok: false,
+      code: 'REWARD_DISCOUNT_CONFLICT',
+      lineIndexes: [0],
+      pricing,
+      message: `Ta nagroda nie łączy się z promocją na pozycjach: ${pricing.lines[0]?.name ?? 'Wynajem'}. Wybierz inne pozycje.`,
+    }
+  }
+  const expiresOnce = target.flow === 'class' && target.sessionId === MOCK_TOKEN_EXPIRES_SESSION && !expiredTokens.has(`${owned.id}:${target.sessionId}`)
+  if (expiresOnce || reward.pricingToken !== `mock-reward-${owned.id}`) {
+    expiredTokens.add(`${owned.id}:${target.flow === 'class' ? target.sessionId : ''}`)
+    const fresh = await quoteWithReward(mockBusinessId, target, reward.rewardSelection, 'mock-token')
+    return {
+      ok: false,
+      code: 'REWARD_QUOTE_EXPIRED',
+      message: 'Wycena nagrody wygasła lub się zmieniła. Sprawdź aktualną cenę i potwierdź ponownie.',
+      ...(fresh.ok ? { pricing: fresh.quote } : {}),
+    }
+  }
+  owned.status = 'reserved'
+  return null
 }
