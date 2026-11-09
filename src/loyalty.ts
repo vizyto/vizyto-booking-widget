@@ -437,6 +437,28 @@ export function classExpectedTotalOf(
   return total != null ? { expectedTotal: total } : {}
 }
 
+/**
+ * How long the success screen waits, once the create has answered, for its
+ * program block (read alongside the create, so normally already there).
+ */
+export const DONE_LOYALTY_WAIT_MS = 800
+
+/**
+ * The answer when it comes within `ms`, else null; a failure is null too. The
+ * success screen renders its program block once, whole: a late answer is
+ * dropped, never added after the first frame (it would push the buttons down).
+ */
+export function settleWithin<T>(read: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms)
+    const done = (value: T | null) => {
+      clearTimeout(timer)
+      resolve(value)
+    }
+    read.then(done, () => done(null))
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Create errors
 // ---------------------------------------------------------------------------

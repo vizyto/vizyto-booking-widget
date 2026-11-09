@@ -286,6 +286,9 @@ Ekran potwierdzenia pokazuje użytą nagrodę i zapłaconą cenę, a pod podsumo
 krótki blok „Program lojalnościowy”: opis programu, postęp klienta (gdy ma już
 kartę) i zwinięte „Jak to działa” oraz „Regulamin programu”. Widget nigdy nie
 obiecuje Punktów za tę rezerwację: przyznaje je firma przy rozliczeniu wizyty.
+Blok czyta się równolegle z zapisem rezerwacji i pokazuje od razu w całości;
+gdy odczyt nie zdąży, ekran pojawia się bez bloku, żeby nic nie przesuwało
+przycisków po pierwszej klatce.
 
 Odczyty są oszczędne i odporne na błędy: program pobiera się raz, dopiero gdy
 klient zaczyna podawać dane kontaktowe, a przy sesji przekazanej przez stronę

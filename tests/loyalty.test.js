@@ -41,6 +41,7 @@ import {
   rewardLapsed,
   rewardNotes,
   rewardValidityLine,
+  settleWithin,
   stampRuleSentence,
   stampValidityLine,
   usableOwned,
@@ -336,6 +337,30 @@ describe('create errors', () => {
     expect(claimErrorMessage('INSUFFICIENT_POINTS', 'Masz za mało Punktów.')).toBe('Masz za mało Punktów.')
     expect(claimErrorMessage('LOYALTY_PROGRAM_PAUSED', 'LOYALTY_PROGRAM_PAUSED')).toBe(CLAIM_FALLBACK)
     expect(claimErrorMessage('HTTP_500', 'Internal')).toBe(CLAIM_FALLBACK)
+  })
+})
+
+describe('the success screen\'s program block waits a bounded time', () => {
+  const later = (value, ms) => new Promise((resolve) => setTimeout(() => resolve(value), ms))
+
+  test('an answer already there comes at once', async () => {
+    const block = { program: { id: 1 } }
+    expect(await settleWithin(Promise.resolve(block), 50)).toBe(block)
+    expect(await settleWithin(Promise.resolve(null), 50)).toBeNull()
+  })
+
+  test('an answer within the wait is taken', async () => {
+    expect(await settleWithin(later('card', 10), 200)).toBe('card')
+  })
+
+  test('a late answer is dropped, not added later', async () => {
+    const started = Date.now()
+    expect(await settleWithin(later('card', 300), 30)).toBeNull()
+    expect(Date.now() - started).toBeLessThan(250)
+  })
+
+  test('a failed read is no block', async () => {
+    expect(await settleWithin(Promise.reject(new Error('offline')), 50)).toBeNull()
   })
 })
 

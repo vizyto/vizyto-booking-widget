@@ -84,6 +84,7 @@ import { StepRentalTime } from './steps/StepRentalTime'
 import { initialRentalOption } from './rentalPrefill'
 import {
   CLAIM_CLOSES,
+  DONE_LOYALTY_WAIT_MS,
   REWARD_RECOVERY,
   amountDueSentence,
   appointmentTargetKeys,
@@ -105,6 +106,7 @@ import {
   rentalBaseKey,
   rewardCreateAction,
   selectionKey,
+  settleWithin,
   withRewardKey,
   type BookingRewardLine,
   type ClaimableReward,
@@ -264,6 +266,8 @@ type RewardOffer = {
 }
 /** A reward a create carries: its fields, its name for the receipt and the quote it was priced with. */
 type ChosenReward = { fields: RewardFields; name: string; quote: PriceQuote }
+/** The success screen's program block; `wallet` is null when the customer has no card here yet. */
+type DoneLoyalty = { program: LoyaltyProgramPublic; wallet: LoyaltyWallet | null; catalog: LoyaltyCatalogReward[] }
 
 /**
  * Server codes for a class sign-up, as sentences with a way out. Same job as the
@@ -940,7 +944,7 @@ export function BookingFlow({
   const [claimErr, setClaimErr] = useState('')
   // What the success screen shows: the reward used, and the program block.
   const [usedReward, setUsedReward] = useState<ChosenReward | null>(null)
-  const [doneLoyalty, setDoneLoyalty] = useState<{ program: LoyaltyProgramPublic; wallet: LoyaltyWallet | null; catalog: LoyaltyCatalogReward[] } | null>(null)
+  const [doneLoyalty, setDoneLoyalty] = useState<DoneLoyalty | null>(null)
   const setOffer = (next: RewardOffer | null) => {
     offerRef.current = next
     setOfferState(next)
@@ -1629,6 +1633,7 @@ export function BookingFlow({
     const ctx = { rental: rentalOptionKey(rentalPick), units: rentalUnits, businessId: business.id }
     emit('booking_submitted', { ...ctx, userId: a.userId })
     const trimmedNotes = notes.trim() || undefined
+    const loyaltyRead = readDoneLoyalty(a)
     const r = await createRental(
       cfg,
       {
@@ -1649,10 +1654,11 @@ export function BookingFlow({
     )
     booking.current = false
     if (r.ok) {
+      const loyalty = await doneLoyaltyOf(loyaltyRead)
       setBookedStatus(r.data?.status ?? 'reserved')
       setUsedReward(reward)
+      setDoneLoyalty(loyalty)
       setPhase('done')
-      void loadDoneLoyalty(a)
       emit('booking_completed', {
         ...ctx,
         userId: a.userId,
@@ -2076,6 +2082,7 @@ export function BookingFlow({
     const items = buildCartItems()
     const startDate = slotStartDate(date, key, business.timezone || 'Europe/Warsaw')
     const trimmedNotes = notes.trim() || undefined
+    const loyaltyRead = readDoneLoyalty(a)
     const r = await createAppointment(
       cfg,
       {
@@ -2094,10 +2101,11 @@ export function BookingFlow({
     )
     booking.current = false
     if (r.ok) {
+      const loyalty = await doneLoyaltyOf(loyaltyRead)
       setBookedStatus(r.data?.status ?? null)
       setUsedReward(reward)
+      setDoneLoyalty(loyalty)
       setPhase('done')
-      void loadDoneLoyalty(a)
       emit('booking_completed', {
         ...ctx,
         userId: a.userId,
@@ -2169,6 +2177,7 @@ export function BookingFlow({
     const ctx = { groupClassId: classPick?.cls.id ?? null, sessionId: id, businessId: business.id }
     emit('booking_submitted', { ...ctx, userId: a.userId })
     const trimmedNotes = notes.trim() || undefined
+    const loyaltyRead = readDoneLoyalty(a)
     const r = await registerForSession(
       cfg,
       {
@@ -2185,10 +2194,11 @@ export function BookingFlow({
     )
     booking.current = false
     if (r.ok) {
+      const loyalty = await doneLoyaltyOf(loyaltyRead)
       setBookedStatus(r.data?.status ?? 'registered')
       setUsedReward(reward)
+      setDoneLoyalty(loyalty)
       setPhase('done')
-      void loadDoneLoyalty(a)
       emit('booking_completed', {
         ...ctx,
         userId: a.userId,
@@ -2572,21 +2582,29 @@ export function BookingFlow({
     await priceRewards(now.gen)
   }
 
-  /** The success screen's program block: the program, and the card when there is one. */
-  async function loadDoneLoyalty(a: Auth) {
-    setDoneLoyalty(null)
-    // Usually asked by now (the details step, or "Dalej" with a session); read here otherwise.
+  /**
+   * The success screen's program block: the program, the card when there is one
+   * and, for a stamp card, the catalog that names its reward. Started next to the
+   * create and awaited before the screen (doneLoyaltyOf), so the block renders
+   * whole on the first frame and never grows under the customer's thumb
+   * (DESIGN.md 4.6.1). A booking does not move the card (staff award at
+   * settlement, a reward was paid for when claimed), so reading it alongside the
+   * create shows the same card as after it. Null without an active program: no
+   * further read.
+   */
+  async function readDoneLoyalty(a: Auth): Promise<DoneLoyalty | null> {
     const program = await ensureProgram()
-    if (!program) return
+    if (!program) return null
     const catalog = offerRef.current?.catalog ?? []
-    setDoneLoyalty({ program, wallet: null, catalog })
     const [wallet, stampCatalog] = await Promise.all([
       getMyLoyalty(cfg, a.token),
-      // A stamp card names its reward: read the catalog only for that.
       isStampProgram(program) && !catalog.length ? getLoyaltyCatalog(cfg) : Promise.resolve(catalog),
     ])
-    setDoneLoyalty({ program, wallet, catalog: stampCatalog })
+    return { program, wallet, catalog: stampCatalog }
   }
+
+  /** The block for the success screen: read by the time the create answered (or just after), else none. */
+  const doneLoyaltyOf = (read: Promise<DoneLoyalty | null>) => settleWithin(read, DONE_LOYALTY_WAIT_MS)
 
   async function refreshQuoteFor(a: Auth): Promise<PriceQuote | null> {
     let fresh: PriceQuote | null = null
@@ -3118,7 +3136,8 @@ export function BookingFlow({
   // their details, so it is there when the code is verified. Never on a select
   // step: an inline embed can open on its last one (a single rentable, a term or
   // service prefill), and a visitor who only looks at it makes no loyalty request.
-  // A customer already signed in reads it on "Dalej", under the quiet spinner.
+  // A customer already signed in reads it on "Dalej": under the quiet spinner, or
+  // next to the create when there is no price to put a reward on.
   useEffect(() => {
     if (effKind === 'table' || intent !== 'book') return
     if (phase === 'identify') void ensureProgram()

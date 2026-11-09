@@ -454,6 +454,25 @@ let f
 const journal = () => page.evaluate(() => window.__VIZYTO_MOCK_JOURNAL__ ?? { loyaltyReads: 0, lastCreate: null })
 /** A create input with no reward: the v1.16.0 request (tests/loyalty.test.js pins its bytes). */
 const noReward = (input) => input?.reward == null && !['rewardSelection', 'discountChoice', 'pricingToken'].some((k) => k in input)
+/**
+ * Watches every frame from now on and keeps the first one that shows the
+ * success screen: whether its program block and the card's progress were
+ * already there (nothing may push "Gotowe" down after that frame).
+ */
+const watchDoneFrame = () => page.evaluate(() => {
+  window.__doneFrame = null
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  const tick = () => {
+    const r = host.shadowRoot
+    if (r.querySelector('.vz-done')) {
+      window.__doneFrame = { block: !!r.querySelector('.vz-lp'), progress: !!r.querySelector('.vz-lp-progress') }
+      return
+    }
+    requestAnimationFrame(tick)
+  }
+  requestAnimationFrame(tick)
+})
+const doneFrame = () => page.evaluate(() => window.__doneFrame)
 /** A keyboard press on a button in the reward step: it has focus first, as from Tab. */
 const pressRewardButton = (sel, text) => page.evaluate(({ sel, text }) => {
   const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
@@ -500,6 +519,7 @@ s = await state()
 ok('lojalność: odebrana nagroda wybrana z ceną', /Nagroda odebrana/.test(s.body) && /Punkty: 20/.test(s.body) && /Rabat 10%\. Do zapłaty: 45,00/.test(s.body), s.body.slice(0, 700))
 f = await focused()
 ok('lojalność: po odebraniu fokus na wybranej nagrodzie', f?.role === 'radio' && f.checked === 'true' && /Rabat 10%/.test(f.text), fmt(f))
+await watchDoneFrame()
 await page.evaluate(() => {
   const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
   host.shadowRoot.querySelector('.vz-cta button')?.click()
@@ -507,6 +527,8 @@ await page.evaluate(() => {
 await page.waitForTimeout(1800)
 s = await state()
 ok('lojalność: potwierdzenie z nagrodą i blokiem programu', /Zarezerwowane!/.test(s.body) && /NagrodaRabat 10%/.test(s.body) && /Program lojalnościowy/.test(s.body) && /Jak to działa/.test(s.body), s.body.slice(0, 700))
+const frame = await doneFrame()
+ok('lojalność: blok programu z postępem od pierwszej klatki potwierdzenia', !!frame?.block && !!frame?.progress && /Punkty: 20/.test(s.body), `${JSON.stringify(frame)} | ${s.body.slice(0, 700)}`)
 ok('lojalność: bez obietnicy Punktów za rezerwację', !/otrzymasz|dostaniesz \d+ Punkt/i.test(s.body), s.body.slice(0, 700))
 
 // A reward taken by another booking meanwhile: back on the step, price without it.
