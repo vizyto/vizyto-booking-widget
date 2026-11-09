@@ -1,7 +1,8 @@
 import { SummaryCard, type SummaryRow } from '../ui/SummaryCard'
 import { Button } from '../ui/Button'
 import { Check, Clock } from '../ui/icons'
-import type { PriceQuote } from '../api'
+import type { LoyaltyCatalogReward, LoyaltyProgramPublic, LoyaltyWallet, PriceQuote } from '../api'
+import { LoyaltyProgramBlock } from './LoyaltyProgram'
 
 /**
  * Success screen. Status-aware: a business with manual confirmation returns the
@@ -19,6 +20,7 @@ export function StepDone({
   kind = 'service',
   onClose,
   onRestart,
+  loyalty,
 }: {
   rows: SummaryRow[]
   quote?: PriceQuote | null
@@ -28,6 +30,12 @@ export function StepDone({
   kind?: 'service' | 'class' | 'rental' | 'table'
   onClose?: () => void
   onRestart: () => void
+  /**
+   * The business's active loyalty program (vizyto #471 F37) and, when the
+   * customer already has a card here, where they stand. Never a promise of
+   * Points for this booking: staff award them at settlement.
+   */
+  loyalty?: { program: LoyaltyProgramPublic; wallet: LoyaltyWallet | null; catalog: readonly LoyaltyCatalogReward[] } | null
 }) {
   const pending = status === 'pending'
   const isClass = kind === 'class'
@@ -57,6 +65,7 @@ export function StepDone({
       </div>
       <div style="margin-top:18px;text-align:left;">
         <SummaryCard rows={rows} quote={quote} />
+        {loyalty && <LoyaltyProgramBlock program={loyalty.program} wallet={loyalty.wallet} catalog={loyalty.catalog} />}
       </div>
       {onClose ? <Button onClick={onClose}>Gotowe</Button> : <Button variant="ghost" onClick={onRestart}>{isClass ? 'Nowy zapis' : 'Nowa rezerwacja'}</Button>}
     </div>

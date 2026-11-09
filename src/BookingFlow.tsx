@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
-import type { Business, CartItem, CartItemTime, Cfg, DayCounts, GroupClass, GroupSession, OAuthProvider, OtpMode, PriceQuote, PromoBadges, PublicPromotionSummary, RentalDaySlots, Resource, Service, ServiceCategory, Slots, TableDay, TableOptions, TableSlot } from './api'
+import type { Business, BookingWriteResult, CartItem, CartItemTime, Cfg, DayCounts, GroupClass, GroupSession, LoyaltyCatalogReward, LoyaltyProgramPublic, LoyaltyWallet, MyLoyaltyReward, OAuthProvider, OtpMode, PriceQuote, PromoBadges, PublicPromotionSummary, RentalDaySlots, Resource, RewardFields, RewardQuoteTarget, Service, ServiceCategory, Slots, TableDay, TableOptions, TableSlot } from './api'
 import {
   addonNames,
   addonTotals,
@@ -11,6 +11,7 @@ import {
   configuredTotals,
   createAppointment,
   checkRentalRange,
+  claimLoyaltyReward,
   createRental,
   createTableReservation,
   getTableCounts,
@@ -28,6 +29,10 @@ import {
   getCartCounts,
   getCartFirstFree,
   getCartSlots,
+  getLoyaltyCatalog,
+  getLoyaltyProgram,
+  getMyLoyalty,
+  getMyLoyaltyRewards,
   getPromoBadges,
   getPromotionSummary,
   getServiceCategories,
@@ -37,7 +42,9 @@ import {
   oauthLogin,
   priceRange,
   quoteAppointment,
+  quoteClassEntry,
   quoteRental,
+  quoteWithReward,
   isRangeUnit,
   registerForSession,
   rentalPrice,
@@ -75,6 +82,34 @@ import { StepOffering, type OfferingKind } from './steps/StepOffering'
 import { StepRentalItem, groupRentables, rentalOptionKey, type RentalOption } from './steps/StepRentalItem'
 import { StepRentalTime } from './steps/StepRentalTime'
 import { initialRentalOption } from './rentalPrefill'
+import {
+  CLAIM_CLOSES,
+  REWARD_RECOVERY,
+  amountDueSentence,
+  appointmentTargetKeys,
+  applyRewardQuotes,
+  bookingRewardLines,
+  claimErrorMessage,
+  claimedTerms,
+  classEntryKey,
+  deriveRewardChoice,
+  formatPersonalTotal,
+  formatPersonalTotalInline,
+  hasRewardPricing,
+  isStampProgram,
+  newClaimKey,
+  refusalMessage,
+  refuseLines,
+  rentalBaseKey,
+  rewardCreateAction,
+  selectionKey,
+  withRewardKey,
+  type BookingRewardLine,
+  type ClaimableReward,
+  type RewardFlow,
+  type RewardQuoteState,
+} from './loyalty'
+import { StepReward, type RewardNotice } from './steps/StepReward'
 import { resolveCartPolicy } from './policy'
 import { classifyWriteFailure, publicChannelAllows, refusedActions, type CustomerAction } from './channel'
 import {
@@ -159,7 +194,7 @@ const positionsLabel = (n: number) => {
 
 /** Hard cap mirroring the API's MAX_CART_ITEMS - refuse the 9th politely. */
 const MAX_CART_ITEMS = 8
-type Phase = 'select' | 'identify' | 'login' | 'otp' | 'confirming' | 'done' | 'slotLost' | 'waitlist' | 'waitlistDone' | 'restricted' | 'closed'
+type Phase = 'select' | 'identify' | 'login' | 'otp' | 'reward' | 'confirming' | 'done' | 'slotLost' | 'waitlist' | 'waitlistDone' | 'restricted' | 'closed'
 
 /**
  * The policy action each offering family books under (#680). A table has no action
@@ -208,6 +243,27 @@ type Intent = 'book' | 'waitlist'
 export type Auth = { userId: number; token: string | null }
 
 /**
+ * The reward step's inputs (vizyto #471 F37), read when the customer is known
+ * and the booking is about to be created. `gen` changes with every new reading,
+ * so a late answer about an earlier one is dropped.
+ */
+type RewardOffer = {
+  gen: number
+  flow: RewardFlow
+  auth: Auth
+  wallet: LoyaltyWallet
+  owned: MyLoyaltyReward[]
+  catalog: LoyaltyCatalogReward[]
+  /** The ordinary quote: "Obecna cena", and what "Bez nagrody" books with. */
+  ordinary: PriceQuote
+  lines: BookingRewardLine[]
+  refused: Record<number, number[]>
+  quotes: Record<number, RewardQuoteState>
+}
+/** A reward a create carries: its fields, its name for the receipt and the quote it was priced with. */
+type ChosenReward = { fields: RewardFields; name: string; quote: PriceQuote }
+
+/**
  * Server codes for a class sign-up, as sentences with a way out. Same job as the
  * appointment error map, and deliberately the same wording as the Vizyto app so a
  * customer who sees it in both places reads one product.
@@ -235,6 +291,27 @@ function registerErrorMessage(code: string): string {
     default:
       return 'Nie udało się zapisać na zajęcia. Spróbuj ponownie.'
   }
+}
+
+/**
+ * `expectedTotal` of a create. A reward always sends its quote's total (null
+ * included: the API refuses a reward without the field, 422
+ * REWARD_EXPECTED_TOTAL_REQUIRED); an ordinary booking sends a known total only,
+ * exactly as before loyalty.
+ */
+function expectedTotalOf(pricing: PriceQuote | null, reward: ChosenReward | null): { expectedTotal?: number | null } {
+  if (reward) return { expectedTotal: pricing?.total ?? null }
+  return pricing?.total != null ? { expectedTotal: pricing.total } : {}
+}
+
+/** The receipt of a booking with a reward: the reward named, and the price it was booked at. */
+function withRewardRows(rows: SummaryRow[], used: ChosenReward | null, priceLabelText: string): SummaryRow[] {
+  if (!used) return rows
+  return [
+    ...rows.filter((r) => !r.total),
+    { label: 'Nagroda', value: used.name },
+    { label: priceLabelText, value: formatPersonalTotal(used.quote.total), total: true },
+  ]
 }
 
 /** Where a rental booking points: the pool of a type, or one exact instance. */
@@ -842,6 +919,37 @@ export function BookingFlow({
   const booking = useRef(false)
   const bodyRef = useRef<HTMLDivElement>(null)
   const probedFor = useRef('')
+
+  // ---- loyalty rewards (vizyto #471 F37) ----
+  // The public program, read once per mount and only when the flow nears its end:
+  // a visitor who only browses makes no loyalty request, and a business without a
+  // program costs one 404. Restaurant tables and waitlists never touch it.
+  const programReq = useRef<Promise<LoyaltyProgramPublic | null> | null>(null)
+  const [offer, setOfferState] = useState<RewardOffer | null>(null)
+  // Mirrors `offer` for the async pricing rounds, which outlive the render that started them.
+  const offerRef = useRef<RewardOffer | null>(null)
+  const offerGen = useRef(0)
+  const offering = useRef(false)
+  const [rewardChoice, setRewardChoice] = useState<number | null>(null)
+  // A reward claimed in the step: chosen as soon as it is priced.
+  const preferredReward = useRef<number | null>(null)
+  const [rewardNotice, setRewardNotice] = useState<RewardNotice | null>(null)
+  // The card, rewards and prices are being read: a quiet spinner, not "Rezerwuję".
+  const [rewardChecking, setRewardChecking] = useState(false)
+  // The reward the last create carried, so "Spróbuj ponownie" sends it again.
+  const [activeReward, setActiveReward] = useState<ChosenReward | null>(null)
+  // A fresh reward quote with another total, waiting for the customer's yes.
+  const [rewardRepriced, setRewardRepriced] = useState<ChosenReward | null>(null)
+  const [claim, setClaim] = useState<{ item: ClaimableReward; key: string } | null>(null)
+  const [claimBusy, setClaimBusy] = useState(false)
+  const [claimErr, setClaimErr] = useState('')
+  // What the success screen shows: the reward used, and the program block.
+  const [usedReward, setUsedReward] = useState<ChosenReward | null>(null)
+  const [doneLoyalty, setDoneLoyalty] = useState<{ program: LoyaltyProgramPublic; wallet: LoyaltyWallet | null; catalog: LoyaltyCatalogReward[] } | null>(null)
+  const setOffer = (next: RewardOffer | null) => {
+    offerRef.current = next
+    setOfferState(next)
+  }
 
   // The CART-WIDE answer, read back from the positions: 'any' when every one of
   // them is explicitly "bez preferencji", an id when they all carry the SAME
@@ -1512,13 +1620,15 @@ export function BookingFlow({
    * than a branch inside it. A rental has no chain, no slot to lose in the visit
    * sense, and its own refusal vocabulary; what it shares is the envelope.
    */
-  async function reserveRental(a: Auth, pricing: PriceQuote | null = quote) {
+  async function reserveRental(a: Auth, pricing: PriceQuote | null = quote, reward: ChosenReward | null = null, retried = false) {
     if (!rentalPick || booking.current) return
     const win = rentalWindow(rentalPick, date, rentalUnits, slotKey, business, rentalSlots)
     if (!win) return
     booking.current = true
     setBookingErr('')
     setPriceChanged(false)
+    setRewardRepriced(null)
+    setActiveReward(reward)
     setPhase('confirming')
     const target = rentalTarget(rentalPick)
     const ctx = { rental: rentalOptionKey(rentalPick), units: rentalUnits, businessId: business.id }
@@ -1533,15 +1643,21 @@ export function BookingFlow({
         bookedById: a.userId,
         notes: trimmedNotes,
         partySize: rentalPick.head.rentalMaxPartySize != null ? rentalParty : null,
-        ...(pricing?.total != null ? { expectedTotal: pricing.total } : {}),
-        idempotencyKey: `vzw-rnt-${business.id}-${win.startDate}-${target.resourceId ?? 't' + target.rentalTypeId}-${rentalUnits}-${a.userId}`,
+        ...expectedTotalOf(pricing, reward),
+        idempotencyKey: withRewardKey(
+          `vzw-rnt-${business.id}-${win.startDate}-${target.resourceId ?? 't' + target.rentalTypeId}-${rentalUnits}-${a.userId}`,
+          reward?.fields.rewardSelection.rewardId,
+        ),
+        reward: reward?.fields ?? null,
       },
       a.token,
     )
     booking.current = false
     if (r.ok) {
       setBookedStatus(r.data?.status ?? 'reserved')
+      setUsedReward(reward)
       setPhase('done')
+      void loadDoneLoyalty(a)
       emit('booking_completed', {
         ...ctx,
         userId: a.userId,
@@ -1551,6 +1667,7 @@ export function BookingFlow({
       })
       return
     }
+    if (reward && recoverRewardCreate(r, reward, retried, (next) => void reserveRental(a, next.quote, next, true))) return
     // A whitelist refusal has no screen of its own here: like any other rental
     // refusal it is named on the calendar (the last branch below).
     const failure = classifyWriteFailure(r)
@@ -1951,11 +2068,13 @@ export function BookingFlow({
       return !cur || !def || cur.durationMinutes === def.durationMinutes
     })()
 
-  async function book(a: Auth, key = slotKey, pricing: PriceQuote | null = quote) {
+  async function book(a: Auth, key = slotKey, pricing: PriceQuote | null = quote, reward: ChosenReward | null = null, retried = false) {
     if (!lines.length || !date || !key || booking.current) return
     booking.current = true
     setBookingErr('')
     setPriceChanged(false)
+    setRewardRepriced(null)
+    setActiveReward(reward)
     setPhase('confirming')
     const ctx = bookingCtx(key)
     emit('booking_submitted', { ...ctx, userId: a.userId })
@@ -1969,15 +2088,21 @@ export function BookingFlow({
         startDate,
         bookedById: a.userId,
         notes: trimmedNotes,
-        ...(pricing?.total != null ? { expectedTotal: pricing.total } : {}),
-        idempotencyKey: bookingIdempotencyKey({ businessId: business.id, startDate, items, bookedById: a.userId, notes: trimmedNotes }),
+        ...expectedTotalOf(pricing, reward),
+        idempotencyKey: withRewardKey(
+          bookingIdempotencyKey({ businessId: business.id, startDate, items, bookedById: a.userId, notes: trimmedNotes }),
+          reward?.fields.rewardSelection.rewardId,
+        ),
+        reward: reward?.fields ?? null,
       },
       a.token,
     )
     booking.current = false
     if (r.ok) {
       setBookedStatus(r.data?.status ?? null)
+      setUsedReward(reward)
       setPhase('done')
+      void loadDoneLoyalty(a)
       emit('booking_completed', {
         ...ctx,
         userId: a.userId,
@@ -1988,6 +2113,8 @@ export function BookingFlow({
       })
       return
     }
+    // A reward refusal first: classified as an ordinary failure it reads as a lost slot.
+    if (reward && recoverRewardCreate(r, reward, retried, (next) => void book(a, key, next.quote, next, true))) return
     switch (classifyWriteFailure(r)) {
       case 'price_changed':
         setQuote(r.pricing!)
@@ -2036,11 +2163,13 @@ export function BookingFlow({
    * shared is the envelope - identity, Idempotency-Key, the "verify your phone"
    * recovery and the whitelist backstop - so those read the same in both.
    */
-  async function register(a: Auth, id: number, pricing: PriceQuote | null = quote) {
+  async function register(a: Auth, id: number, pricing: PriceQuote | null = quote, reward: ChosenReward | null = null, retried = false) {
     if (!id || booking.current) return
     booking.current = true
     setBookingErr('')
     setPriceChanged(false)
+    setRewardRepriced(null)
+    setActiveReward(reward)
     setPhase('confirming')
     const ctx = { groupClassId: classPick?.cls.id ?? null, sessionId: id, businessId: business.id }
     emit('booking_submitted', { ...ctx, userId: a.userId })
@@ -2051,19 +2180,24 @@ export function BookingFlow({
         sessionId: id,
         bookedById: a.userId,
         notes: trimmedNotes,
-        ...((pricing?.total ?? chosenSession?.promo?.price) != null
-          ? { expectedTotal: pricing?.total ?? chosenSession?.promo?.price }
-          : {}),
+        ...(reward
+          ? expectedTotalOf(pricing, reward)
+          : (pricing?.total ?? chosenSession?.promo?.price) != null
+            ? { expectedTotal: pricing?.total ?? chosenSession?.promo?.price }
+            : {}),
         // Deterministic from the payload, like the appointment key: it must survive
         // a remount and the phone-verification detour without minting a new one.
-        idempotencyKey: `vzw-gc-${business.id}-${id}-${a.userId}-${(trimmedNotes ?? '').length}`,
+        idempotencyKey: withRewardKey(`vzw-gc-${business.id}-${id}-${a.userId}-${(trimmedNotes ?? '').length}`, reward?.fields.rewardSelection.rewardId),
+        reward: reward?.fields ?? null,
       },
       a.token,
     )
     booking.current = false
     if (r.ok) {
       setBookedStatus(r.data?.status ?? 'registered')
+      setUsedReward(reward)
       setPhase('done')
+      void loadDoneLoyalty(a)
       emit('booking_completed', {
         ...ctx,
         userId: a.userId,
@@ -2073,6 +2207,7 @@ export function BookingFlow({
       })
       return
     }
+    if (reward && recoverRewardCreate(r, reward, retried, (next) => void register(a, id, next.quote, next, true))) return
     const failure = classifyWriteFailure(r)
     if (failure === 'price_changed') {
       setQuote(r.pricing!)
@@ -2147,6 +2282,305 @@ export function BookingFlow({
     return true
   }
 
+  // ---- loyalty rewards (vizyto #471 F37) ----
+
+  /** The public program, read once per mount; null without an active one. */
+  function ensureProgram(): Promise<LoyaltyProgramPublic | null> {
+    if (!programReq.current) {
+      programReq.current = getLoyaltyProgram(cfg).then((p) => (p && p.status === 'active' ? p : null))
+    }
+    return programReq.current
+  }
+
+  /** The target key of every ordinary quote line, the way the API keys the same positions. */
+  function rewardKeysFor(flow: RewardFlow, ordinary: PriceQuote): Array<string | null> {
+    if (flow === 'appointment') {
+      const cart = lines.map((l) => ({
+        businessServiceId: l.service.id,
+        // The API books the shortest preset when none is chosen, and keys the line by it.
+        variantMinutes: resolveVariant(l.service, l.variantDuration)?.durationMinutes ?? null,
+        addons: selectedAddons(l.service, l.addonIds).map(({ id, name }) => ({ id, name })),
+      }))
+      return appointmentTargetKeys(cart, ordinary.lines)
+    }
+    if (flow === 'rental') {
+      const key = rentalPick ? rentalBaseKey(rentalPick.head) : null
+      return ordinary.lines.map((line) => (line.kind === 'rental' ? key : null))
+    }
+    const groupClassId = classPick?.cls.id ?? chosenSession?.groupClassId ?? null
+    return ordinary.lines.map((line) => (line.kind === 'group_class_entry' && groupClassId != null ? classEntryKey(groupClassId) : null))
+  }
+
+  /** The quote request a reward is priced on: the same cart, window or term the create books. */
+  function rewardQuoteTarget(flow: RewardFlow, a: Auth): RewardQuoteTarget | null {
+    if (flow === 'appointment') {
+      if (!lines.length || !date || !slotKey) return null
+      return {
+        flow,
+        payload: { items: buildCartItems(), startDate: slotStartDate(date, slotKey, business.timezone || 'Europe/Warsaw'), bookedById: a.userId },
+      }
+    }
+    if (flow === 'rental') {
+      const win = rentalPick ? rentalWindow(rentalPick, date, rentalUnits, slotKey, business, rentalSlots) : null
+      if (!rentalPick || !win) return null
+      return {
+        flow,
+        payload: {
+          ...rentalTarget(rentalPick),
+          ...win,
+          partySize: rentalPick.head.rentalMaxPartySize != null ? rentalParty : null,
+          bookedById: a.userId,
+        },
+      }
+    }
+    return chosenSession ? { flow: 'class', sessionId: chosenSession.id } : null
+  }
+
+  const choiceOf = (s: RewardOffer) => deriveRewardChoice({ ...s, ordinaryTotal: s.ordinary.total })
+
+  /**
+   * Price every usable reward that has no answer for its current lines, in
+   * parallel. A line conflict refuses the named lines and the next round asks
+   * again without them (bounded: each round refuses at least one more line).
+   */
+  async function priceRewards(gen: number) {
+    for (let round = 0; round < 3; round++) {
+      const s = offerRef.current
+      if (!s || s.gen !== gen) return
+      const todo = choiceOf(s).toPrice
+      if (!todo.length) return
+      const target = rewardQuoteTarget(s.flow, s.auth)
+      if (!target) return
+      const loading = { ...s.quotes }
+      for (const t of todo) loading[t.rewardId] = { status: 'loading', key: selectionKey(t.lineIndexes) }
+      setOffer({ ...s, quotes: loading })
+      const results = await Promise.all(todo.map((t) => quoteWithReward(cfg, target, t, s.auth.token)))
+      const now = offerRef.current
+      if (!now || now.gen !== gen) return
+      setOffer({ ...now, ...applyRewardQuotes(now, todo, results) })
+    }
+  }
+
+  /**
+   * Called where the flow books: reads the customer's card, rewards and the
+   * catalog, prices what fits this booking, and shows the "Nagroda" step when a
+   * reward can be used or claimed. False = book exactly as before, at the
+   * ordinary price, with no extra step: no program, no card, no quote, a free
+   * booking, or nothing to offer.
+   */
+  async function offerReward(a: Auth, ordinary: PriceQuote | null, flow: RewardFlow): Promise<boolean> {
+    if (!a.token || !ordinary || !ordinary.lines.length || ordinary.total === 0) return false
+    if (!(await ensureProgram())) return false
+    setBookingErr('')
+    setPriceChanged(false)
+    setRewardChecking(true)
+    setPhase('confirming')
+    try {
+      const [wallet, owned, catalog] = await Promise.all([
+        getMyLoyalty(cfg, a.token),
+        getMyLoyaltyRewards(cfg, a.token),
+        getLoyaltyCatalog(cfg),
+      ])
+      if (!wallet || wallet.program?.status !== 'active') return false
+      const gen = ++offerGen.current
+      setOffer({
+        gen, flow, auth: a, wallet, owned, catalog, ordinary,
+        lines: bookingRewardLines(ordinary.lines, rewardKeysFor(flow, ordinary)),
+        refused: {},
+        quotes: {},
+      })
+      await priceRewards(gen)
+      const s = offerRef.current
+      if (!s || s.gen !== gen) return false
+      const view = choiceOf(s)
+      if (!view.usable.length && !view.claimable.length) {
+        setOffer(null)
+        return false
+      }
+      setRewardChoice(null)
+      preferredReward.current = null
+      setRewardNotice(null)
+      setClaim(null)
+      setClaimErr('')
+      setPhase('reward')
+      return true
+    } finally {
+      setRewardChecking(false)
+    }
+  }
+
+  /** A customer already known (a session from the host page, or the same session again). */
+  async function startAuthenticated(a: Auth, flow: 'appointment' | 'rental') {
+    if (offering.current) return
+    offering.current = true
+    try {
+      if (await offerReward(a, quote, flow)) return
+    } finally {
+      offering.current = false
+    }
+    if (flow === 'rental') void reserveRental(a)
+    else void book(a, slotKey)
+  }
+
+  /**
+   * Back on the step with fresh inputs after a refused create: the choice is
+   * dropped, the card and its rewards are read again (a reward may be gone), and
+   * every reward is priced anew.
+   */
+  async function reoffer(s: RewardOffer, notice: RewardNotice, patch: { ordinary?: PriceQuote | null; refused?: Record<number, number[]> } = {}) {
+    const gen = ++offerGen.current
+    const ordinary = patch.ordinary ?? s.ordinary
+    setRewardChoice(null)
+    preferredReward.current = null
+    setClaim(null)
+    setClaimErr('')
+    setRewardNotice(notice)
+    setOffer({
+      ...s,
+      gen,
+      ordinary,
+      lines: patch.ordinary ? bookingRewardLines(ordinary.lines, rewardKeysFor(s.flow, ordinary)) : s.lines,
+      refused: patch.refused ?? s.refused,
+      quotes: {},
+    })
+    setPhase('reward')
+    const [wallet, owned] = await Promise.all([getMyLoyalty(cfg, s.auth.token), getMyLoyaltyRewards(cfg, s.auth.token)])
+    const now = offerRef.current
+    if (!now || now.gen !== gen) return
+    setOffer({ ...now, wallet: wallet ?? now.wallet, owned })
+    await priceRewards(gen)
+  }
+
+  /**
+   * A create with a reward was refused: recover BEFORE the ordinary failure
+   * classification, which would read every reward code as a lost slot. True =
+   * handled. The shared provider's rules and words, in the step instead of toasts.
+   */
+  function recoverRewardCreate(
+    r: Extract<BookingWriteResult, { ok: false }>,
+    reward: ChosenReward,
+    retried: boolean,
+    retry: (next: ChosenReward) => void,
+  ): boolean {
+    const action = rewardCreateAction(r.code, hasRewardPricing(r.pricing))
+    if (!action) return false
+    const s = offerRef.current
+    const selection = reward.fields.rewardSelection
+    if (action === 'fresh_quote' && hasRewardPricing(r.pricing)) {
+      // The token lived five minutes or a price moved: the answer carries a fresh reward quote.
+      const pricing = r.pricing
+      const next: ChosenReward = { ...reward, quote: pricing, fields: { ...reward.fields, pricingToken: pricing.pricingToken } }
+      if (s) setOffer({ ...s, quotes: { ...s.quotes, [selection.rewardId]: { status: 'ok', key: selectionKey(selection.lineIndexes), quote: pricing } } })
+      if (!retried && pricing.total === reward.quote.total) {
+        retry(next)
+        return true
+      }
+      setActiveReward(next)
+      setRewardRepriced(next)
+      setPhase('confirming')
+      return true
+    }
+    setActiveReward(null)
+    if (!s) return false
+    // A refusal's quote is the ordinary one (no reward in it): "Bez nagrody" books with it.
+    const ordinary = r.pricing && !r.pricing.reward ? r.pricing : null
+    if (action === 'price_changed') void reoffer(s, REWARD_RECOVERY.priceChanged, { ordinary })
+    else if (action === 'conflict') void reoffer(s, REWARD_RECOVERY.conflict, { ordinary, refused: refuseLines(s.refused, selection.rewardId, r.lineIndexes ?? []) })
+    else if (action === 'unavailable') void reoffer(s, REWARD_RECOVERY.unavailable)
+    else void reoffer(s, { title: refusalMessage(r.message, r.code), text: '' })
+    return true
+  }
+
+  /** "Rezerwuję" on the step: the chosen reward with its quote, or the ordinary price. */
+  function confirmReward() {
+    const s = offerRef.current
+    if (!s || rewardPending || claimBusy) return
+    const item = chosenReward
+    const quoteOk = item?.quote?.status === 'ok' ? item.quote.quote : null
+    const reward: ChosenReward | null = item && quoteOk?.pricingToken
+      ? {
+          fields: {
+            rewardSelection: { rewardId: item.reward.id, lineIndexes: item.verdict.lineIndexes },
+            discountChoice: 'reward',
+            pricingToken: quoteOk.pricingToken,
+          },
+          name: item.reward.termsSnapshot.name,
+          quote: quoteOk,
+        }
+      : null
+    setRewardNotice(null)
+    setClaim(null)
+    bookWithReward(s, reward)
+  }
+
+  function bookWithReward(s: RewardOffer, reward: ChosenReward | null) {
+    const pricing = reward ? reward.quote : s.ordinary
+    // "Bez nagrody" books at the price the step showed; the receipt says the same.
+    if (!reward) setQuote(s.ordinary)
+    if (s.flow === 'appointment') void book(s.auth, slotKey, pricing, reward)
+    else if (s.flow === 'rental') void reserveRental(s.auth, pricing, reward)
+    else if (chosenSession) void register(s.auth, chosenSession.id, pricing, reward)
+  }
+
+  /** "Spróbuj ponownie" under a reward whose price could not be read. */
+  function retryRewardPrice(rewardId: number) {
+    const s = offerRef.current
+    if (!s) return
+    const quotes = { ...s.quotes }
+    delete quotes[rewardId]
+    setOffer({ ...s, quotes })
+    void priceRewards(s.gen)
+  }
+
+  function openClaim(item: ClaimableReward) {
+    setClaimErr('')
+    // One key per opened confirmation: a double tap or a retry claims once.
+    setClaim({ item, key: newClaimKey() })
+  }
+
+  async function confirmClaim() {
+    const s = offerRef.current
+    if (!s || !claim || claimBusy) return
+    setClaimBusy(true)
+    setClaimErr('')
+    const { item, key } = claim
+    const r = await claimLoyaltyReward(cfg, { catalogId: item.catalog.id, idempotencyKey: key, pointsCost: item.cost, targetKey: item.targetKey }, s.auth.token)
+    // Chosen as soon as it is priced (set before the reread, like the shared sheet).
+    if (r.ok) preferredReward.current = r.rewardId
+    const [wallet, owned] = await Promise.all([getMyLoyalty(cfg, s.auth.token), getMyLoyaltyRewards(cfg, s.auth.token)])
+    setClaimBusy(false)
+    const now = offerRef.current
+    if (!now || now.gen !== s.gen) return
+    if (r.ok) setClaim(null)
+    else {
+      setClaimErr(claimErrorMessage(r.code, r.message))
+      if (CLAIM_CLOSES.has(r.code)) setClaim(null)
+    }
+    // A reread that failed keeps what the step had; a claimed reward the reread
+    // does not list yet is added from the catalog entry it came from.
+    let list = owned.length ? owned : now.owned
+    if (r.ok && !list.some((x) => x.id === r.rewardId)) {
+      list = [...list, { id: r.rewardId, catalogId: item.catalog.id, status: 'available', expiresAt: null, termsSnapshot: claimedTerms(item.catalog, item.targetKey) }]
+    }
+    setOffer({ ...now, wallet: wallet ?? now.wallet, owned: list })
+    await priceRewards(now.gen)
+  }
+
+  /** The success screen's program block: the program, and the card when there is one. */
+  async function loadDoneLoyalty(a: Auth) {
+    setDoneLoyalty(null)
+    const program = programReq.current ? await programReq.current : null
+    if (!program) return
+    const catalog = offerRef.current?.catalog ?? []
+    setDoneLoyalty({ program, wallet: null, catalog })
+    const [wallet, stampCatalog] = await Promise.all([
+      getMyLoyalty(cfg, a.token),
+      // A stamp card names its reward: read the catalog only for that.
+      isStampProgram(program) && !catalog.length ? getLoyaltyCatalog(cfg) : Promise.resolve(catalog),
+    ])
+    setDoneLoyalty({ program, wallet, catalog: stampCatalog })
+  }
+
   async function refreshQuoteFor(a: Auth): Promise<PriceQuote | null> {
     let fresh: PriceQuote | null = null
     if (effKind === 'service' && lines.length && date && slotKey) {
@@ -2179,27 +2613,44 @@ export function BookingFlow({
       if (tableSlot) void reserveTable(a)
       else setPhase('select')
     } else if (effKind === 'class') {
-      if (chosenSession) void register(a, chosenSession.id)
+      if (chosenSession) void startClassBooking(a, chosenSession.id)
       else setPhase('select')
     } else if (effKind === 'rental') {
       if (rentalReady) {
         const fresh = await refreshQuoteFor(a)
+        if (await offerReward(a, fresh, 'rental')) return
         void reserveRental(a, fresh)
       }
       else setPhase('select')
     } else if (lines.length && date && slotKey) {
       const fresh = await refreshQuoteFor(a)
+      if (await offerReward(a, fresh, 'appointment')) return
       void book(a, slotKey, fresh)
     }
     else setPhase('select')
   }
 
+  /**
+   * A class entry, with a reward step when there is something to offer. The
+   * entry's ordinary quote is read only for a business with a program; without
+   * one, or when the quote fails, the sign-up goes exactly as before.
+   */
+  async function startClassBooking(a: Auth, id: number) {
+    if (a.token && await ensureProgram()) {
+      const ordinary = await quoteClassEntry(cfg, id, {}, a.token)
+      if (ordinary && await offerReward(a, ordinary, 'class')) return
+    }
+    void register(a, id)
+  }
+
   function retryBooking() {
     if (!auth) return
-    if (effKind === 'class' && chosenSession) void register(auth, chosenSession.id, quote)
-    else if (effKind === 'rental') void reserveRental(auth, quote)
+    // A create with a reward goes again with the same reward and its quote.
+    const reward = activeReward
+    if (effKind === 'class' && chosenSession) void register(auth, chosenSession.id, reward?.quote ?? quote, reward)
+    else if (effKind === 'rental') void reserveRental(auth, reward?.quote ?? quote, reward)
     else if (effKind === 'table') void reserveTable(auth)
-    else void book(auth, slotKey, quote)
+    else void book(auth, slotKey, reward?.quote ?? quote, reward)
   }
 
   const waitlistErrorMsg = (code: string) =>
@@ -2557,7 +3008,7 @@ export function BookingFlow({
     if (stepId === 'rentalTime') {
       if (!rentalReady || !rentalPick) return
       setIntent('book')
-      if (auth) void reserveRental(auth)
+      if (auth) void startAuthenticated(auth, 'rental')
       else {
         emit('details_started', { rental: rentalOptionKey(rentalPick), units: rentalUnits })
         setPhase('identify')
@@ -2573,7 +3024,7 @@ export function BookingFlow({
     if (stepId === 'session') {
       if (!chosenSession) return
       setIntent('book')
-      if (auth) void register(auth, chosenSession.id)
+      if (auth) void startClassBooking(auth, chosenSession.id)
       else {
         emit('details_started', { groupClassId: classPick?.cls.id ?? null, sessionId: chosenSession.id })
         setPhase('identify')
@@ -2597,13 +3048,47 @@ export function BookingFlow({
     } else {
       if (!slotKey) return
       setIntent('book')
-      if (auth) void book(auth, slotKey)
+      if (auth) void startAuthenticated(auth, 'appointment')
       else {
         emit('details_started', bookingCtx(slotKey))
         setPhase('identify')
       }
     }
   }
+
+  // ---- loyalty: the step's lists and the program prefetch ----
+  const rewardView = useMemo(() => (offer ? choiceOf(offer) : null), [offer])
+  const chosenReward = rewardChoice != null ? rewardView?.usable.find((u) => u.reward.id === rewardChoice) ?? null : null
+  /** A reward is chosen but its price is not known yet: the booking waits. */
+  const rewardPending = rewardChoice != null && chosenReward?.quote?.status !== 'ok'
+  const serviceNames = useMemo(() => new Map(business.services.map((x) => [x.id, x.name])), [business])
+
+  useEffect(() => {
+    if (!rewardView) return
+    const preferred = preferredReward.current
+    if (preferred != null) {
+      const item = rewardView.usable.find((u) => u.reward.id === preferred)
+      if (item?.quote?.status === 'ok') {
+        preferredReward.current = null
+        setRewardChoice(preferred)
+        setRewardNotice({ title: 'Nagroda odebrana', text: 'Dodaliśmy ją do tej rezerwacji. Sprawdź cenę i potwierdź.', tone: 'plain' })
+        return
+      }
+      // Priced and still not usable here (it saves nothing, say): it stays on the list as it is.
+      const settled = !rewardView.usable.some((u) => !u.quote || u.quote.status === 'loading')
+      if (settled && !item) preferredReward.current = null
+    }
+    // The chosen reward stopped fitting this booking (a refusal, a reread).
+    if (rewardChoice != null && !rewardView.usable.some((u) => u.reward.id === rewardChoice)) setRewardChoice(null)
+  }, [rewardView])
+
+  // Prefetch the program, without waiting for it, once the booking is near: the
+  // last select step of the family or the details step. Browsing costs nothing.
+  useEffect(() => {
+    if (effKind === 'table' || intent !== 'book') return
+    const last = selectSteps[selectSteps.length - 1]
+    if ((phase === 'select' && stepId === last) || phase === 'identify') void ensureProgram()
+  }, [phase, stepId, effKind, intent, selectSteps])
 
   // ---- back (rendered in the panel header) ----
   const backFn: (() => void) | null = (() => {
@@ -2613,6 +3098,8 @@ export function BookingFlow({
     if (phase === 'waitlist') return () => { setWlErr(''); setIntent('book'); setStepId('time'); setPhase('select') }
     if (phase === 'login') return () => { setLoginErr(''); setPhase('identify') }
     if (phase === 'otp') return () => { setOtpErr(''); setPhase('identify') }
+    // The session stays: "Dalej" on the term asks the step again, without the SMS.
+    if (phase === 'reward') return () => { setRewardNotice(null); setClaim(null); setClaimErr(''); setPhase('select') }
     if (phase === 'slotLost') return () => recoverSlot()
     // Back to the service list - other services may still be bookable for this viewer.
     if (phase === 'restricted') return () => { setStepId(firstStepOf(effKind)); setPhase('select') }
@@ -2869,6 +3356,19 @@ export function BookingFlow({
     setTableNotice(null)
     setQuote(null)
     setPriceChanged(false)
+    setOffer(null)
+    setRewardChoice(null)
+    preferredReward.current = null
+    offering.current = false
+    setRewardNotice(null)
+    setRewardChecking(false)
+    setActiveReward(null)
+    setRewardRepriced(null)
+    setClaim(null)
+    setClaimBusy(false)
+    setClaimErr('')
+    setUsedReward(null)
+    setDoneLoyalty(null)
     if (kinds.length > 1) { setKind(null); setStepId('offering') }
     setContact(emptyContact)
     setNotes('')
@@ -3350,8 +3850,51 @@ export function BookingFlow({
             onTurnstile={setTurnstileToken}
           />
         )}
+        {phase === 'reward' && offer && rewardView && (
+          <StepReward
+            flow={offer.flow}
+            program={offer.wallet.program}
+            wallet={offer.wallet}
+            catalog={offer.catalog}
+            lines={offer.lines}
+            ordinaryTotal={offer.ordinary.total}
+            usable={rewardView.usable}
+            blocked={rewardView.blocked}
+            claimables={rewardView.claimable}
+            choice={rewardChoice}
+            onChoose={setRewardChoice}
+            onRetry={retryRewardPrice}
+            claimOpen={claim?.item.catalog.id ?? null}
+            claimBusy={claimBusy}
+            claimError={claimErr}
+            onOpenClaim={openClaim}
+            onCancelClaim={() => { setClaim(null); setClaimErr('') }}
+            onConfirmClaim={() => void confirmClaim()}
+            notice={rewardNotice}
+            serviceNames={serviceNames}
+          />
+        )}
         {phase === 'confirming' &&
-          (priceChanged && quote ? (
+          (rewardRepriced ? (
+            // The reward's fresh quote has another total: the customer confirms it.
+            <div class="vz-fade-in">
+              <Notice title={REWARD_RECOVERY.repriced.title} tone="plain">
+                {REWARD_RECOVERY.repriced.text} {amountDueSentence(rewardRepriced.quote.total, 'Do zapłaty z nagrodą')}
+              </Notice>
+              <Button
+                onClick={() => {
+                  const next = rewardRepriced
+                  setRewardRepriced(null)
+                  if (offerRef.current) bookWithReward(offerRef.current, next)
+                }}
+              >
+                {offer?.flow === 'class' ? 'Zapisuję się' : 'Rezerwuję'}
+              </Button>
+              <Button variant="ghost" onClick={() => { setRewardRepriced(null); setActiveReward(null); setPhase('reward') }}>Anuluj</Button>
+            </div>
+          ) : rewardChecking ? (
+            <div class="vz-center"><Spinner /></div>
+          ) : priceChanged && quote ? (
             <div class="vz-fade-in">
               <Notice title="Aktualizacja ceny" tone="plain">
                 Cena się zmieniła. Sprawdź nową cenę i potwierdź rezerwację.
@@ -3424,8 +3967,15 @@ export function BookingFlow({
         )}
         {phase === 'done' && (
           <StepDone
-            rows={effKind === 'class' ? classSummaryRows : effKind === 'rental' ? rentalSummaryRows : effKind === 'table' ? tableSummaryRows : summaryRows}
-            quote={quote}
+            rows={withRewardRows(
+              effKind === 'class' ? classSummaryRows : effKind === 'rental' ? rentalSummaryRows : effKind === 'table' ? tableSummaryRows : summaryRows,
+              usedReward,
+              effKind === 'rental' ? 'Kwota' : 'Cena',
+            )}
+            // The reward quote is what was booked; its price row says so plainly
+            // (a promotion block would put the reward's price under the promotion's badge).
+            quote={usedReward ? { ...usedReward.quote, advertised: false } : quote}
+            loyalty={effKind === 'table' ? null : doneLoyalty}
             status={bookedStatus}
             email={contact.email}
             kind={effKind}
@@ -3450,6 +4000,26 @@ export function BookingFlow({
         )}
       </div>
 
+      {phase === 'reward' && offer && (
+        <div class="vz-cta">
+          <div class="vz-cta-summary">
+            <div class="vz-cta-left">
+              <div class="vz-cta-svc">{chosenReward ? chosenReward.reward.termsSnapshot.name : 'Bez nagrody'}</div>
+              <div class="vz-cta-meta">
+                {rewardPending ? (
+                  <>Do zapłaty: <span class="vz-skel" aria-hidden="true" /></>
+                ) : (() => {
+                  const total = chosenReward?.quote?.status === 'ok' ? chosenReward.quote.quote.total : offer.ordinary.total
+                  return total == null ? 'Cena na miejscu' : <>Do zapłaty: <b>{formatPersonalTotalInline(total)}</b></>
+                })()}
+              </div>
+            </div>
+          </div>
+          <button class="vz-btn" onClick={confirmReward} disabled={rewardPending || claimBusy} type="button">
+            {offer.flow === 'class' ? 'Zapisuję się' : 'Rezerwuję'}
+          </button>
+        </div>
+      )}
       {showCta && (
         <div class="vz-cta">
           <div class="vz-cta-summary">

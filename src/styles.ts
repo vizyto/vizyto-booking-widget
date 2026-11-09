@@ -903,6 +903,57 @@ a.vz-oauth { text-decoration: none; }
 .vz-wl-link:hover { color: var(--vz-accent); }
 .vz-wl-link svg { color: var(--vz-accent); }
 
+/* ---- LOYALTY (#471 F37) ------------------------------------------------ */
+/* Screen-reader only: the chosen reward's price, announced after the tap. */
+.vz-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.vz-rw { display: grid; gap: 16px; }
+.vz-rw-opt { display: grid; gap: 8px; }
+.vz-rw-price { flex: 1 0 100%; display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--vz-text); }
+.vz-card.is-disabled .vz-rw-price { color: inherit; }
+.vz-rw-notes { flex: 1 0 100%; display: grid; gap: 2px; font-size: 12.5px; color: var(--vz-text-muted); line-height: 1.45; }
+/* A price still on its way: a quiet bar, never a fake number. */
+.vz-skel { display: inline-block; width: 56px; height: 12px; border-radius: var(--vz-r-pill); background: color-mix(in srgb, var(--vz-text) 12%, var(--vz-surface-2)); vertical-align: middle; animation: vz-skel 1.1s var(--vz-ease-out) infinite alternate; }
+@keyframes vz-skel { from { opacity: .45 } to { opacity: 1 } }
+.vz-rw-fail { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 0 4px; font-size: 13px; color: var(--vz-text); }
+.vz-rw-section { display: grid; gap: 10px; }
+.vz-rw-h { font-size: 14px; font-weight: 600; }
+.vz-rw-err { margin-top: 0; }
+.vz-rw-claim { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-radius: var(--vz-r-xl); background: var(--vz-surface-2); }
+.vz-rw-claim-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.vz-mini-btn { flex: 0 0 auto; padding: 8px 16px; border-radius: var(--vz-r-pill); border: 1.5px solid var(--vz-accent); background: var(--vz-surface); color: var(--vz-text); font-family: var(--vz-font); font-size: 13.5px; font-weight: 600; cursor: pointer; transition: background var(--vz-dur-out), transform var(--vz-dur-out); }
+.vz-mini-btn:hover { background: var(--vz-selected); }
+.vz-mini-btn:active { transform: scale(.97); }
+.vz-mini-btn:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
+.vz-mini-btn[disabled] { opacity: .5; cursor: default; transform: none; }
+.vz-rw-confirm { padding: 16px; border-radius: var(--vz-r-xl); border: 1.5px solid var(--vz-accent); background: var(--vz-selected); }
+.vz-rw-confirm .vz-summary { margin: 12px 0 0; background: var(--vz-surface); }
+.vz-rw-confirm-title { outline: none; }
+.vz-rw-blocked { display: grid; gap: 8px; }
+.vz-rw-bname { font-size: 14px; font-weight: 600; }
+.vz-rw-brow { display: grid; gap: 3px; padding: 11px 14px; border-radius: var(--vz-r-md); border: 1px solid var(--vz-border); background: var(--vz-surface); font-size: 13.5px; }
+.vz-rw-brow-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.vz-rw-badge { flex: 0 0 auto; padding: 2px 8px; border-radius: var(--vz-r-pill); border: 1px solid var(--vz-border); background: var(--vz-surface-2); color: var(--vz-text-muted); font-size: 12px; font-weight: 500; line-height: 1.4; white-space: nowrap; }
+.vz-lp { display: grid; gap: 10px; margin-top: 2px; }
+.vz-lp-h { font-size: 15px; font-weight: 600; }
+.vz-lp-intro { margin: 0; font-size: 13.5px; color: var(--vz-text-muted); line-height: 1.55; }
+.vz-lp-muted { margin: 0; font-size: 12.5px; color: var(--vz-text-muted); line-height: 1.5; }
+.vz-lp-progress { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.vz-lp-progress li { padding: 4px 11px; border-radius: var(--vz-r-pill); border: 1px solid var(--vz-border); background: var(--vz-surface-2); font-size: 12.5px; font-weight: 500; color: var(--vz-text); }
+.vz-lp-rules { margin: 0; display: grid; gap: 10px; }
+.vz-lp-rule dt { font-size: 13px; font-weight: 600; color: var(--vz-text); }
+.vz-lp-rule dd { margin: 2px 0 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.vz-lp-value { flex: 0 0 auto; color: var(--vz-text); font-weight: 600; }
+/* Collapsed sections on the native disclosure. */
+.vz-details { border: 1px solid var(--vz-border); border-radius: var(--vz-r-md); background: var(--vz-surface-2); }
+.vz-details > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; font-size: 13.5px; font-weight: 600; color: var(--vz-text); cursor: pointer; border-radius: var(--vz-r-md); }
+.vz-details > summary::-webkit-details-marker { display: none; }
+.vz-details > summary:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
+.vz-details > summary svg { flex: 0 0 auto; color: var(--vz-text-muted); transition: transform var(--vz-dur-out) var(--vz-ease-out); }
+.vz-details[open] > summary svg { transform: rotate(180deg); }
+.vz-details-body { display: grid; gap: 10px; padding: 0 14px 14px; font-size: 13px; color: var(--vz-text-muted); line-height: 1.5; }
+.vz-details-body p { margin: 0; }
+.vz-details-body .vz-details { background: var(--vz-surface); }
+
 /* ---- REDUCED MOTION ---------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   .vz-root *, .vz-root *::before, .vz-root *::after {

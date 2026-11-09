@@ -32,6 +32,8 @@ export function SelectCard({
   multi,
   control,
   foot,
+  busy,
+  describedBy,
 }: {
   // Circular avatar (workers / "Dowolny"). Mutually exclusive with `thumb`.
   avatar?: VNode | string
@@ -60,6 +62,10 @@ export function SelectCard({
    * padding in a row of its own above.
    */
   foot?: ComponentChildren
+  /** The radio's price is still loading (`aria-busy`). */
+  busy?: boolean
+  /** Notes that describe the radio without lengthening its name (`aria-describedby`). */
+  describedBy?: string
 }) {
   // A broken/unreachable photo degrades to the same letter placeholder as null.
   const [imgOk, setImgOk] = useState(true)
@@ -106,6 +112,8 @@ export function SelectCard({
       class={`vz-card${foot ? ' has-foot' : ''}${selected ? ' selected' : ''}${disabled ? ' is-disabled' : ''}`}
       role={multi ? 'checkbox' : 'radio'}
       aria-checked={selected}
+      aria-busy={busy ? 'true' : undefined}
+      aria-describedby={describedBy}
       tabIndex={disabled ? -1 : 0} aria-disabled={disabled || undefined}
       onClick={select}
       onKeyDown={activate}

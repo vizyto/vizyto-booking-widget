@@ -401,13 +401,16 @@ describe('copy', () => {
   })
 
   test('no copy carries an en or em dash, nor a platform-wide program', () => {
-    const files = ['src/loyalty.ts', 'src/api.ts', 'src/mock.ts', 'README.md']
+    const files = [
+      'src/loyalty.ts', 'src/api.ts', 'src/mock.ts', 'src/BookingFlow.tsx',
+      'src/steps/StepReward.tsx', 'src/steps/LoyaltyProgram.tsx', 'src/steps/StepDone.tsx', 'README.md',
+    ]
     for (const file of files) {
       const text = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
-      expect({ file, dash: /[–—]/.test(text) }).toEqual({ file, dash: false })
+      expect({ file, dash: /[\u2013\u2014]/.test(text) }).toEqual({ file, dash: false })
       expect({ file, club: /Vizyto Club/i.test(text) }).toEqual({ file, club: false })
     }
-    for (const text of Object.values(REWARD_RECOVERY).flatMap((x) => [x.title, x.text])) expect(text).not.toMatch(/[–—]/)
+    for (const text of Object.values(REWARD_RECOVERY).flatMap((x) => [x.title, x.text])) expect(text).not.toMatch(/[\u2013\u2014]/)
   })
 })
 
