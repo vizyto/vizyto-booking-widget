@@ -103,10 +103,12 @@ import {
   hasRewardPricing,
   isStampProgram,
   newClaimKey,
+  priceWithin,
   readRewardInputs,
   refusalMessage,
   refuseLines,
   rentalBaseKey,
+  rereadCard,
   rewardCreateAction,
   selectionKey,
   settleWithin,
@@ -2366,8 +2368,11 @@ export function BookingFlow({
    * Price every usable reward that has no answer for its current lines, in
    * parallel. A line conflict refuses the named lines and the next round asks
    * again without them (bounded: each round refuses at least one more line).
+   * `wait` bounds each price on its own, as inside the step (a price with no
+   * answer in time reads as failed); in front of the step the caller bounds all
+   * the rounds together instead, and no answer there means no step.
    */
-  async function priceRewards(gen: number) {
+  async function priceRewards(gen: number, wait?: number) {
     for (let round = 0; round < 3; round++) {
       const s = offerRef.current
       if (!s || s.gen !== gen) return
@@ -2378,7 +2383,10 @@ export function BookingFlow({
       const loading = { ...s.quotes }
       for (const t of todo) loading[t.rewardId] = { status: 'loading', key: selectionKey(t.lineIndexes) }
       setOffer({ ...s, quotes: loading })
-      const results = await Promise.all(todo.map((t) => quoteWithReward(cfg, target, t, s.auth.token)))
+      const results = await Promise.all(todo.map((t) => {
+        const read = quoteWithReward(cfg, target, t, s.auth.token)
+        return wait == null ? read : priceWithin(read, wait)
+      }))
       const now = offerRef.current
       if (!now || now.gen !== gen) return
       setOffer({ ...now, ...applyRewardQuotes(now, todo, results) })
@@ -2488,11 +2496,13 @@ export function BookingFlow({
       quotes: {},
     })
     setPhase('reward')
-    const [wallet, owned] = await Promise.all([getMyLoyalty(cfg, s.auth.token), getMyLoyaltyRewards(cfg, s.auth.token)])
+    // Every read on the step is bounded (src/loyalty.ts): a card that does not
+    // answer in time keeps what the step had, and each price gets its own wait.
+    const card = await rereadCard({ wallet: () => getMyLoyalty(cfg, s.auth.token), owned: () => getMyLoyaltyRewards(cfg, s.auth.token) })
     const now = offerRef.current
     if (!now || now.gen !== gen) return
-    setOffer({ ...now, wallet: wallet ?? now.wallet, owned })
-    await priceRewards(gen)
+    if (card) setOffer({ ...now, wallet: card[0] ?? now.wallet, owned: card[1] })
+    await priceRewards(gen, REWARD_READ_WAIT_MS)
   }
 
   /**
@@ -2575,7 +2585,8 @@ export function BookingFlow({
     setOffer({ ...s, quotes })
     // The link goes with the failure; the card, enabled while it loads, takes focus.
     setRewardFocus({ to: 'reward', id: rewardId })
-    void priceRewards(s.gen)
+    // No answer in time fails it again, with the same link: never an endless skeleton.
+    void priceRewards(s.gen, REWARD_READ_WAIT_MS)
   }
 
   function openClaim(item: ClaimableReward) {
@@ -2596,7 +2607,8 @@ export function BookingFlow({
       preferredReward.current = r.rewardId
       claimFocus.current = true
     }
-    const [wallet, owned] = await Promise.all([getMyLoyalty(cfg, s.auth.token), getMyLoyaltyRewards(cfg, s.auth.token)])
+    // Bounded, so "Odbierz" is never busy for good: no answer in time is a failed reread.
+    const [wallet, owned] = (await rereadCard({ wallet: () => getMyLoyalty(cfg, s.auth.token), owned: () => getMyLoyaltyRewards(cfg, s.auth.token) })) ?? [null, []]
     setClaimBusy(false)
     const now = offerRef.current
     if (!now || now.gen !== s.gen) return
@@ -2616,7 +2628,7 @@ export function BookingFlow({
       list = [...list, { id: r.rewardId, catalogId: item.catalog.id, status: 'available', expiresAt: null, termsSnapshot: claimedTerms(item.catalog, item.targetKey) }]
     }
     setOffer({ ...now, wallet: wallet ?? now.wallet, owned: list })
-    await priceRewards(now.gen)
+    await priceRewards(now.gen, REWARD_READ_WAIT_MS)
   }
 
   /**

@@ -5,6 +5,7 @@ import {
   FIXED_REFUSAL,
   LATER,
   PROGRAM_WAIT_MS,
+  READ_TIMEOUT,
   REWARD_KEPT_NOTE,
   REWARD_READ_WAIT_MS,
   REWARD_RECOVERY,
@@ -33,6 +34,7 @@ import {
   negativeBalanceLine,
   noSaving,
   pointsExpiryLine,
+  priceWithin,
   programIntro,
   programRules,
   progressLines,
@@ -40,6 +42,7 @@ import {
   refusalMessage,
   refuseLines,
   rentalBaseKey,
+  rereadCard,
   rewardCreateAction,
   rewardLapsed,
   rewardNotes,
@@ -432,6 +435,58 @@ describe('the reads in front of a create wait a bounded time', () => {
   test('the default waits are the constants', async () => {
     const r = reads({ program: later(program, 5) })
     expect(await readRewardInputs(r.reads)).toEqual({ wallet, owned, catalog })
+  })
+})
+
+describe('the reads inside the "Nagroda" step wait a bounded time', () => {
+  const later = (value, ms) => new Promise((resolve) => setTimeout(() => resolve(value), ms))
+  const never = () => new Promise(() => {})
+  const priced = { ok: true, quote: quote(4000) }
+
+  test('a price in time is the answer', async () => {
+    expect(await priceWithin(later(priced, 5), 100)).toBe(priced)
+    const refusal = { ok: false, code: 'REWARD_UNAVAILABLE' }
+    expect(await priceWithin(Promise.resolve(refusal), 100)).toBe(refusal)
+  })
+
+  test('a price that stalls or throws is a failed price after its wait', async () => {
+    for (const read of [never, () => later(priced, 400), () => Promise.reject(new Error('offline'))]) {
+      const started = Date.now()
+      expect(await priceWithin(read(), 40)).toEqual({ ok: false, code: READ_TIMEOUT })
+      expect(Date.now() - started).toBeLessThan(300)
+    }
+  })
+
+  test('a timed-out price keeps the reward on the list with a retry, like a network failure', () => {
+    const base = { catalog: [], wallet: { balance: 0 }, lines: [plainLine], ordinaryTotal: 6000, refused: {} }
+    const asked = [{ rewardId: 1, lineIndexes: [0] }]
+    const state = applyRewardQuotes({ refused: {}, quotes: {} }, asked, [{ ok: false, code: READ_TIMEOUT }])
+    expect(state.quotes[1]).toEqual({ status: 'error', key: '0', code: READ_TIMEOUT })
+    const view = deriveRewardChoice({ ...base, ...state, owned: [owned(1)] })
+    expect(view.usable.map((u) => [u.reward.id, u.quote?.status])).toEqual([[1, 'error']])
+    expect(view.blocked).toEqual([])
+    // Not asked again on its own: "Spróbuj ponownie" asks for it.
+    expect(view.toPrice).toEqual([])
+  })
+
+  test('the card read again in time is the answer; a stall or a throw keeps what the step has', async () => {
+    const card = { balance: 20 }
+    const list = [owned(1)]
+    expect(await rereadCard({ wallet: () => later(card, 5), owned: () => Promise.resolve(list) }, 100)).toEqual([card, list])
+    for (const reads of [
+      { wallet: never, owned: () => Promise.resolve(list) },
+      { wallet: () => Promise.resolve(card), owned: () => later(list, 400) },
+      { wallet: () => Promise.reject(new Error('offline')), owned: () => Promise.resolve(list) },
+    ]) {
+      const started = Date.now()
+      expect(await rereadCard(reads, 40)).toBeNull()
+      expect(Date.now() - started).toBeLessThan(300)
+    }
+  })
+
+  test('the default wait is the one of the reads in front of a create', async () => {
+    expect(await priceWithin(Promise.resolve(priced))).toBe(priced)
+    expect(await rereadCard({ wallet: () => Promise.resolve(null), owned: () => Promise.resolve([]) })).toEqual([null, []])
   })
 })
 

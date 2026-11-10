@@ -940,7 +940,12 @@ export async function joinTableWaitlist(
 //                                 read of that kind (the program; the card, its
 //                                 rewards and the catalog; a class entry's price;
 //                                 a reward price) answers after MOCK_SLOW_LOYALTY_MS,
-//                                 longer than the booking waits for it,
+//                                 longer than the booking waits for it;
+//                                 'reread' | 'reprice' -> the same, but only from
+//                                 the second read of the card and its rewards (the
+//                                 step's reread after a refused create or a claim),
+//                                 or of one reward's price ("Spróbuj ponownie", a
+//                                 price asked again): the step is shown first,
 //      __VIZYTO_MOCK_BROKEN_LOYALTY__ = 'entry' | 'reward' -> a class entry's price
 //                                 carries a line the reward step cannot read, or
 //                                 the card lists a reward without its terms.
@@ -1073,10 +1078,18 @@ const programOf = (businessId: number) =>
 
 /** How late a read of the slow kind answers: past every wait of the booking (src/loyalty.ts). */
 export const MOCK_SLOW_LOYALTY_MS = 6000
-type SlowLoyaltyRead = 'program' | 'card' | 'entry' | 'price'
+type SlowLoyaltyRead = 'program' | 'card' | 'entry' | 'price' | 'reread' | 'reprice'
 /** The harness lever above. `typeof` guard: the mock also runs under bun:test. */
 const slowLoyalty = (kind: SlowLoyaltyRead) =>
   typeof window !== 'undefined' && (window as any).__VIZYTO_MOCK_SLOW_LOYALTY__ === kind ? wait(MOCK_SLOW_LOYALTY_MS) : Promise.resolve()
+/** Reads so far per key (`wallet`, `owned`, `price:<reward id>`), for the in-step levers. */
+const readCounts = new Map<string, number>()
+/** Slow from the second read of `key` on, under the in-step lever `kind`. */
+function slowAfterFirst(kind: 'reread' | 'reprice', key: string): Promise<unknown> {
+  const n = (readCounts.get(key) ?? 0) + 1
+  readCounts.set(key, n)
+  return n > 1 ? slowLoyalty(kind) : Promise.resolve()
+}
 const brokenLoyalty = (kind: 'entry' | 'reward') =>
   typeof window !== 'undefined' && (window as any).__VIZYTO_MOCK_BROKEN_LOYALTY__ === kind
 
@@ -1096,6 +1109,7 @@ export async function getLoyaltyCatalog(businessId: number): Promise<LoyaltyCata
 export async function getMyLoyalty(businessId: number, _token: string): Promise<LoyaltyWallet | null> {
   await wait(160)
   await slowLoyalty('card')
+  await slowAfterFirst('reread', 'wallet')
   const program = programOf(businessId)
   const card = cardOf(businessId)
   if (!program || !card) return null
@@ -1120,6 +1134,7 @@ export async function getMyLoyalty(businessId: number, _token: string): Promise<
 export async function getMyLoyaltyRewards(businessId: number, _token: string): Promise<MyLoyaltyReward[]> {
   await wait(160)
   await slowLoyalty('card')
+  await slowAfterFirst('reread', 'owned')
   const card = cardOf(businessId)
   const list = card ? card.owned.filter((r) => r.status === 'available' || r.status === 'reserved').map((r) => ({ ...r })) : []
   // An answer the step cannot read: a reward without its terms.
@@ -1252,6 +1267,7 @@ export async function quoteWithReward(
 ): Promise<RewardQuoteResult> {
   await wait(220)
   await slowLoyalty('price')
+  await slowAfterFirst('reprice', `price:${selection.rewardId}`)
   const card = cardOf(businessId)
   if (!token) return { ok: false, code: 'UNAUTHENTICATED' }
   if (!card) return { ok: false, code: 'LOYALTY_PROGRAM_NOT_FOUND' }

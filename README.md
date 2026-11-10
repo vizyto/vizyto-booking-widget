@@ -301,7 +301,11 @@ odczyt, który nie zdąży (program 1,5 s; karta z nagrodami i katalogiem, cena
 wejścia na zajęcia i wszystkie wyceny nagród po 3 s), i odpowiedź, z której nie
 da się zbudować kroku: wskaźnik ładowania po „Dalej” nie ma drogi wstecz, więc
 rezerwacja nigdy na nich nie utknie, a spóźniona odpowiedź niczego już nie
-zmienia.
+zmienia. Na samym kroku „Nagroda” odczyty też mają limit 3 s: ponowny odczyt
+karty po odmowie zapisu i po odebraniu nagrody, wycena po „Spróbuj ponownie” i
+każda kolejna wycena nagrody. Brak odpowiedzi znaczy nieudany odczyt: karta
+zostaje taka, jaką krok już miał, a cena nagrody pokazuje „Nie udało się policzyć
+ceny z nagrodą” ze „Spróbuj ponownie”, więc nic nie kręci się bez końca.
 
 Odmowy przy zapisie z nagrodą (przed zwykłą obsługą błędów, która uznałaby je
 za utracony termin): wygasła wycena z tą samą ceną ponawia zapis po cichu, z
@@ -643,15 +647,19 @@ przepływ offline:
     `REWARD_CLAIM_LIMIT` zamyka potwierdzenie, `NETWORK` je zostawia),
     `?slowLoyalty=program` (albo `card`, `entry`, `price`) - każdy taki odczyt
     odpowiada dopiero po 6 s, dłużej, niż rezerwacja na niego czeka, więc
-    rezerwacja idzie bez nagrody, `?brokenLoyalty=entry` (albo `reward`) - cena
-    wejścia na zajęcia ma pozycję, której krok nie odczyta (albo nagroda na
-    koncie nie ma warunków), więc rezerwacja idzie bez kroku „Nagroda”.
+    rezerwacja idzie bez nagrody, `?slowLoyalty=reread` (albo `reprice`) - to
+    samo, ale dopiero od drugiego odczytu karty (po odmowie zapisu i po
+    odebraniu nagrody) albo drugiej wyceny tej samej nagrody („Spróbuj
+    ponownie”), więc krok „Nagroda” najpierw się pokazuje,
+    `?brokenLoyalty=entry` (albo `reward`) - cena wejścia na zajęcia ma pozycję,
+    której krok nie odczyta (albo nagroda na koncie nie ma warunków), więc
+    rezerwacja idzie bez kroku „Nagroda”.
 
 `scripts/mock-harness.html` przyjmuje te same dźwignie w adresie:
 `?business=680` (albo `471`, `472`), `?signedIn=1` (sesja bez kodu SMS), `?theme=dark`, `?prefillClass=41`,
 `?prefillSession=901`, `?prefillService=1`, `?prefillResource=31`, `?prefillRentalType=7`,
 `?prefillKind=rental` (albo `table`), `?onlyServices=1`, `?failRewardQuote=4701`,
-`?claimRefusal=REWARD_CLAIM_LIMIT`, `?slowLoyalty=card`, `?brokenLoyalty=entry`, a do tego `?oneRental=7` (albo `8`): biznes
+`?claimRefusal=REWARD_CLAIM_LIMIT`, `?slowLoyalty=card` (albo `reread`), `?brokenLoyalty=entry`, a do tego `?oneRental=7` (albo `8`): biznes
 wynajmuje jedną ofertę (pulę torów albo przyczepę) obok usług i zajęć, więc
 wynajem nie ma kroku z listą i od razu otwiera jej kalendarz. `?noServices=1`
 zabiera usługi i zajęcia (zostaje wynajem i stoliki, więc pytanie „co

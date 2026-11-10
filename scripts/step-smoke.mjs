@@ -829,6 +829,66 @@ for (const [broken, query, done, flow] of [
      `${JSON.stringify(j.lastCreate)} | ${s.body.slice(0, 200)}`)
 }
 
+// The reads made on the "Nagroda" step itself are bounded too (src/loyalty.ts):
+// the step shows first, then a reread of the card or a price asked again does not
+// answer in time (the mock's 6 s). After the 3 s wait nothing in the step is busy:
+// a price reads as failed with "Spróbuj ponownie", a reread keeps what the step had.
+/** Skeletons, spinners and busy controls in the widget right now. */
+const busyCount = () => page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  return host.shadowRoot.querySelectorAll('.vz-skel, .vz-spin, [aria-busy="true"]').length
+})
+/** Polls until nothing is busy or `ms` pass; how long that took. */
+const waitIdle = async (ms) => {
+  const start = Date.now()
+  while (Date.now() - start < ms && (await busyCount()) > 0) await page.waitForTimeout(150)
+  return Date.now() - start
+}
+const clickCta = () => page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  host.shadowRoot.querySelector('.vz-cta button')?.click()
+})
+let took
+
+// "Spróbuj ponownie" on a failed price, and the second try stalls.
+await haircutToReward('?business=471&signedIn=1&failRewardQuote=4701&slowLoyalty=reprice')
+s = await state()
+ok('krok Nagroda: nieudana wycena z ponowieniem', s.title === 'Nagroda' && /Nie udało się policzyć ceny z nagrodą/.test(s.body), s.body.slice(0, 400))
+await pressRewardButton('.vz-rw-fail button', 'Spróbuj ponownie'); await page.waitForTimeout(400)
+ok('krok Nagroda: ponowiona wycena czeka', (await busyCount()) > 0, `${await busyCount()}`)
+took = await waitIdle(6000)
+s = await state()
+ok('krok Nagroda: ponowiona wycena bez odpowiedzi - znów "Spróbuj ponownie", nic nie czeka',
+   took < 4500 && (await busyCount()) === 0 && /Nie udało się policzyć ceny z nagrodą/.test(s.body) && /Spróbuj ponownie/.test(s.body) && s.ctaText === 'Rezerwuję' && !s.ctaDisabled,
+   `${took} ms | ${s.ctaText} ${s.ctaDisabled} | ${s.body.slice(0, 400)}`)
+await page.waitForTimeout(3500)
+s = await state()
+ok('krok Nagroda: spóźniona wycena niczego nie zmienia', (await busyCount()) === 0 && /Nie udało się policzyć ceny z nagrodą/.test(s.body), s.body.slice(0, 400))
+
+// A claim whose reread of the card stalls: the reward is still chosen, "Odbierz" lets go.
+await haircutToReward('?business=471&signedIn=1&slowLoyalty=reread')
+await pressRewardButton('.vz-rw-claim button', 'Odbierz: Rabat 10%'); await page.waitForTimeout(400)
+await pressRewardButton('.vz-rw-confirm button', 'Odbierz'); await page.waitForTimeout(1000)
+ok('krok Nagroda: odbiór czeka na odczyt karty', (await busyCount()) > 0, `${await busyCount()}`)
+took = await waitIdle(6000)
+s = await state()
+ok('krok Nagroda: odczyt karty po odbiorze bez odpowiedzi - nagroda wybrana, nic nie czeka',
+   took < 4000 && (await busyCount()) === 0 && /Nagroda odebrana/.test(s.body) && /Rabat 10%\. Do zapłaty: 45,00/.test(s.body) && !/Saldo po odebraniu/.test(s.body) && !s.ctaDisabled,
+   `${took} ms | ${s.body.slice(0, 500)}`)
+
+// A create refused for the reward, and the reread of the card stalls: the step is
+// ready again with the rewards it had, priced anew.
+await haircutToReward('?business=471&signedIn=1&slowLoyalty=reread')
+await clickByText('Rabat 15 zł'); await page.waitForTimeout(300)
+await clickCta(); await page.waitForTimeout(1500)
+s = await state()
+ok('krok Nagroda: po odmowie zapisu odczyt karty czeka', s.title === 'Nagroda' && (await busyCount()) > 0, `${s.title} | ${s.body.slice(0, 300)}`)
+took = await waitIdle(6000)
+s = await state()
+ok('krok Nagroda: odczyt karty po odmowie bez odpowiedzi - krok gotowy z cenami',
+   took < 4000 && (await busyCount()) === 0 && s.title === 'Nagroda' && /Ta nagroda jest już niedostępna/.test(s.body) && /Z nagrodą: 30,00/.test(s.body) && !s.ctaDisabled,
+   `${took} ms | ${s.body.slice(0, 500)}`)
+
 await browser.close()
 console.log(`\n${pass} pass, ${fail} fail`)
 process.exit(fail ? 1 : 0)
