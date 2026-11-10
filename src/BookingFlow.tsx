@@ -283,6 +283,11 @@ type DoneLoyalty = { program: LoyaltyProgramPublic; wallet: LoyaltyWallet | null
 const VISIT_FAILED = 'Nie udało się zarezerwować wizyty. Spróbuj ponownie.'
 const CLASS_FAILED = 'Nie udało się zapisać na zajęcia. Spróbuj ponownie.'
 const RENTAL_FAILED = 'Nie udało się zarezerwować. Spróbuj ponownie.'
+// The same booking was already sent under this Idempotency-Key with other contents (staff
+// changed it since): the key is built from the request, so a retry can never pass. No retry.
+const VISIT_ALREADY_SENT = 'Masz już rezerwację na ten termin. Szczegóły są w potwierdzeniu rezerwacji.'
+const RENTAL_ALREADY_SENT = 'Ta rezerwacja została już wysłana. Szczegóły są w potwierdzeniu rezerwacji.'
+const FINAL_BOOKING_ERRORS: ReadonlySet<string> = new Set([VISIT_ALREADY_SENT, RENTAL_ALREADY_SENT])
 
 /**
  * A visit refusal that is not a lost slot (src/channel.ts `isSlotRefusal`), with
@@ -1745,7 +1750,7 @@ export function BookingFlow({
     }
     // Nothing about the window: the choice stays, with a retry.
     if (failure === 'failed') {
-      failWrite(RENTAL_FAILED, r.code, ctx)
+      failWrite(r.code === 'IDEMPOTENCY_KEY_REUSED' ? RENTAL_ALREADY_SENT : RENTAL_FAILED, r.code, ctx)
       return
     }
     // Back to the time step with the reason named: the window is what has to change.
@@ -2218,7 +2223,7 @@ export function BookingFlow({
         emit('booking_failed', { ...ctx, code: r.code, reason: 'network' })
         return
       case 'failed':
-        failWrite(VISIT_FAILED, r.code, ctx)
+        failWrite(r.code === 'IDEMPOTENCY_KEY_REUSED' ? VISIT_ALREADY_SENT : VISIT_FAILED, r.code, ctx)
         return
       case 'refused':
         // Only a 409 about the term is a lost slot (the monorepo's #543 rule); any
@@ -4146,7 +4151,7 @@ export function BookingFlow({
           ) : bookingErr ? (
             <div class="vz-fade-in">
               <div class="vz-err" role="alert">{bookingErr}</div>
-              <button class="vz-btn mt" onClick={retryBooking} type="button">Spróbuj ponownie</button>
+              {!FINAL_BOOKING_ERRORS.has(bookingErr) && <button class="vz-btn mt" onClick={retryBooking} type="button">Spróbuj ponownie</button>}
             </div>
           ) : (
             <div class="vz-center" style="flex-direction:column;gap:14px;"><Spinner /> {effKind === 'table' ? 'Rezerwuję stolik…' : 'Rezerwuję Twoją wizytę…'}</div>
