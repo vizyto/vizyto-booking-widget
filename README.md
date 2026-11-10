@@ -253,6 +253,29 @@ monorepo. Tak samo jak CLIENT i WEB:
 Starsze API bez `bookingChannels`: wizyty idą za
 `hasWebsiteReservationsEnabled`, reszta zostaje otwarta (jak przed #680).
 
+### Odmowy, które nie dotyczą terminu
+
+Widget czyta odmowy zapisu tak jak CLIENT i WEB (`src/channel.ts`, kopia
+`BOOKING_CREATE_NON_SLOT_CODES` i `isBookingSlotRefusal` z
+`packages/shared/src/utils/bookingCreateErrors.ts`):
+
+- „Ten termin właśnie zniknął” i powrót do godzin tylko przy odmowie wizyty ze
+  statusem 409, której kod nie jest na liście kodów obsługiwanych osobno (zmiana
+  ceny, kanał, firma, nagroda, karnet, karta podarunkowa, profil, weryfikacja i
+  inne);
+- firma nie przyjmuje żadnych nowych rezerwacji (`BUSINESS_CLOSED`, albo
+  `SUBSCRIPTION_REQUIRED`, gdy nie ma aktywnego planu): ten sam stan zamknięcia
+  co przy wyłączonym kanale, „Rezerwacje online są teraz wyłączone” z telefonem
+  firmy, dla wizyty, zajęć, wynajmu i stolika;
+- błąd serwera (5xx), odpowiedź bez kodu API (np. strona błędu pośrednika) i
+  żądanie, którego API nie przyjęło (`VALIDATION`, `SITE_KEY_REQUIRED`,
+  `IDEMPOTENCY_KEY_REUSED`): wybór zostaje, a ekran pokazuje własne zdanie
+  widgetu z „Spróbuj ponownie” i strzałką wstecz do kroku terminu; tekst
+  odpowiedzi nigdy nie trafia do klienta;
+- inna odmowa wizyty (np. 422 `INCOMPLETE_PROFILE`): powód własnymi słowami
+  widgetu, termin zostaje. Zajęcia i wynajem dalej nazywają powód na grafiku
+  albo w kalendarzu.
+
 ## Program lojalnościowy (vizyto #471)
 
 Gdy firma prowadzi aktywny program (Punkty albo karta z pieczątkami), widget,
@@ -578,7 +601,7 @@ kroku. Lejek:
 | `authenticated` | zalogowanie | `method` (`otp`/`password`/`google`/…), `userId` |
 | `booking_submitted` | start zapisu rezerwacji | kontekst + `userId` |
 | **`booking_completed`** | **rezerwacja potwierdzona (KONWERSJA)** | `appointmentId` (wizyta), `attendeeId` (zajęcia) albo `rentalId` (wynajem), `value` (PLN), `currency`, kontekst |
-| `booking_failed` | błąd zapisu | `code`, `reason` (`network` / `slot_lost` / `verification_required` / `access_restricted` / `register_refused` / `rental_refused` / `table_refused` / `channel_closed`) |
+| `booking_failed` | błąd zapisu | `code`, `reason` (`network` / `error` / `slot_lost` / `booking_refused` / `verification_required` / `access_restricted` / `register_refused` / `rental_refused` / `table_refused` / `channel_closed` / `business_closed`) |
 | `slot_lost` | termin zajęty przed potwierdzeniem | `code`, kontekst |
 | `channel_closed` | firma nie przyjmuje tej rezerwacji na stronie WWW (#680) | `action` (`book`/`groupClasses`/`rentals`/`waitlist`/`all`), `stage` (`load` - zamknięte od wejścia, `submit` - 409 przy zapisie), przy `submit` także `code` i kontekst |
 | `booking_access_denied` | biała lista: zalogowany klient nie może rezerwować online | `userId`, `serviceId`, `stage` |
@@ -605,6 +628,11 @@ przepływ offline:
 - e-mail **taken@example.com** → wymusza logowanie (`EMAIL_IN_USE`),
 - termin z minutami **:55** (w siatce mocka jeden na dzień, 15:55 latem,
   14:55 zimą) → symuluje zajęty slot (recovery „wybierz inny termin”),
+- tylko z harnessu: `?createRefusal=<kod>` (albo `<kod>:<status>`) - pierwszy
+  zapis (wizyta, zajęcia, wynajem, stolik) dostaje raz ten kod ze statusem API:
+  `BUSINESS_CLOSED` (409), `SUBSCRIPTION_REQUIRED` (402), `INCOMPLETE_PROFILE`
+  (422), `SERVER_ERROR` (500 z angielskim komunikatem), `HTTP_502` (odpowiedź
+  bez kodu, jak strona błędu pośrednika); kolejna próba przechodzi,
 - mock respektuje koszyk: dłuższy łańcuch skraca dzień, zwraca `itemTimes` i
   `slotCandidates`, więc multi-usługę i wybór specjalisty do slotu da się
   przeklikać offline,
@@ -658,7 +686,7 @@ przepływ offline:
 `scripts/mock-harness.html` przyjmuje te same dźwignie w adresie:
 `?business=680` (albo `471`, `472`), `?signedIn=1` (sesja bez kodu SMS), `?theme=dark`, `?prefillClass=41`,
 `?prefillSession=901`, `?prefillService=1`, `?prefillResource=31`, `?prefillRentalType=7`,
-`?prefillKind=rental` (albo `table`), `?onlyServices=1`, `?failRewardQuote=4701`,
+`?prefillKind=rental` (albo `table`), `?onlyServices=1`, `?createRefusal=HTTP_502`, `?failRewardQuote=4701`,
 `?claimRefusal=REWARD_CLAIM_LIMIT`, `?slowLoyalty=card` (albo `reread`), `?brokenLoyalty=entry`, a do tego `?oneRental=7` (albo `8`): biznes
 wynajmuje jedną ofertę (pulę torów albo przyczepę) obok usług i zajęć, więc
 wynajem nie ma kroku z listą i od razu otwiera jej kalendarz. `?noServices=1`

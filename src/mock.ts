@@ -6,6 +6,8 @@
 //   - login: taken@example.com + any non-empty password succeeds
 //   - picking a slot at :55 -> createAppointment reports the slot is gone
 //   - token "stale" -> BOOKED_BY_MISMATCH
+//   - __VIZYTO_MOCK_CREATE_REFUSAL__ (?createRefusal=<code>[:<status>] in the
+//     harness) -> the first create answers that code once (createRefusal below)
 //   - per-channel booking policy (#680), by business id:
 //       680 -> the widget channel is switched off: the closed state, no steps
 //       681 -> classes and the waitlist are off in the widget channel, visits,
@@ -638,8 +640,34 @@ export async function oauthLogin(provider: string): Promise<LoginResult> {
 }
 
 /** A refused mock write, with the reward fields the API adds to some refusals. */
-type MockFailure = { ok: false; code: string; message?: string; lineIndexes?: number[]; pricing?: PriceQuote }
+type MockFailure = { ok: false; code: string; status?: number; message?: string; lineIndexes?: number[]; pricing?: PriceQuote }
 type MockWrite = { ok: true; data: any } | MockFailure
+
+/**
+ * The harness lever `__VIZYTO_MOCK_CREATE_REFUSAL__` = `<code>` or
+ * `<code>:<status>`: the first create of the page (a visit, a class entry, a
+ * rental or a table) answers that code once, with the status and the message the
+ * API gives it, so the answers that are not about the term can be clicked
+ * through; the next try goes through. `HTTP_502` is a body without the API's code
+ * (a proxy's error page), `SERVER_ERROR` the API's 500 envelope. An unknown code
+ * answers 409.
+ */
+const CREATE_REFUSALS: Record<string, { status: number; code?: string; message?: string }> = {
+  BUSINESS_CLOSED: { status: 409, message: 'Ten biznes nie przyjmuje nowych rezerwacji.' },
+  SUBSCRIPTION_REQUIRED: { status: 402, message: 'Ten biznes nie przyjmuje teraz rezerwacji online. Skontaktuj się z nim bezpośrednio.' },
+  INCOMPLETE_PROFILE: { status: 422, message: 'Uzupełnij imię, nazwisko i numer telefonu w profilu, aby zarezerwować wizytę.' },
+  IDEMPOTENCY_KEY_REUSED: { status: 409, message: 'Idempotency-Key was already used with a different cart' },
+  SERVER_ERROR: { status: 500, code: 'INTERNAL_SERVER_ERROR', message: 'Internal server error' },
+}
+function createRefusal(): MockFailure | null {
+  const lever = leverOnce<string>('__VIZYTO_MOCK_CREATE_REFUSAL__')
+  if (!lever) return null
+  const [name = '', status] = String(lever).split(':')
+  const bare = /^HTTP_(\d{3})$/.exec(name)
+  if (bare) return { ok: false, code: name, status: Number(bare[1]) }
+  const known = CREATE_REFUSALS[name] ?? { status: 409 }
+  return { ok: false, code: known.code ?? name, status: status ? Number(status) : known.status, ...(known.message ? { message: known.message } : {}) }
+}
 
 /**
  * What the widget asked the mock, for scripts/step-smoke.mjs: the GET /loyalty
@@ -669,7 +697,9 @@ export async function createAppointment(
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   const closed = channelRefusal('book')
   if (closed) return closed
-  if (/T\d{2}:55/.test(p.startDate)) return { ok: false, code: 'SLOT_TAKEN' }
+  const lever = createRefusal()
+  if (lever) return lever
+  if (/T\d{2}:55/.test(p.startDate)) return { ok: false, code: 'SLOT_TAKEN', status: 409 }
   const refused = await rewardCreateRefusal({ flow: 'appointment', payload: { items: p.items ?? [], startDate: p.startDate } }, p.reward)
   if (refused) return refused
   return { ok: true, data: { id: 12345, status: 'confirmed' } }
@@ -732,6 +762,8 @@ export async function registerForSession(
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   const closed = channelRefusal('groupClasses')
   if (closed) return closed
+  const lever = createRefusal()
+  if (lever) return lever
   if (p.sessionId === 921) return { ok: false, code: 'ENTRY_DISABLED' }
   if (p.sessionId === 903) return { ok: false, code: 'SESSION_FULL' }
   const refused = await rewardCreateRefusal({ flow: 'class', sessionId: p.sessionId }, p.reward)
@@ -796,6 +828,8 @@ export async function createRental(
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   const closed = channelRefusal('rentals')
   if (closed) return closed
+  const lever = createRefusal()
+  if (lever) return lever
   if (/T\d{2}:55/.test(p.startDate)) return { ok: false, code: 'RENTAL_SLOT_UNAVAILABLE' }
   if (p.endDate) {
     const payload = { resourceId: p.resourceId ?? null, rentalTypeId: p.rentalTypeId ?? null, startDate: p.startDate, endDate: p.endDate }
@@ -886,12 +920,14 @@ export async function getTableDay(p: { date: string; guests: number }): Promise<
 export async function createTableReservation(
   p: { startAt: string },
   token: string | null,
-): Promise<{ ok: true; data: any } | { ok: false; code: string; message?: string }> {
+): Promise<{ ok: true; data: any } | MockFailure> {
   await wait(600)
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   // A table is created as a visit on the API, so it books under the `book` action.
   const closed = channelRefusal('book')
   if (closed) return closed
+  const lever = createRefusal()
+  if (lever) return lever
   if (p.startAt.includes('T20:00')) {
     return { ok: false, code: 'TABLE_NOT_AVAILABLE', message: 'Brak wolnego stolika dla tej liczby osób o tej godzinie. Wybierz inną godzinę.' }
   }

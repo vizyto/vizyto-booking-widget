@@ -30,6 +30,9 @@
   // ?failRewardQuote=4701 fails the first quote of that reward ("Spróbuj ponownie");
   // ?claimRefusal=REWARD_CLAIM_LIMIT refuses the first claim with that code.
   if (q.get('failRewardQuote')) window.__VIZYTO_MOCK_FAIL_REWARD_QUOTE__ = Number(q.get('failRewardQuote'));
+  // ?createRefusal=SUBSCRIPTION_REQUIRED (or BUSINESS_CLOSED, HTTP_502, SERVER_ERROR,
+  // any code with :<status>) answers the first create with it, once.
+  if (q.get('createRefusal')) window.__VIZYTO_MOCK_CREATE_REFUSAL__ = q.get('createRefusal');
   if (q.get('claimRefusal')) window.__VIZYTO_MOCK_CLAIM_REFUSAL__ = q.get('claimRefusal');
   // ?slowLoyalty=program|card|entry|price answers that loyalty read too late for the
   // booking to wait for it (reread|reprice: only the step's second read of the card

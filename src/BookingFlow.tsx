@@ -63,6 +63,7 @@ import { dayMonth, fullDate, nextDays, rentalSlotStartIso, ymd, zonedIso } from 
 import {
   DEFAULT_ADULTS,
   TABLE_CANCEL_RULE,
+  TABLE_FAILED,
   TABLE_SLOT_GONE,
   childrenLine,
   countsWindow,
@@ -120,7 +121,7 @@ import {
 } from './loyalty'
 import { StepReward, type RewardFocus, type RewardNotice } from './steps/StepReward'
 import { resolveCartPolicy } from './policy'
-import { classifyWriteFailure, publicChannelAllows, refusedActions, type CustomerAction } from './channel'
+import { classifyWriteFailure, isSlotRefusal, publicChannelAllows, refusedActions, type CustomerAction } from './channel'
 import {
   canPickPerItem,
   clearStaffPins,
@@ -275,6 +276,25 @@ type ChosenReward = { fields: RewardFields; name: string; quote: PriceQuote }
 type DoneLoyalty = { program: LoyaltyProgramPublic; wallet: LoyaltyWallet | null; catalog: LoyaltyCatalogReward[] }
 
 /**
+ * A create that failed without a refusal to name (a server error, a body without
+ * the API's code, a request the API could not take): the choice stays and the
+ * customer tries again. Never the API's own text.
+ */
+const VISIT_FAILED = 'Nie udało się zarezerwować wizyty. Spróbuj ponownie.'
+const CLASS_FAILED = 'Nie udało się zapisać na zajęcia. Spróbuj ponownie.'
+const RENTAL_FAILED = 'Nie udało się zarezerwować. Spróbuj ponownie.'
+
+/**
+ * A visit refusal that is not a lost slot (src/channel.ts `isSlotRefusal`), with
+ * no screen of its own: the reward and pass families, a profile without a name,
+ * any status but 409. The monorepo's appointmentCreateErrorMessage says "Nie
+ * udało się zarezerwować wizyty." for all of them; a missing name says what to do.
+ */
+function visitRefusalMessage(code: string): string {
+  return code === 'INCOMPLETE_PROFILE' ? 'Uzupełnij imię, nazwisko i numer telefonu, aby zarezerwować.' : VISIT_FAILED
+}
+
+/**
  * Server codes for a class sign-up, as sentences with a way out. Same job as the
  * appointment error map, and deliberately the same wording as the Vizyto app so a
  * customer who sees it in both places reads one product.
@@ -300,7 +320,7 @@ function registerErrorMessage(code: string): string {
     case 'SESSION_NOT_FOUND':
       return 'Tego terminu już nie ma w grafiku. Wybierz inny.'
     default:
-      return 'Nie udało się zapisać na zajęcia. Spróbuj ponownie.'
+      return CLASS_FAILED
   }
 }
 
@@ -415,7 +435,7 @@ function rentalErrorMessage(code: string): string {
     case 'INCOMPLETE_PROFILE':
       return 'Uzupełnij imię, nazwisko i numer telefonu, aby zarezerwować.'
     default:
-      return 'Nie udało się zarezerwować. Spróbuj ponownie.'
+      return RENTAL_FAILED
   }
 }
 
@@ -1714,9 +1734,18 @@ export function BookingFlow({
       closeChannel('rentals', r.code, ctx)
       return
     }
+    if (failure === 'business_closed') {
+      closeBusiness(r.code, ctx)
+      return
+    }
     if (failure === 'network') {
       setBookingErr('Brak połączenia. Spróbuj ponownie.')
       emit('booking_failed', { ...ctx, code: r.code, reason: 'network' })
+      return
+    }
+    // Nothing about the window: the choice stays, with a retry.
+    if (failure === 'failed') {
+      failWrite(RENTAL_FAILED, r.code, ctx)
       return
     }
     // Back to the time step with the reason named: the window is what has to change.
@@ -1829,13 +1858,23 @@ export function BookingFlow({
     }
     // The venue stopped taking bookings in this channel after the page loaded (#680):
     // the closed state, never "pick another hour". A table books under `book`.
-    if (classifyWriteFailure(r) === 'channel_closed') {
+    const failure = classifyWriteFailure(r)
+    if (failure === 'channel_closed') {
       closeChannel('book', r.code, ctx)
+      return
+    }
+    // The venue takes no bookings at all now (no serving plan): another hour gets the same answer.
+    if (failure === 'business_closed') {
+      closeBusiness(r.code, ctx)
       return
     }
     if (r.code === 'NETWORK') {
       setBookingErr('Brak połączenia. Spróbuj ponownie.')
       emit('booking_failed', { ...ctx, code: r.code, reason: 'network' })
+      return
+    }
+    if (failure === 'failed') {
+      failWrite(TABLE_FAILED, r.code, ctx)
       return
     }
     if (r.code === 'TABLES_NOT_AVAILABLE') {
@@ -2170,11 +2209,25 @@ export function BookingFlow({
       case 'channel_closed':
         closeChannel('book', r.code, ctx)
         return
+      // The same for the whole business (closed, no serving plan).
+      case 'business_closed':
+        closeBusiness(r.code, ctx)
+        return
       case 'network':
         setBookingErr('Brak połączenia. Spróbuj ponownie.')
         emit('booking_failed', { ...ctx, code: r.code, reason: 'network' })
         return
+      case 'failed':
+        failWrite(VISIT_FAILED, r.code, ctx)
+        return
       case 'refused':
+        // Only a 409 about the term is a lost slot (the monorepo's #543 rule); any
+        // other refusal keeps the term, with the reason and a retry.
+        if (!isSlotRefusal(r)) {
+          setBookingErr(visitRefusalMessage(r.code))
+          emit('booking_failed', { ...ctx, code: r.code, reason: 'booking_refused' })
+          return
+        }
         setSlotKey('')
         setPhase('slotLost')
         emit('slot_lost', { ...ctx, code: r.code })
@@ -2257,9 +2310,18 @@ export function BookingFlow({
       closeChannel('groupClasses', r.code, ctx)
       return
     }
+    if (failure === 'business_closed') {
+      closeBusiness(r.code, ctx)
+      return
+    }
     if (failure === 'network') {
       setBookingErr('Brak połączenia. Spróbuj ponownie.')
       emit('booking_failed', { ...ctx, code: r.code, reason: 'network' })
+      return
+    }
+    // Nothing about the term: the choice stays, with a retry.
+    if (failure === 'failed') {
+      failWrite(CLASS_FAILED, r.code, ctx)
       return
     }
     // Everything else is a policy answer about THIS term, so the customer stays on
@@ -2843,6 +2905,27 @@ export function BookingFlow({
   }
 
   /**
+   * The whole business refused the create, whatever the term: it stopped taking
+   * customers (BUSINESS_CLOSED) or has no serving plan (SUBSCRIPTION_REQUIRED).
+   * Another hour or family gets the same answer, so this is the closed state for
+   * everything, with the phone as the way to still book - never "this term is
+   * gone", never back to the hours. The profile says nothing about it, so there
+   * is nothing to read again.
+   */
+  function closeBusiness(code: string, ctx: Record<string, unknown>) {
+    setClosedFor('all')
+    setBookingErr('')
+    setPhase('closed')
+    emit('booking_failed', { ...ctx, code, reason: 'business_closed' })
+  }
+
+  /** A create that failed without a refusal to name: the choice stays, with a retry and a way back. */
+  function failWrite(message: string, code: string, ctx: Record<string, unknown>) {
+    setBookingErr(message)
+    emit('booking_failed', { ...ctx, code, reason: 'error' })
+  }
+
+  /**
    * The way out of a closed family: the families still open (the fork when there
    * are several), or the calendar when only the waitlist closed. Null when
    * nothing is left - the closed state is then the end of the road.
@@ -3221,6 +3304,12 @@ export function BookingFlow({
     if (phase === 'restricted') return () => { setStepId(firstStepOf(effKind)); setPhase('select') }
     // Closed: back leads to whatever is still open, otherwise it closes (launcher).
     if (phase === 'closed') return closedExit?.go ?? onClose ?? null
+    // A create that failed (no connection, a server error, a refusal that is not
+    // about the term): back to the step it came from, with the choice kept, for
+    // when "Spróbuj ponownie" cannot help.
+    if (phase === 'confirming' && bookingErr && !priceChanged && !rewardRepriced) {
+      return () => { setBookingErr(''); setPhase('select') }
+    }
     if (phase === 'select') {
       // Configuring overlays the selection - back just closes it, keeping choices.
       if (configuring) return () => setConfiguringId(null)
