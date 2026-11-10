@@ -6,6 +6,8 @@
 //   - login: taken@example.com + any non-empty password succeeds
 //   - picking a slot at :55 -> createAppointment reports the slot is gone
 //   - token "stale" -> BOOKED_BY_MISMATCH
+//   - __VIZYTO_MOCK_CREATE_REFUSAL__ (?createRefusal=<code>[:<status>] in the
+//     harness) -> the first create answers that code once (createRefusal below)
 //   - per-channel booking policy (#680), by business id:
 //       680 -> the widget channel is switched off: the closed state, no steps
 //       681 -> classes and the waitlist are off in the widget channel, visits,
@@ -638,8 +640,34 @@ export async function oauthLogin(provider: string): Promise<LoginResult> {
 }
 
 /** A refused mock write, with the reward fields the API adds to some refusals. */
-type MockFailure = { ok: false; code: string; message?: string; lineIndexes?: number[]; pricing?: PriceQuote }
+type MockFailure = { ok: false; code: string; status?: number; message?: string; lineIndexes?: number[]; pricing?: PriceQuote }
 type MockWrite = { ok: true; data: any } | MockFailure
+
+/**
+ * The harness lever `__VIZYTO_MOCK_CREATE_REFUSAL__` = `<code>` or
+ * `<code>:<status>`: the first create of the page (a visit, a class entry, a
+ * rental or a table) answers that code once, with the status and the message the
+ * API gives it, so the answers that are not about the term can be clicked
+ * through; the next try goes through. `HTTP_502` is a body without the API's code
+ * (a proxy's error page), `SERVER_ERROR` the API's 500 envelope. An unknown code
+ * answers 409.
+ */
+const CREATE_REFUSALS: Record<string, { status: number; code?: string; message?: string }> = {
+  BUSINESS_CLOSED: { status: 409, message: 'Ten biznes nie przyjmuje nowych rezerwacji.' },
+  SUBSCRIPTION_REQUIRED: { status: 402, message: 'Ten biznes nie przyjmuje teraz rezerwacji online. Skontaktuj się z nim bezpośrednio.' },
+  INCOMPLETE_PROFILE: { status: 422, message: 'Uzupełnij imię, nazwisko i numer telefonu w profilu, aby zarezerwować wizytę.' },
+  IDEMPOTENCY_KEY_REUSED: { status: 409, message: 'Idempotency-Key was already used with a different cart' },
+  SERVER_ERROR: { status: 500, code: 'INTERNAL_SERVER_ERROR', message: 'Internal server error' },
+}
+function createRefusal(): MockFailure | null {
+  const lever = leverOnce<string>('__VIZYTO_MOCK_CREATE_REFUSAL__')
+  if (!lever) return null
+  const [name = '', status] = String(lever).split(':')
+  const bare = /^HTTP_(\d{3})$/.exec(name)
+  if (bare) return { ok: false, code: name, status: Number(bare[1]) }
+  const known = CREATE_REFUSALS[name] ?? { status: 409 }
+  return { ok: false, code: known.code ?? name, status: status ? Number(status) : known.status, ...(known.message ? { message: known.message } : {}) }
+}
 
 /**
  * What the widget asked the mock, for scripts/step-smoke.mjs: the GET /loyalty
@@ -669,7 +697,9 @@ export async function createAppointment(
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   const closed = channelRefusal('book')
   if (closed) return closed
-  if (/T\d{2}:55/.test(p.startDate)) return { ok: false, code: 'SLOT_TAKEN' }
+  const lever = createRefusal()
+  if (lever) return lever
+  if (/T\d{2}:55/.test(p.startDate)) return { ok: false, code: 'SLOT_TAKEN', status: 409 }
   const refused = await rewardCreateRefusal({ flow: 'appointment', payload: { items: p.items ?? [], startDate: p.startDate } }, p.reward)
   if (refused) return refused
   return { ok: true, data: { id: 12345, status: 'confirmed' } }
@@ -732,6 +762,8 @@ export async function registerForSession(
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   const closed = channelRefusal('groupClasses')
   if (closed) return closed
+  const lever = createRefusal()
+  if (lever) return lever
   if (p.sessionId === 921) return { ok: false, code: 'ENTRY_DISABLED' }
   if (p.sessionId === 903) return { ok: false, code: 'SESSION_FULL' }
   const refused = await rewardCreateRefusal({ flow: 'class', sessionId: p.sessionId }, p.reward)
@@ -796,6 +828,8 @@ export async function createRental(
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   const closed = channelRefusal('rentals')
   if (closed) return closed
+  const lever = createRefusal()
+  if (lever) return lever
   if (/T\d{2}:55/.test(p.startDate)) return { ok: false, code: 'RENTAL_SLOT_UNAVAILABLE' }
   if (p.endDate) {
     const payload = { resourceId: p.resourceId ?? null, rentalTypeId: p.rentalTypeId ?? null, startDate: p.startDate, endDate: p.endDate }
@@ -886,12 +920,14 @@ export async function getTableDay(p: { date: string; guests: number }): Promise<
 export async function createTableReservation(
   p: { startAt: string },
   token: string | null,
-): Promise<{ ok: true; data: any } | { ok: false; code: string; message?: string }> {
+): Promise<{ ok: true; data: any } | MockFailure> {
   await wait(600)
   if (token === 'stale') return { ok: false, code: 'BOOKED_BY_MISMATCH' }
   // A table is created as a visit on the API, so it books under the `book` action.
   const closed = channelRefusal('book')
   if (closed) return closed
+  const lever = createRefusal()
+  if (lever) return lever
   if (p.startAt.includes('T20:00')) {
     return { ok: false, code: 'TABLE_NOT_AVAILABLE', message: 'Brak wolnego stolika dla tej liczby osób o tej godzinie. Wybierz inną godzinę.' }
   }
@@ -940,7 +976,12 @@ export async function joinTableWaitlist(
 //                                 read of that kind (the program; the card, its
 //                                 rewards and the catalog; a class entry's price;
 //                                 a reward price) answers after MOCK_SLOW_LOYALTY_MS,
-//                                 longer than the booking waits for it,
+//                                 longer than the booking waits for it;
+//                                 'reread' | 'reprice' -> the same, but only from
+//                                 the second read of the card and its rewards (the
+//                                 step's reread after a refused create or a claim),
+//                                 or of one reward's price ("Spróbuj ponownie", a
+//                                 price asked again): the step is shown first,
 //      __VIZYTO_MOCK_BROKEN_LOYALTY__ = 'entry' | 'reward' -> a class entry's price
 //                                 carries a line the reward step cannot read, or
 //                                 the card lists a reward without its terms.
@@ -1073,10 +1114,18 @@ const programOf = (businessId: number) =>
 
 /** How late a read of the slow kind answers: past every wait of the booking (src/loyalty.ts). */
 export const MOCK_SLOW_LOYALTY_MS = 6000
-type SlowLoyaltyRead = 'program' | 'card' | 'entry' | 'price'
+type SlowLoyaltyRead = 'program' | 'card' | 'entry' | 'price' | 'reread' | 'reprice'
 /** The harness lever above. `typeof` guard: the mock also runs under bun:test. */
 const slowLoyalty = (kind: SlowLoyaltyRead) =>
   typeof window !== 'undefined' && (window as any).__VIZYTO_MOCK_SLOW_LOYALTY__ === kind ? wait(MOCK_SLOW_LOYALTY_MS) : Promise.resolve()
+/** Reads so far per key (`wallet`, `owned`, `price:<reward id>`), for the in-step levers. */
+const readCounts = new Map<string, number>()
+/** Slow from the second read of `key` on, under the in-step lever `kind`. */
+function slowAfterFirst(kind: 'reread' | 'reprice', key: string): Promise<unknown> {
+  const n = (readCounts.get(key) ?? 0) + 1
+  readCounts.set(key, n)
+  return n > 1 ? slowLoyalty(kind) : Promise.resolve()
+}
 const brokenLoyalty = (kind: 'entry' | 'reward') =>
   typeof window !== 'undefined' && (window as any).__VIZYTO_MOCK_BROKEN_LOYALTY__ === kind
 
@@ -1096,6 +1145,7 @@ export async function getLoyaltyCatalog(businessId: number): Promise<LoyaltyCata
 export async function getMyLoyalty(businessId: number, _token: string): Promise<LoyaltyWallet | null> {
   await wait(160)
   await slowLoyalty('card')
+  await slowAfterFirst('reread', 'wallet')
   const program = programOf(businessId)
   const card = cardOf(businessId)
   if (!program || !card) return null
@@ -1120,6 +1170,7 @@ export async function getMyLoyalty(businessId: number, _token: string): Promise<
 export async function getMyLoyaltyRewards(businessId: number, _token: string): Promise<MyLoyaltyReward[]> {
   await wait(160)
   await slowLoyalty('card')
+  await slowAfterFirst('reread', 'owned')
   const card = cardOf(businessId)
   const list = card ? card.owned.filter((r) => r.status === 'available' || r.status === 'reserved').map((r) => ({ ...r })) : []
   // An answer the step cannot read: a reward without its terms.
@@ -1252,6 +1303,7 @@ export async function quoteWithReward(
 ): Promise<RewardQuoteResult> {
   await wait(220)
   await slowLoyalty('price')
+  await slowAfterFirst('reprice', `price:${selection.rewardId}`)
   const card = cardOf(businessId)
   if (!token) return { ok: false, code: 'UNAUTHENTICATED' }
   if (!card) return { ok: false, code: 'LOYALTY_PROGRAM_NOT_FOUND' }

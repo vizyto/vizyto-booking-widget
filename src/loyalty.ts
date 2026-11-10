@@ -496,6 +496,32 @@ export async function readRewardInputs(
   return { wallet, owned, catalog }
 }
 
+/**
+ * Inside the "Nagroda" step the reads are bounded too. The step has "Bez nagrody"
+ * and a way back, but a price that never answers would keep its card on a
+ * skeleton, and a card read that never answers would keep "Odbierz" busy. Each
+ * gets REWARD_READ_WAIT_MS, and no answer in time counts as a failed read: a price
+ * reads as failed (with "Spróbuj ponownie"), the card keeps what the step had. The
+ * late answer is dropped.
+ */
+export const READ_TIMEOUT = 'TIMEOUT'
+
+/** One reward price under its wait: no answer in time (or a throw) is a failed price. */
+export async function priceWithin(read: Promise<RewardQuoteResult>, ms: number = REWARD_READ_WAIT_MS): Promise<RewardQuoteResult> {
+  return (await settleWithin(read, ms)) ?? { ok: false, code: READ_TIMEOUT }
+}
+
+/**
+ * The card and its rewards read again (after a refused create or a claim), both
+ * under one wait. Null = no answer in time or a throw: the step keeps what it has.
+ */
+export function rereadCard(
+  reads: { wallet: () => Promise<LoyaltyWallet | null>; owned: () => Promise<MyLoyaltyReward[]> },
+  ms: number = REWARD_READ_WAIT_MS,
+): Promise<[LoyaltyWallet | null, MyLoyaltyReward[]] | null> {
+  return settleWithin(Promise.all([reads.wallet(), reads.owned()]), ms)
+}
+
 // ---------------------------------------------------------------------------
 // Create errors
 // ---------------------------------------------------------------------------

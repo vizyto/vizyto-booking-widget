@@ -66,6 +66,9 @@ export const tableDayOver = (periods: Array<{ slots: Array<{ reason?: string }> 
 /** Create refusals that mean "pick another hour". */
 export const TABLE_SLOT_GONE: ReadonlySet<string> = new Set(['TABLE_NOT_AVAILABLE', 'TABLE_TOO_LATE', 'TABLE_OUTSIDE_SERVICE'])
 
+/** A reservation that failed without a refusal to name (a server error, no answer the API worded). */
+export const TABLE_FAILED = 'Nie udało się zarezerwować stolika. Spróbuj ponownie.'
+
 /**
  * The guest's sentence for a refused reservation. A table code carries the API's own
  * Polish message, which wins; the local text covers an older API without one.
@@ -86,7 +89,7 @@ export function tableErrorMessage(code: string, message?: string | null): string
     case 'INCOMPLETE_PROFILE':
       return 'Uzupełnij imię, nazwisko i numer telefonu, aby zarezerwować.'
     default:
-      return 'Nie udało się zarezerwować stolika. Spróbuj ponownie.'
+      return TABLE_FAILED
   }
 }
 

@@ -829,6 +829,156 @@ for (const [broken, query, done, flow] of [
      `${JSON.stringify(j.lastCreate)} | ${s.body.slice(0, 200)}`)
 }
 
+// The reads made on the "Nagroda" step itself are bounded too (src/loyalty.ts):
+// the step shows first, then a reread of the card or a price asked again does not
+// answer in time (the mock's 6 s). After the 3 s wait nothing in the step is busy:
+// a price reads as failed with "Spróbuj ponownie", a reread keeps what the step had.
+/** Skeletons, spinners and busy controls in the widget right now. */
+const busyCount = () => page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  return host.shadowRoot.querySelectorAll('.vz-skel, .vz-spin, [aria-busy="true"]').length
+})
+/** Polls until nothing is busy or `ms` pass; how long that took. */
+const waitIdle = async (ms) => {
+  const start = Date.now()
+  while (Date.now() - start < ms && (await busyCount()) > 0) await page.waitForTimeout(150)
+  return Date.now() - start
+}
+const clickCta = () => page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  host.shadowRoot.querySelector('.vz-cta button')?.click()
+})
+let took
+
+// "Spróbuj ponownie" on a failed price, and the second try stalls.
+await haircutToReward('?business=471&signedIn=1&failRewardQuote=4701&slowLoyalty=reprice')
+s = await state()
+ok('krok Nagroda: nieudana wycena z ponowieniem', s.title === 'Nagroda' && /Nie udało się policzyć ceny z nagrodą/.test(s.body), s.body.slice(0, 400))
+await pressRewardButton('.vz-rw-fail button', 'Spróbuj ponownie'); await page.waitForTimeout(400)
+ok('krok Nagroda: ponowiona wycena czeka', (await busyCount()) > 0, `${await busyCount()}`)
+took = await waitIdle(6000)
+s = await state()
+ok('krok Nagroda: ponowiona wycena bez odpowiedzi - znów "Spróbuj ponownie", nic nie czeka',
+   took < 4500 && (await busyCount()) === 0 && /Nie udało się policzyć ceny z nagrodą/.test(s.body) && /Spróbuj ponownie/.test(s.body) && s.ctaText === 'Rezerwuję' && !s.ctaDisabled,
+   `${took} ms | ${s.ctaText} ${s.ctaDisabled} | ${s.body.slice(0, 400)}`)
+await page.waitForTimeout(3500)
+s = await state()
+ok('krok Nagroda: spóźniona wycena niczego nie zmienia', (await busyCount()) === 0 && /Nie udało się policzyć ceny z nagrodą/.test(s.body), s.body.slice(0, 400))
+
+// A claim whose reread of the card stalls: the reward is still chosen, "Odbierz" lets go.
+await haircutToReward('?business=471&signedIn=1&slowLoyalty=reread')
+await pressRewardButton('.vz-rw-claim button', 'Odbierz: Rabat 10%'); await page.waitForTimeout(400)
+await pressRewardButton('.vz-rw-confirm button', 'Odbierz'); await page.waitForTimeout(1000)
+ok('krok Nagroda: odbiór czeka na odczyt karty', (await busyCount()) > 0, `${await busyCount()}`)
+took = await waitIdle(6000)
+s = await state()
+ok('krok Nagroda: odczyt karty po odbiorze bez odpowiedzi - nagroda wybrana, nic nie czeka',
+   took < 4000 && (await busyCount()) === 0 && /Nagroda odebrana/.test(s.body) && /Rabat 10%\. Do zapłaty: 45,00/.test(s.body) && !/Saldo po odebraniu/.test(s.body) && !s.ctaDisabled,
+   `${took} ms | ${s.body.slice(0, 500)}`)
+
+// A create refused for the reward, and the reread of the card stalls: the step is
+// ready again with the rewards it had, priced anew.
+await haircutToReward('?business=471&signedIn=1&slowLoyalty=reread')
+await clickByText('Rabat 15 zł'); await page.waitForTimeout(300)
+await clickCta(); await page.waitForTimeout(1500)
+s = await state()
+ok('krok Nagroda: po odmowie zapisu odczyt karty czeka', s.title === 'Nagroda' && (await busyCount()) > 0, `${s.title} | ${s.body.slice(0, 300)}`)
+took = await waitIdle(6000)
+s = await state()
+ok('krok Nagroda: odczyt karty po odmowie bez odpowiedzi - krok gotowy z cenami',
+   took < 4000 && (await busyCount()) === 0 && s.title === 'Nagroda' && /Ta nagroda jest już niedostępna/.test(s.body) && /Z nagrodą: 30,00/.test(s.body) && !s.ctaDisabled,
+   `${took} ms | ${s.body.slice(0, 500)}`)
+
+// ── 15. Create refusals that are not about the term (parity with the monorepo's
+//        bookingCreateErrors.ts and bookingErrorMessages.ts). ?createRefusal answers
+//        the first create once, with the code's status (src/mock.ts).
+const failures = []
+await page.exposeFunction('__vzFailure', (t, reason) => failures.push({ t, reason })).catch(() => {})
+const watchFailures = async () => {
+  failures.length = 0
+  await page.evaluate(() => window.VizytoBooking.on('*', (e) => window.__vzFailure(e.type, e.reason ?? null)))
+}
+const failedReasons = () => failures.filter((e) => e.t === 'booking_failed').map((e) => e.reason)
+const lostSlot = () => failures.some((e) => e.t === 'slot_lost')
+
+// A real lost slot still is one: the mock's :55 answers 409 SLOT_TAKEN.
+await haircutToTerm('?signedIn=1')
+const slot55 = await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  const b = [...host.shadowRoot.querySelectorAll('.vz-slot')].find((x) => /:55/.test(x.textContent))
+  if (!b) return null
+  b.click()
+  return b.textContent
+})
+await page.waitForTimeout(300)
+await watchFailures()
+await next()
+s = await waitForText(/zniknął|Zarezerwowane/, 4000)
+ok('zajęty termin (409 SLOT_TAKEN): nadal "Ten termin właśnie zniknął"', !!slot55 && /Ten termin właśnie zniknął/.test(s.body) && lostSlot(), `${slot55} | ${JSON.stringify(failures)} | ${s.body.slice(0, 200)}`)
+
+// The whole business refuses a visit: the closed state, never a lost slot or the hours.
+await haircutToTerm('?signedIn=1&createRefusal=BUSINESS_CLOSED')
+await watchFailures()
+await next()
+s = await waitForText(/wyłączone|zniknął|Zarezerwowane/, 4000)
+ok('wizyta, firma nie przyjmuje rezerwacji (409 BUSINESS_CLOSED): stan zamknięty, nie "termin zniknął"',
+   /Rezerwacje online są teraz wyłączone/.test(s.body) && /zadzwoń do firmy|skontaktuj się bezpośrednio z firmą/.test(s.body) && !/Ten termin właśnie zniknął/.test(s.body) && s.krok === null,
+   `${s.krok} | ${s.body.slice(0, 200)}`)
+ok('wizyta, BUSINESS_CLOSED: booking_failed business_closed, bez slot_lost', failedReasons().includes('business_closed') && !lostSlot(), JSON.stringify(failures))
+
+// A rental of a business without a serving plan: the same, not back to the calendar.
+await page.goto(URL + '?signedIn=1&prefillRentalType=7&createRefusal=SUBSCRIPTION_REQUIRED'); await page.waitForTimeout(1400)
+await watchFailures()
+await clickByText('18:00'); await page.waitForTimeout(500)
+await next()
+s = await waitForText(/wyłączone|Zarezerwowane|Nie udało/, 4000)
+ok('wynajem bez planu (402 SUBSCRIPTION_REQUIRED): stan zamknięty, nie kalendarz',
+   /Rezerwacje online są teraz wyłączone/.test(s.body) && !/Nie udało się zarezerwować/.test(s.body) && s.krok === null && failedReasons().includes('business_closed'),
+   `${s.krok} | ${JSON.stringify(failures)} | ${s.body.slice(0, 200)}`)
+
+// A body without the API's code (a proxy's 502 page): the term stays, a retry and a way back.
+await haircutToTerm('?signedIn=1&createRefusal=HTTP_502')
+const pickedBefore = await pickedSlots()
+await watchFailures()
+await next()
+s = await waitForText(/Nie udało|zniknął|Zarezerwowane/, 4000)
+ok('wizyta, 502 bez kodu: komunikat z ponowieniem, termin zostaje',
+   /Nie udało się zarezerwować wizyty\. Spróbuj ponownie\./.test(s.body) && /Spróbuj ponownie/.test(s.ctaText ?? s.body) && !/zniknął|Bad Gateway|HTTP_502/.test(s.body) && s.hasBack && failedReasons().includes('error') && !lostSlot(),
+   `${s.hasBack} | ${JSON.stringify(failures)} | ${s.body.slice(0, 200)}`)
+await back(); await page.waitForTimeout(500)
+s = await state()
+const pickedAfter = await pickedSlots()
+ok('wizyta, 502: Wstecz wraca do terminu z wybraną godziną', s.stepName === 'WYBÓR TERMINU' && pickedAfter.length > 0 && pickedAfter.join() === pickedBefore.join() && !/Nie udało się/.test(s.body),
+   `${s.stepName} | ${pickedBefore} -> ${pickedAfter}`)
+await next()
+s = await waitForText(/Zarezerwowane|Nie udało/, 4000)
+ok('wizyta, 502: ponowne Dalej rezerwuje', /Zarezerwowane!/.test(s.body), s.body.slice(0, 200))
+
+// The API's 500 envelope on a class entry: no English, no bounce to the timetable, the retry books.
+await page.goto(URL + '?signedIn=1&prefillSession=901&createRefusal=SERVER_ERROR'); await page.waitForTimeout(1400)
+await watchFailures()
+await next()
+s = await waitForText(/Nie udało|Zapisano/, 4000)
+const onTimetable = await page.evaluate(() => {
+  const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
+  return !!host.shadowRoot.querySelector('.vz-sessions')
+})
+ok('zajęcia, 500: komunikat z ponowieniem, bez tekstu API i bez powrotu do grafiku',
+   /Nie udało się zapisać na zajęcia\. Spróbuj ponownie\./.test(s.body) && !/Internal server error/i.test(s.body) && !onTimetable && failedReasons().includes('error'),
+   `${onTimetable} | ${JSON.stringify(failures)} | ${s.body.slice(0, 200)}`)
+await clickByText('Spróbuj ponownie')
+s = await waitForText(/Zapisano/, 4000)
+ok('zajęcia, 500: Spróbuj ponownie zapisuje', /Zapisano!/.test(s.body), s.body.slice(0, 200))
+
+// A visit refusal with another status (422) is not a lost slot either: the reason, the term kept.
+await haircutToTerm('?signedIn=1&createRefusal=INCOMPLETE_PROFILE')
+await watchFailures()
+await next()
+s = await waitForText(/Uzupełnij|zniknął|Zarezerwowane/, 4000)
+ok('wizyta, 422 INCOMPLETE_PROFILE: powód zamiast "termin zniknął"',
+   /Uzupełnij imię, nazwisko i numer telefonu, aby zarezerwować\./.test(s.body) && !/zniknął/.test(s.body) && failedReasons().includes('booking_refused') && !lostSlot(),
+   `${JSON.stringify(failures)} | ${s.body.slice(0, 200)}`)
+
 await browser.close()
 console.log(`\n${pass} pass, ${fail} fail`)
 process.exit(fail ? 1 : 0)

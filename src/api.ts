@@ -435,11 +435,13 @@ export type PriceChangedError = { code: 'PRICE_CHANGED'; message: string; pricin
 /**
  * `pricing` comes back with PRICE_CHANGED and the reward refusals that carry a
  * fresh quote; `lineIndexes` with a line conflict (REWARD_DISCOUNT_CONFLICT);
- * `message` is the API's own Polish sentence where it has one.
+ * `message` is the API's own Polish sentence where it has one. `status` is the
+ * HTTP status (absent for NETWORK): only a 409 can be a lost slot, and a 5xx is
+ * never a refusal (src/channel.ts).
  */
 export type BookingWriteResult =
   | { ok: true; data: any }
-  | { ok: false; code: string; pricing?: PriceQuote; lineIndexes?: number[]; message?: string }
+  | { ok: false; code: string; status?: number; pricing?: PriceQuote; lineIndexes?: number[]; message?: string }
 
 /** Refusals whose body carries a quote the flow can show or book with. */
 const PRICED_FAILURES: ReadonlySet<string> = new Set(['PRICE_CHANGED', 'REWARD_QUOTE_EXPIRED', 'REWARD_DISCOUNT_CONFLICT'])
@@ -452,6 +454,7 @@ function writeFailure(status: number, data: any): BookingWriteResult {
   return {
     ok: false,
     code,
+    status,
     ...(pricing ? { pricing } : {}),
     ...(Array.isArray(indexes) ? { lineIndexes: indexes.filter((i: unknown) => Number.isInteger(i)) } : {}),
     ...(typeof data?.message === 'string' && data.message !== code ? { message: data.message } : {}),
@@ -1467,7 +1470,7 @@ export type TableCountsResult = CountsResult & { gone: boolean }
 export type TableDayResult = { day: TableDay | null; restricted: boolean; gone: boolean }
 export type TableWriteResult =
   | { ok: true; data: any }
-  | { ok: false; code: string; message?: string; details?: any }
+  | { ok: false; code: string; status?: number; message?: string; details?: any }
 
 const tablesBase = (cfg: Cfg) => `${cfg.apiBase}/api/public/businesses/${cfg.businessId}/tables`
 
@@ -1559,7 +1562,7 @@ export async function createTableReservation(
       }),
     })
     const data = await r.json().catch(() => ({}))
-    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}`, message: typeof data?.message === 'string' ? data.message : undefined }
+    if (!r.ok) return { ok: false, code: data?.code || `HTTP_${r.status}`, status: r.status, message: typeof data?.message === 'string' ? data.message : undefined }
     return { ok: true, data }
   } catch {
     return { ok: false, code: 'NETWORK' }
