@@ -10,6 +10,9 @@ export const weights = [400, 500, 600, 700] // CSS 650 matches static 700; no UI
 
 export function collectFontAssets() {
   const assets = []
+  const seen = new Set()
+  // Packs may share a family (the single-face packs reuse Poppins, Manrope, Inter): one file per path.
+  const add = (asset) => { if (!seen.has(asset.path)) { seen.add(asset.path); assets.push(asset) } }
   const fontPacks = {}
   for (const [id, family] of Object.entries(packs)) {
     const slug = family.toLowerCase().replaceAll(' ', '-')
@@ -18,7 +21,7 @@ export function collectFontAssets() {
     if (pkg.license !== 'OFL-1.1') throw new Error(`Unexpected license: ${slug}`)
     const license = read(`${base}/LICENSE`)
     const licensePath = `/fonts/${slug}/LICENSE.${sha256(license)}.txt`
-    assets.push({ path: licensePath, bytes: license })
+    add({ path: licensePath, bytes: license })
     const files = []
     for (const weight of weights) {
       const css = read(`${base}/${weight}.css`).toString()
@@ -31,7 +34,7 @@ export function collectFontAssets() {
         const hash = sha256(bytes)
         const path = `/fonts/${slug}/${hash}.woff2`
         files.push({ path, weight, style: 'normal', subset, unicodeRange, hash })
-        assets.push({ path, bytes })
+        add({ path, bytes })
       }
     }
     fontPacks[id] = { family, package: `@fontsource/${slug}`, packageVersion: pkg.version,

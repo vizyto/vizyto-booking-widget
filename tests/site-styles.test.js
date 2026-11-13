@@ -14,6 +14,7 @@ const expectedPacks = {
   'anton-ibm-plex-sans-v1': 'IBM Plex Sans', 'barlow-condensed-barlow-v1': 'Barlow',
   'archivo-black-archivo-space-mono-v1': 'Archivo', 'montserrat-roboto-v1': 'Roboto',
   'archivo-inter-v1': 'Inter',
+  'poppins-v1': 'Poppins', 'manrope-v1': 'Manrope', 'inter-v1': 'Inter',
 }
 const fromData = (ds) => resolveSiteStyles(siteStylesFromDataset(ds))
 const covers = (range, char) => range.split(',').some((part) => {
@@ -55,7 +56,7 @@ describe('backward-compatible style inputs', () => {
     }
     expect(fromData({ vizytoTheme: 'dark;}' }).theme).toBe('light')
   })
-  test('allowlist matches all nine F1 IDs and their sans role', () => {
+  test('allowlist matches every site font pack ID and its sans role', () => {
     expect(fontPacks).toEqual(expectedPacks)
     for (const [fontPackId, family] of Object.entries(expectedPacks)) {
       expect(validFontPack(fontPackId)).toBe(true)
