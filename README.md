@@ -100,7 +100,7 @@ jasny; działają też `dark` i `auto`.
 
 | opcja `mount()` | atrybut | działanie |
 |---|---|---|
-| `fontPackId` | `data-vizyto-font-pack-id` | jeden z dziewięciu id poniżej; nieznany = Poppins |
+| `fontPackId` | `data-vizyto-font-pack-id` | jeden z id poniżej; nieznany = Poppins |
 | `accent` | `data-vizyto-accent` | `--vz-accent`, domyślnie `#fd9320` |
 | `accentLight` | `data-vizyto-accent-light` | `--vz-accent-tint`, domyślnie `#ffdca8` |
 | `accentDark` | `data-vizyto-accent-dark` | `--vz-accent-strong`, domyślnie `#bf700f` |
@@ -119,6 +119,9 @@ jasny; działają też `dark` i `auto`.
 | `archivo-black-archivo-space-mono-v1` | Archivo |
 | `montserrat-roboto-v1` | Roboto |
 | `archivo-inter-v1` | Inter |
+| `poppins-v1` | Poppins |
+| `manrope-v1` | Manrope |
+| `inter-v1` | Inter |
 
 ```html
 <script src="https://widget.vizyto.com/v1/widget.js"
