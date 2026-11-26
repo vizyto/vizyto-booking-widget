@@ -57,7 +57,7 @@ const state = () => page.evaluate(() => {
   }
 })
 
-const clickByText = (text, sel = 'button, [role=button], [role=radio], [role=checkbox], .vz-card-hit') =>
+const clickByText = (text, sel = 'button, [role=button], [role=radio], [role=checkbox], .vz-svc-hit') =>
   page.evaluate(({ text, sel }) => {
     const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
     const r = host.shadowRoot
@@ -68,13 +68,23 @@ const clickByText = (text, sel = 'button, [role=button], [role=radio], [role=che
     return true
   }, { text, sel })
 
-/** Click the "+" control that belongs to the card whose title matches. */
-const addService = (name) => page.evaluate((name) => {
+/**
+ * Click the "+" control of the service row whose name matches. The list opens on
+ * the business's first category, so a service of another one is reached through
+ * the closing "Wszystkie" chip.
+ */
+const addService = (name) => page.evaluate(async (name) => {
   const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
   const r = host.shadowRoot
-  const card = [...r.querySelectorAll('.vz-card')].find((c) => c.textContent.includes(name))
-  if (!card) return 'no-card'
-  const add = card.querySelector('button[aria-label*="Dodaj"], .vz-add, button:not(.vz-card-hit)')
+  const find = () => [...r.querySelectorAll('.vz-svc')].find((c) => c.textContent.includes(name))
+  let row = find()
+  if (!row) {
+    ;[...r.querySelectorAll('.vz-cat')].find((c) => c.textContent.trim() === 'Wszystkie')?.click()
+    await new Promise((done) => setTimeout(done, 80))
+    row = find()
+  }
+  if (!row) return 'no-card'
+  const add = row.querySelector('button[aria-label*="Dodaj"]')
   if (!add) return 'no-add'
   add.click()
   return 'ok'
@@ -122,7 +132,7 @@ const reload = async () => { await page.goto(URL); await page.waitForTimeout(800
 const pickTerm = async () => {
   await page.evaluate(() => {
     const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
-    host.shadowRoot.querySelector('.vz-day:not(.is-disabled)')?.click()
+    host.shadowRoot.querySelector('.vz-mday:not([disabled])')?.click()
   })
   await page.waitForTimeout(1000)
   await page.evaluate(() => {
@@ -506,7 +516,7 @@ s = await state()
 ok('682: dochodzi do terminu', s.stepName === 'WYBÓR TERMINU', `${s.stepName}`)
 await page.evaluate(() => {
   const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
-  host.shadowRoot.querySelector('.vz-day:not(.is-disabled)')?.click()
+  host.shadowRoot.querySelector('.vz-mday:not([disabled])')?.click()
 })
 await page.waitForTimeout(900)
 const slot = await page.evaluate(() => {
@@ -546,7 +556,7 @@ await closeConfigure()
 await next(); await page.waitForTimeout(1200)
 await page.evaluate(() => {
   const host = [...document.querySelectorAll('#booking, #booking *')].find((e) => e.shadowRoot)
-  host.shadowRoot.querySelector('.vz-day:not(.is-disabled)')?.click()
+  host.shadowRoot.querySelector('.vz-mday:not([disabled])')?.click()
 })
 await page.waitForTimeout(900)
 await page.evaluate(() => {

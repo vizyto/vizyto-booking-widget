@@ -177,7 +177,8 @@ describe('self-hosted release artifacts (run pnpm build:cdn first)', () => {
     const { hash, ...content } = manifest
     expect(hash).toBe(sha256(JSON.stringify(content)))
     const usedWeights = [...new Set([...css.matchAll(/font-weight:\s*(\d+)/g)].map((m) => Number(m[1])))].sort()
-    expect(usedWeights).toEqual([400, 500, 600, 650, 700])
+    // 650 falls onto the shipped 700 file by the browser's weight matching.
+    expect(usedWeights).toEqual([400, 500, 600, 650])
     expect(assets.filter((a) => a.path.endsWith('.woff2'))).toHaveLength(72)
     for (const pack of Object.values(manifest.fontPacks)) {
       expect(pack.weights).toEqual([400, 500, 600, 700])

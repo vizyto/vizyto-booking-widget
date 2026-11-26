@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'preact/hooks'
+import { useMemo, useState } from 'preact/hooks'
 import type { VNode } from 'preact'
 import type { DayCounts, PromoBadges, Slots } from '../api'
 import { slotLabel } from '../api'
-import { DOW, dayNum, monthMatrix, monthOf, monthTitle } from '../dates'
-import { ChevronDown, ChevronLeft, ChevronRight, Calendar, CalendarDays, Grid, Moon, Sun, Sunrise, Bell } from '../ui/icons'
+import { ChevronDown, Bell } from '../ui/icons'
 import { AvatarStack } from '../ui/AvatarStack'
-import { DayStrip, useDayPager } from '../ui/DayStrip'
+import { DAY_PARTS, dayPartIndex } from '../calendar'
+import { DayHeading, MonthCalendar } from '../ui/MonthCalendar'
 import { Spinner } from '../ui/Spinner'
 import { PromoBadge, dayPromo } from '../ui/PromoBadge'
 
@@ -79,75 +79,30 @@ export function StepDateTime({
    */
   promoBadges?: PromoBadges | null
 }) {
-  const [view, setView] = useState<'week' | 'month'>('week')
   const [editingWho, setEditingWho] = useState(false)
-  const pager = useDayPager(days, date, view === 'week')
   const inHorizon = useMemo(() => new Set(days), [days])
-
-  // distinct months covered by the horizon, for month-view navigation
-  const months = useMemo(() => {
-    const seen: string[] = []
-    const out: { year: number; month: number }[] = []
-    for (const d of days) {
-      const m = monthOf(d)
-      const key = `${m.year}-${m.month}`
-      if (!seen.includes(key)) {
-        seen.push(key)
-        out.push(m)
-      }
-    }
-    return out
-  }, [days])
-  const [mIdx, setMIdx] = useState(0)
-
-  // The strip follows a date set from outside on its own (see useDayPager); the
-  // month view has to be told which month actually holds it.
-  useEffect(() => {
-    if (!date) return
-    if (days.indexOf(date) < 0) return
-    const m = monthOf(date)
-    const mi = months.findIndex((x) => x.year === m.year && x.month === m.month)
-    if (mi >= 0) setMIdx(mi)
-  }, [date, days, months])
-
   const free = (d: string) => (counts[d] ?? 0) > 0
 
-  // Promotion marks (owner's mockup, #430): a corner badge on every bookable day
-  // and time tile that has one, a dot in the month grid - never on a disabled day.
-  // The week strip leaves room above its row only on a page that shows a badge
-  // (DayStrip decides that per page).
+  // Promotion marks (#430): a dot on every bookable day that has one, a corner
+  // badge on every promoted hour - never on a day that cannot be picked.
   const badges = promoBadges?.lowest ? promoBadges : null
   const dayMarks = dayPromo(days, (d) => inHorizon.has(d) && free(d), badges?.days)
-  const monthCells = useMemo(() => monthMatrix(months[mIdx]?.year ?? 0, months[mIdx]?.month ?? 0).flat(), [months, mIdx])
-  const monthMarked = monthCells.some((d) => !!d && !!dayMarks.tile(d))
-  const label = view === 'week' ? pager.label : monthTitle(months[mIdx]?.year ?? 0, months[mIdx]?.month ?? 0)
-
-  const goPrev = () => (view === 'week' ? pager.goPrev() : setMIdx((i) => Math.max(0, i - 1)))
-  const goNext = () => (view === 'week' ? pager.goNext() : setMIdx((i) => Math.min(months.length - 1, i + 1)))
-  const prevDisabled = view === 'week' ? pager.prevDisabled : mIdx === 0
-  const nextDisabled = view === 'week' ? pager.nextDisabled : mIdx >= months.length - 1
 
   const groups = useMemo(() => {
     const keys = slots.slice().sort()
-    const g: { label: string; Icon: typeof Sun; items: { k: string; lab: string }[] }[] = [
-      { label: 'Rano', Icon: Sunrise, items: [] },
-      { label: 'Południe', Icon: Sun, items: [] },
-      { label: 'Wieczór', Icon: Moon, items: [] },
-    ]
+    const g: { label: string; items: { k: string; lab: string }[] }[] = DAY_PARTS.map((label) => ({ label, items: [] }))
     for (const k of keys) {
       const lab = slotLabel(date, k, timezone)
-      const h = parseInt(lab.slice(0, 2), 10)
-      g[h < 12 ? 0 : h < 17 ? 1 : 2].items.push({ k, lab })
+      g[dayPartIndex(parseInt(lab.slice(0, 2), 10))]!.items.push({ k, lab })
     }
     return g.filter((x) => x.items.length)
   }, [slots, date, timezone])
-  const slotMarked = !!date && slots.some((k) => !!badges?.slots[k])
 
   return (
     <div class="vz-fade-in">
       {providerChip && (
         <div class="vz-who">
-          {/* Whose hours these are: a full-width field like the period bar under it. */}
+          {/* Whose hours these are: a full-width fill field above the calendar. */}
           <button
             type="button"
             class={`vz-who-chip${editingWho ? ' on' : ''}`}
@@ -160,72 +115,19 @@ export function StepDateTime({
               <span class="vz-who-cap">{providerChip.plural ? 'Specjaliści' : 'Specjalista'}</span>
               <span class="vz-who-label">{providerChip.label}</span>
             </span>
-            {providerChip.editor && <ChevronDown size={16} class="vz-chip-cv" />}
+            {providerChip.editor && <ChevronDown size={18} class="vz-chip-cv" />}
           </button>
           {editingWho && providerChip.editor?.(() => setEditingWho(false))}
         </div>
       )}
 
-      {/* "< label >" like the app's period bar: the arrows page the view and the
-          label opens the month grid - the widget's calendar. In month view the
-          grid is already open, so the label is the same shape without an action. */}
-      <div class="vz-period">
-        <button class="vz-period-nav" onClick={goPrev} disabled={prevDisabled} aria-label={view === 'week' ? 'Poprzedni tydzień' : 'Poprzedni miesiąc'} type="button"><ChevronLeft size={18} /></button>
-        {view === 'week' ? (
-          <button class="vz-period-label" onClick={() => setView('month')} aria-label={`${label}. Otwórz kalendarz`} type="button">
-            <CalendarDays size={18} class="vz-period-ic" />
-            <span>{label}</span>
-          </button>
-        ) : (
-          <div class="vz-period-label is-static">
-            <CalendarDays size={18} class="vz-period-ic" />
-            <span>{label}</span>
-          </div>
-        )}
-        <button class="vz-period-nav" onClick={goNext} disabled={nextDisabled} aria-label={view === 'week' ? 'Następny tydzień' : 'Następny miesiąc'} type="button"><ChevronRight size={18} /></button>
-      </div>
-
-      <div class="vz-tabs" role="tablist" aria-label="Widok kalendarza">
-        <button class={`vz-tab${view === 'week' ? ' on' : ''}`} role="tab" aria-selected={view === 'week'} onClick={() => setView('week')} type="button"><Calendar size={16} /> Tydzień</button>
-        <button class={`vz-tab${view === 'month' ? ' on' : ''}`} role="tab" aria-selected={view === 'month'} onClick={() => setView('month')} type="button"><Grid size={16} /> Miesiąc</button>
-      </div>
-
-      {view === 'week' ? (
-        <DayStrip pager={pager} counts={counts} date={date} onPickDate={onPickDate} mark={dayMarks.tile} />
-      ) : (
-        <div>
-          <div class="vz-month">
-            {DOW.map((d) => <div class="vz-month-dow">{d}</div>)}
-            {monthCells.map((d) => {
-              if (!d) return <div class="vz-mcell empty" />
-              const bookable = inHorizon.has(d) && free(d)
-              return (
-                <button class={`vz-mcell ${d === date ? 'active' : ''}`} disabled={!bookable} aria-label={dayMarks.tile(d) ? `${dayNum(d)}, promocja ${dayMarks.tile(d)}` : undefined} aria-current={d === date ? 'true' : undefined} onClick={() => onPickDate(d)} type="button">
-                  {dayNum(d)}
-                  {bookable && (
-                    <span class="vz-mcell-dots">
-                      <span class="vz-free" />
-                      {dayMarks.tile(d) && <span class="vz-promo-dot" aria-hidden="true" />}
-                    </span>
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* The 30-day note sits in the booking summary, next to the price (#430). */}
-      {view === 'month' && monthMarked && (
-        <div class="vz-promo-foot">
-          <div class="vz-promo-caption"><span class="vz-promo-dot" aria-hidden="true" /> Dni z promocją</div>
-        </div>
-      )}
+      {/* The 30-day note of the marks sits in the booking summary, next to the price (#430). */}
+      <MonthCalendar days={days} counts={counts} date={date} onPickDate={onPickDate} mark={dayMarks.tile} />
 
       {!date ? (
         <div style="margin-top:20px;text-align:center;">
           <div class="vz-muted">Wybierz dzień, aby zobaczyć wolne godziny.</div>
-          {/* Whole horizon without a free day: the strip has nothing selectable,
+          {/* Whole horizon without a free day: the calendar has nothing selectable,
               so the way out has to live here too. */}
           {onFindNext && !noneAhead && !Object.values(counts).some((n) => n > 0) && (
             <button class="vz-btn ghost mt" onClick={onFindNext} disabled={findingNext} type="button">
@@ -273,19 +175,21 @@ export function StepDateTime({
         </div>
       ) : (
         <>
+          <DayHeading date={date} count={slots.length} />
           {groups.map((g) => {
             // Each promoted slot carries its corner badge; a section with one
             // leaves room above its rows for it.
             const marked = g.items.some(({ k }) => !!badges?.slots[k])
             return (
-              <div class="vz-slot-group">
-                <div class="vz-slot-group-h"><g.Icon size={16} /> {g.label}</div>
+              <div class="vz-slot-group" role="group" aria-label={g.label}>
+                <div class="vz-slot-group-h">{g.label}</div>
                 <div class={`vz-slots vz-stagger${marked ? ' has-promo' : ''}`}>
                   {g.items.map(({ k, lab }) => {
                     const badge = badges?.slots[k] ?? null
                     return (
                       <button
                         class={`vz-slot${k === selectedSlot ? ' selected' : ''}`}
+                        aria-pressed={k === selectedSlot ? 'true' : 'false'}
                         aria-label={badge ? `${lab}, promocja ${badge}` : undefined}
                         onClick={() => onPickSlot(k)}
                         type="button"

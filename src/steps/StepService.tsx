@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'preact/hooks'
 import type { PublicPromotionSummary, Resource, Service, ServiceCategory } from '../api'
 import { formatDuration, priceLabel, richTextToPlain, serviceBaseRange } from '../api'
-import { SelectCard } from '../ui/SelectCard'
+import { CdnImg } from '../ui/CdnImg'
 import { LowestPriceLine, PromoBadge } from '../ui/PromoBadge'
 import { Clock, Lock, Pencil, Plus, Search, Trash } from '../ui/icons'
 
@@ -55,20 +55,23 @@ export function StepService({
       .filter((c) => c.items.length > 0)
   }, [services, categories])
 
-  const [active, setActive] = useState<number | 'all'>('all')
+  // The row opens on the business's FIRST category: the order of categories is the
+  // business's call (owner, 2026-11-26), "Wszystkie" closes the row. While a search
+  // runs no chip is pressed and the list is the search result across the whole offer.
+  const [picked, setPicked] = useState<number | 'all' | null>(null)
   const [query, setQuery] = useState('')
   const q = query.trim().toLowerCase()
+  const active: number | 'all' | null = q ? null : picked ?? cats[0]?.id ?? 'all'
 
-  const inCategory = active === 'all' ? services : cats.find((c) => c.id === active)?.items ?? services
-  // Searching looks across the WHOLE offer - a name the customer types must not
-  // stay hidden just because a category tab happens to be active.
+  const inCategory = active === 'all' || active == null ? services : cats.find((c) => c.id === active)?.items ?? services
   const shown = q ? services.filter((s) => s.name.toLowerCase().includes(q)) : inCategory
 
-  // When any shown service has a photo, render a thumbnail square on every card
+  // When any shown service has a photo, render a thumbnail square on every row
   // (photo or a letter placeholder) so the list stays aligned; otherwise keep
   // the clean text-only layout.
   const anyImage = useMemo(() => shown.some((s) => !!s.image), [shown])
   const entryOf = (id: number) => cart.find((c) => c.serviceId === id)
+  const pickCategory = (id: number | 'all') => { setQuery(''); setPicked(id) }
 
   return (
     <div class="vz-fade-in">
@@ -86,16 +89,16 @@ export function StepService({
         </label>
       )}
 
-      {cats.length > 0 && !q && (
-        <div class="vz-cats" role="tablist" aria-label="Kategorie usług">
-          <button class={`vz-cat${active === 'all' ? ' on' : ''}`} role="tab" aria-selected={active === 'all'} onClick={() => setActive('all')} type="button">
-            Wszystkie
-          </button>
+      {cats.length > 0 && (
+        <div class="vz-cats" role="group" aria-label="Kategorie usług">
           {cats.map((c) => (
-            <button class={`vz-cat${active === c.id ? ' on' : ''}`} role="tab" aria-selected={active === c.id} onClick={() => setActive(c.id)} type="button">
+            <button class={`vz-cat${active === c.id ? ' on' : ''}`} aria-pressed={active === c.id ? 'true' : 'false'} onClick={() => pickCategory(c.id)} type="button">
               {c.name}
             </button>
           ))}
+          <button class={`vz-cat${active === 'all' ? ' on' : ''}`} aria-pressed={active === 'all' ? 'true' : 'false'} onClick={() => pickCategory('all')} type="button">
+            Wszystkie
+          </button>
         </div>
       )}
 
@@ -106,94 +109,86 @@ export function StepService({
       )}
 
       {/* Jedna wizyta może łączyć kilka usług, więc to lista dodawania, nie wybór
-          jednej opcji. Podział ról jak w kreatorze na stronie: treść kafla
-          otwiera szczegóły usługi, plus dodaje ją do wizyty, a na dodanej
-          pozycji stoją ołówek (wariant i dodatki) oraz kosz. */}
-      <div class="vz-list vz-stagger" role="group" aria-label="Usługi">
+          jednej opcji. Wiersz jak w aplikacji (BookingServiceRow, #1168): bez ramki,
+          nazwa nad czasem, cena po prawej, potem okrągłe przyciski. Treść wiersza
+          otwiera szczegóły usługi, plus dodaje ją do wizyty, a na dodanej pozycji
+          stoją ołówek (wariant i dodatki) oraz kosz. Tylko dodana pozycja nosi obrys. */}
+      <div class="vz-svc-list vz-stagger" role="group" aria-label="Usługi">
         {shown.map((s) => {
           const { min, from } = serviceBaseRange(s, workers)
           const desc = richTextToPlain(s.description)
           const entry = entryOf(s.id)
           const promotion = promotionSummary?.services.find((p) => p.businessServiceId === s.id)
+          // Przypięty wariant niesie własną cenę i czas w plakietce pod wierszem -
+          // bazowe "od 50 zł / 45 min" mówiłoby wtedy co innego niż sama pozycja.
+          // Bez ceny nie ogłaszamy też obniżki: plakietka i nota idą razem z nią.
+          const showMeta = !entry?.hideMeta
+          const locked = s.viewerAccess === 'locked'
           return (
-            <div class="vz-cart-row" key={s.id}>
-              <SelectCard
-                multi
-                thumb={anyImage ? (s.image ?? null) : undefined}
-                title={s.name}
-                desc={desc || undefined}
-                selected={!!entry}
-                /* Treść kafla to podgląd, nie przełącznik: pokazuje galerię i
-                   pełny opis, z których dopiero się rezerwuje. Wybór usługi
-                   należy wyłącznie do plusa, a usunięcie do kosza - dzięki temu
-                   przypadkowe dotknięcie niczego nie dodaje ani nie wyrzuca. */
-                onSelect={() => onDetails(s.id)}
-                control={
-                  entry ? (
-                    <span class="vz-card-ctrls">
+            <div class={`vz-svc${entry ? ' selected' : ''}`} key={s.id}>
+              <div class="vz-svc-row">
+                {/* Treść wiersza to podgląd, nie przełącznik: pokazuje galerię i pełny
+                    opis, z których dopiero się rezerwuje. Wybór usługi należy wyłącznie
+                    do plusa, a usunięcie do kosza - przypadkowe dotknięcie niczego nie
+                    dodaje ani nie wyrzuca. Sterowanie jest RODZEŃSTWEM treści, nigdy jej
+                    dzieckiem (żaden element interaktywny nie siedzi w innym). */}
+                <div
+                  class="vz-svc-hit"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${s.name}. Zobacz szczegóły`}
+                  onClick={() => onDetails(s.id)}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return
+                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onDetails(s.id) }
+                  }}
+                >
+                  {anyImage && <ServiceThumb image={s.image ?? null} name={s.name} />}
+                  <span class="vz-svc-main">
+                    <span class="vz-svc-name">{s.name}</span>
+                    {desc && <span class="vz-svc-desc">{desc}</span>}
+                    {showMeta && <span class="vz-svc-meta">{formatDuration(s.duration)}</span>}
+                    {((showMeta && promotion) || locked) && (
+                      <span class="vz-svc-notes">
+                        {showMeta && promotion && <PromoBadge>Zaoszczędź do {promotion.saveUpToPercent}%</PromoBadge>}
+                        {showMeta && promotion && <LowestPriceLine price={promotion.priorPrice} isFrom={promotion.priorPriceIsFrom} />}
+                        {/* Whitelist-locked: still selectable - logging in may unlock it. */}
+                        {locked && <span class="vz-lock-chip"><Lock size={11} /> Dla stałych klientów</span>}
+                      </span>
+                    )}
+                  </span>
+                  {showMeta && <span class="vz-svc-price">{priceLabel(min, from)}</span>}
+                </div>
+                <span class="vz-svc-ctrls">
+                  {entry ? (
+                    <>
                       {entry.editable && (
-                        <button
-                          type="button"
-                          class="vz-card-icon"
-                          aria-label={`Edytuj ${s.name}`}
-                          onClick={() => onEdit(s.id)}
-                        >
-                          <Pencil size={17} />
+                        <button type="button" class="vz-rowbtn edit" aria-label={`Edytuj ${s.name}`} onClick={() => onEdit(s.id)}>
+                          <Pencil size={16} />
                         </button>
                       )}
-                      <button
-                        type="button"
-                        class="vz-card-icon danger"
-                        aria-label={`Usuń ${s.name} z wizyty`}
-                        onClick={() => onToggle(s)}
-                      >
-                        <Trash size={17} />
+                      <button type="button" class="vz-rowbtn remove" aria-label={`Usuń ${s.name} z wizyty`} onClick={() => onToggle(s)}>
+                        <Trash size={16} />
                       </button>
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      class="vz-card-add"
-                      aria-label={`Dodaj ${s.name} do wizyty`}
-                      onClick={() => onToggle(s)}
-                    >
-                      <Plus size={20} />
-                    </button>
-                  )
-                }
-                /* Przypięty wariant niesie własną cenę i czas w plakietce pod
-                   kartą - bazowe "od 50 zł / 45 min" mówiłoby wtedy co innego
-                   niż sama pozycja (tak samo hideMeta w kreatorze na stronie). */
-                meta={
-                  entry?.hideMeta ? (
-                    // The price is hidden here (the recap chips carry it), so no
-                    // reduction is announced either - badge and note go with it.
-                    s.viewerAccess === 'locked' ? <span class="vz-lock-chip"><Lock size={11} /> Dla stałych klientów</span> : undefined
-                  ) : (
-                    <>
-                      <span class="vz-dur"><Clock size={14} /> {formatDuration(s.duration)}</span>
-                      <span class="vz-price">{priceLabel(min, from)}</span>
-                      {promotion && <PromoBadge>Zaoszczędź do {promotion.saveUpToPercent}%</PromoBadge>}
-                      {promotion && <LowestPriceLine price={promotion.priorPrice} isFrom={promotion.priorPriceIsFrom} />}
-                      {/* Whitelist-locked: still selectable - logging in may unlock it. */}
-                      {s.viewerAccess === 'locked' && (
-                        <span class="vz-lock-chip"><Lock size={11} /> Dla stałych klientów</span>
-                      )}
                     </>
-                  )
-                }
-              />
-              {/* Konfiguracja pozycji jako plakietki - wariant, potem dodatki,
-                  jak stopka wybranej karty w kreatorze na stronie. Edytuje
-                  ołówek, więc plakietki są opisem, nie przyciskiem; wyjątkiem
-                  jest zaproszenie do dodatków i niedomknięta wymagana grupa. */}
+                  ) : (
+                    <button type="button" class="vz-rowbtn add" aria-label={`Dodaj ${s.name} do wizyty`} onClick={() => onToggle(s)}>
+                      <Plus size={18} />
+                    </button>
+                  )}
+                </span>
+              </div>
+              {/* Konfiguracja pozycji jako plakietki w obrysie wybranego wiersza -
+                  wariant, potem dodatki. Edytuje ołówek, więc plakietki są opisem, nie
+                  przyciskiem; wyjątkiem jest zaproszenie do dodatków i niedomknięta
+                  wymagana grupa. */}
               {entry && (entry.chips.length > 0 || entry.editable) && (
-                <div class="vz-cart-recap">
+                <div class="vz-svc-foot">
                   {entry.chips.map((c) => (
-                    <span class="vz-chip" key={c.label}>
+                    <span class="vz-tag" key={c.label}>
                       {c.clock && <Clock size={12} />}
                       {c.label}
-                      {c.extra && <span class="vz-chip-x">{c.extra}</span>}
+                      {c.extra && <span class="vz-tag-x">{c.extra}</span>}
                     </span>
                   ))}
                   {entry.chips.length === 0 && (
@@ -207,7 +202,7 @@ export function StepService({
                     </button>
                   )}
                   {entry.chips.length > 0 && entry.issue && (
-                    <button type="button" class="vz-chip err" onClick={() => onEdit(s.id)}>
+                    <button type="button" class="vz-tag err" onClick={() => onEdit(s.id)}>
                       Wybierz wymagane dodatki
                     </button>
                   )}
@@ -218,5 +213,15 @@ export function StepService({
         })}
       </div>
     </div>
+  )
+}
+
+/** Kwadratowa miniatura usługi; zepsute albo brakujące zdjęcie = litera zastępcza. */
+function ServiceThumb({ image, name }: { image: string | null; name: string }) {
+  const [ok, setOk] = useState(true)
+  return (
+    <span class="vz-svc-thumb">
+      {image && ok ? <CdnImg src={image} width={160} alt="" loading="lazy" onError={() => setOk(false)} /> : name.charAt(0)}
+    </span>
   )
 }

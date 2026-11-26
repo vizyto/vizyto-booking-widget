@@ -156,7 +156,7 @@ export function tableIdempotencyKey(p: {
   return `vzw-tbl-${p.businessId}-${p.startAt}-${p.adults}-${p.children}-${p.zoneId ?? 'any'}-${p.userId}`
 }
 
-/** The day strip's horizon split into ranges the counts endpoint accepts. */
+/** The calendar's horizon split into ranges the counts endpoint accepts. */
 export function countsWindow(days: string[], max = COUNTS_MAX_DAYS): Array<{ from: string; to: string }> {
   const out: Array<{ from: string; to: string }> = []
   for (let i = 0; i < days.length; i += max) {

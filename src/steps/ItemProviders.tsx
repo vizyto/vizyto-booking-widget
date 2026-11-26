@@ -135,7 +135,7 @@ function ProviderOptions({
             avatar={c.image ? <CdnImg src={c.image} width={112} alt="" /> : c.name.charAt(0)}
             title={c.name}
             sub={c.position || undefined}
-            meta={
+            trailing={
               <span class="vz-price">
                 {formatPrice2(configuredTotals(item.service, item.variantDuration, item.addonIds, c.id).price)}
               </span>

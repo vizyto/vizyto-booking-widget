@@ -2,8 +2,14 @@
 // touch it and these class names can never collide. Two themes (light/dark) are
 // expressed as a CSS custom-property token layer on .vz-root; index.ts flips
 // .vz-root[data-theme="dark"]. Tokens + chrome mirror the real Vizyto app
-// (segmented stepper, radio cards, sticky "Dalej" bar). Accent (--vz-accent)
+// (segmented stepper, option tiles, sticky "Dalej" bar). Accent (--vz-accent)
 // and font (--vz-font) stay overridable from the embed.
+//
+// The look is the app's booking wizard "Czysty miesiąc" (vizyto #1168): fills
+// instead of frames. Every tile is a borderless --vz-fill surface with a large
+// radius (round day cells and hour pills); a picked one carries a 2px accent
+// outline on the accent tint (--vz-selected), never a solid fill. Every colour
+// of that language is derived from --vz-accent, so it holds for any embed.
 export const css = `
 :host { all: initial; }
 * { box-sizing: border-box; }
@@ -24,17 +30,23 @@ export const css = `
   --vz-bg: #fafafa;
   --vz-surface: #ffffff;
   --vz-surface-2: #f4f4f5;
+  /* Tiles are fills without a frame, so the fill sits a clear step under the surface. */
+  --vz-fill: #f0f0f1;
   --vz-border: #e8e8ea;
   --vz-text: #18181b;
   --vz-text-muted: #8a8a93;
   --vz-input-bg: #ffffff;
   --vz-ring: #a3a3a3;
-  --vz-selected: color-mix(in srgb, var(--vz-accent) 11%, var(--vz-surface));
+  --vz-selected: color-mix(in srgb, var(--vz-accent) 10%, var(--vz-surface));
+  /* Availability bar of a calendar day: three levels, told apart by length too. */
+  --vz-avail-high: #6fcf97;
+  --vz-avail-medium: #f2c063;
+  --vz-avail-low: #ee8b8b;
 
-  --vz-r-sm: 8px;
-  --vz-r-md: 12px;
-  --vz-r-lg: 16px;
-  --vz-r-xl: 20px;
+  --vz-r-sm: 10px;
+  --vz-r-md: 16px;
+  --vz-r-lg: 20px;
+  --vz-r-xl: 24px;
   --vz-r-pill: 999px;
 
   --vz-ease-out: cubic-bezier(.22,1,.36,1);
@@ -54,6 +66,7 @@ export const css = `
   --vz-bg: #0a0a0a;
   --vz-surface: #161616;
   --vz-surface-2: #1f1f1f;
+  --vz-fill: #242424;
   --vz-border: #2a2a2a;
   --vz-text: #fafafa;
   --vz-text-muted: #a1a1aa;
@@ -90,7 +103,7 @@ export const css = `
   position: relative; display: flex; flex-direction: column;
   width: 100%; max-width: 460px; max-height: min(92vh, 820px);
   background: var(--vz-surface); color: var(--vz-text);
-  border: 1px solid var(--vz-border); border-radius: 22px;
+  border: 1px solid var(--vz-border); border-radius: 28px;
   box-shadow: var(--vz-shadow-modal); overflow: hidden;
   animation: vz-pop var(--vz-dur-in) var(--vz-ease-out);
 }
@@ -136,17 +149,20 @@ export const css = `
 .vz-prog-bar { flex: 1 1 0; height: 5px; border-radius: 3px; background: var(--vz-border); transition: background var(--vz-dur-in) var(--vz-ease-out); }
 .vz-prog-bar.on { background: var(--vz-accent); }
 
-/* ---- SELECT CARDS (radio) ---------------------------------------------- */
+/* ---- OPTION TILES (radio) ---------------------------------------------- */
+/* A fill without a frame; the picked tile carries the accent outline on the tint. */
 .vz-list { display: grid; gap: 10px; }
 .vz-card {
-  display: flex; align-items: center; gap: 12px; text-align: left; width: 100%;
-  padding: 16px; border: 1.5px solid transparent; border-radius: var(--vz-r-xl);
-  background: var(--vz-surface-2); color: var(--vz-text); cursor: pointer;
+  display: flex; align-items: center; gap: 14px; text-align: left; width: 100%; min-height: 76px;
+  padding: 10px 14px; border: 2px solid transparent; border-radius: var(--vz-r-xl);
+  background: var(--vz-fill); color: var(--vz-text); cursor: pointer;
   font-family: var(--vz-font); transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
 }
-.vz-card:not(.is-disabled):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
-/* Karta jest divem z rolą (nosi własne przyciski), więc obrys fokusu trzeba
-   narysować samemu - przeglądarka nie da go za darmo. */
+@media (hover: hover) {
+  .vz-card:not(.is-disabled):not(.selected):hover { border-color: color-mix(in srgb, var(--vz-accent) 40%, transparent); }
+}
+/* Karta jest divem z rolą, więc obrys fokusu trzeba narysować samemu -
+   przeglądarka nie da go za darmo. */
 .vz-card:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
 .vz-card:not(.is-disabled):active { transform: scale(.99); }
 .vz-card.is-disabled { cursor: not-allowed; color: var(--vz-text-muted); filter: grayscale(1); }
@@ -154,85 +170,93 @@ export const css = `
 /* A card with a band across its foot (a worker's promotion): the card clips the
    band edge to edge and its body keeps the padding in a row of its own. */
 .vz-card.has-foot { flex-direction: column; align-items: stretch; gap: 0; padding: 0; overflow: hidden; }
-.vz-card-row { display: flex; align-items: center; gap: 12px; padding: 16px; }
-/* Karta usługi ma DWIE strefy: klikalną treść (szczegóły) i sterowanie obok.
-   Wciska się więc sama treść - gdyby skalowała się cała karta, plus uciekałby
-   spod palca w trakcie dotknięcia. */
-.vz-card.split { cursor: default; }
-.vz-card.split:active { transform: none; }
-.vz-card-hit {
-  display: flex; align-items: center; gap: 12px; flex: 1 1 auto; min-width: 0;
-  text-align: left; cursor: pointer; border-radius: var(--vz-r-lg);
-  transition: transform var(--vz-dur-out);
-}
-.vz-card-hit:active { transform: scale(.99); }
-.vz-card-hit:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 4px; }
+.vz-card-row { display: flex; align-items: center; gap: 14px; min-height: 72px; padding: 10px 14px; }
 .vz-card-av {
-  width: 56px; height: 56px; flex: 0 0 auto; border-radius: 50%; overflow: hidden;
+  width: 52px; height: 52px; flex: 0 0 auto; border-radius: 50%; overflow: hidden;
   background: var(--vz-surface); display: flex; align-items: center; justify-content: center;
-  color: var(--vz-text-muted); font-weight: 600; font-size: 20px;
+  color: var(--vz-text-muted); font-weight: 500; font-size: 19px;
 }
 .vz-card-av img { width: 100%; height: 100%; object-fit: cover; }
-.vz-card.selected .vz-card-av { background: color-mix(in srgb, var(--vz-accent) 18%, var(--vz-surface)); color: var(--vz-accent); }
-/* Kwadratowa miniatura usługi (albo litera zastępcza) - ten sam kadr 80 px co
-   karta usługi na stronie, żeby zdjęcie miało czym zagrać. */
+.vz-card.selected .vz-card-av { color: var(--vz-text); }
+/* Kwadratowa miniatura (zajęcia, oferta) albo litera zastępcza. */
 .vz-card-thumb {
-  width: 80px; height: 80px; flex: 0 0 auto; border-radius: var(--vz-r-md); overflow: hidden;
+  width: 64px; height: 64px; flex: 0 0 auto; border-radius: var(--vz-r-md); overflow: hidden;
   background: var(--vz-surface); display: flex; align-items: center; justify-content: center;
-  color: var(--vz-text-muted); font-weight: 600; font-size: 26px;
+  color: var(--vz-text-muted); font-weight: 500; font-size: 22px;
 }
 .vz-card-thumb img { width: 100%; height: 100%; object-fit: cover; }
-.vz-card.selected .vz-card-thumb { background: color-mix(in srgb, var(--vz-accent) 18%, var(--vz-surface)); color: var(--vz-accent); }
-.vz-card-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.vz-card-title { font-size: 16px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
-.vz-card-sub { font-size: 13px; color: var(--vz-text-muted); }
-/* Plain, clamped service description (2 lines). */
+.vz-card-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.vz-card-title { font-size: 15.5px; font-weight: 500; line-height: 1.3; overflow-wrap: anywhere; }
+.vz-card-sub { font-size: 13.5px; color: var(--vz-text-muted); line-height: 1.4; }
+/* Plain, clamped description (2 lines). */
 .vz-card-desc { font-size: 13.5px; color: var(--vz-text-muted); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-
-/* Sterowanie karty usługi - jak w kreatorze na stronie: okrągły plus dodaje,
-   a na dodanej pozycji stoją obrysowany ołówek i kosz (40 px, tyle co przyciski
-   ikonowe w aplikacji). */
-.vz-card-ctrls { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-.vz-card-add {
-  flex: 0 0 auto; width: 40px; height: 40px; display: grid; place-items: center;
-  border: 0; border-radius: 50%; background: var(--vz-accent); color: var(--vz-on-accent);
-  cursor: pointer; padding: 0; transition: filter var(--vz-dur-out), transform var(--vz-dur-out);
-}
-.vz-card-add:hover { filter: brightness(1.06); }
-.vz-card-add:active { transform: scale(.94); }
-.vz-card-add:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
-.vz-card-icon {
-  flex: 0 0 auto; width: 40px; height: 40px; display: grid; place-items: center;
-  border: 1px solid var(--vz-border); border-radius: 50%; background: var(--vz-surface);
-  color: var(--vz-text-muted); cursor: pointer; padding: 0;
-  transition: color var(--vz-dur-out), border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
-}
-.vz-card-icon:hover { color: var(--vz-accent); border-color: var(--vz-accent); }
-.vz-card-icon:active { transform: scale(.94); }
-.vz-card-icon:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
-/* Kosz nosi swój kolor od razu (jak w kreatorze na stronie), ale w rozcieńczeniu
-   - ma się dać znaleźć wzrokiem, nie krzyczeć na całą listę. */
-.vz-card-icon.danger {
-  color: var(--vz-error);
-  border-color: color-mix(in srgb, var(--vz-error) 30%, transparent);
-  background: color-mix(in srgb, var(--vz-error) 7%, var(--vz-surface));
-}
-.vz-card-icon.danger:hover {
-  color: var(--vz-error);
-  border-color: color-mix(in srgb, var(--vz-error) 55%, transparent);
-  background: color-mix(in srgb, var(--vz-error) 14%, var(--vz-surface));
-}
-/* Wąskie telefony: miniatura i para ołówek + kosz zjadały kolumnę tekstu (opis
-   usługi ucinał się po dwóch słowach), więc na tej szerokości karta oddycha
-   mniej, a sterowanie schodzi o krok - wciąż powyżej progu dotyku. */
+/* Price over duration at the end of a tile, shown only when the choices differ in it. */
+.vz-card-trail { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; white-space: nowrap; font-size: 14px; }
+.vz-card-trail .vz-price { font-weight: 500; }
+.vz-trail-sub { font-size: 12.5px; color: var(--vz-text-muted); }
 @media (max-width: 400px) {
-  .vz-card { padding: 13px; gap: 10px; }
+  .vz-card { padding: 10px 12px; gap: 12px; }
   .vz-card.has-foot { padding: 0; gap: 0; }
-  .vz-card-row { padding: 13px; gap: 10px; }
-  .vz-card-hit { gap: 10px; }
-  .vz-card-thumb { width: 64px; height: 64px; font-size: 22px; }
-  .vz-card-add, .vz-card-icon { width: 36px; height: 36px; }
-  .vz-card-ctrls { gap: 6px; }
+  .vz-card-row { padding: 10px 12px; gap: 12px; }
+  .vz-card-av { width: 46px; height: 46px; font-size: 17px; }
+  .vz-card-thumb { width: 56px; height: 56px; font-size: 20px; }
+}
+
+/* ---- SERVICE ROWS ------------------------------------------------------ */
+/* The app's BookingServiceRow: no frame and no fill, the name over its duration,
+   the price on the right, then round controls. Only a row that is in the visit
+   carries the accent outline on the tint; its variant and add-ons sit inside it.
+   The negative side margin keeps the text on the step's left edge while the
+   outline of a picked row stands outside it. */
+.vz-svc-list { display: grid; gap: 4px; margin: 0 -10px; container-type: inline-size; }
+.vz-svc {
+  padding: 8px 10px; border: 2px solid transparent; border-radius: var(--vz-r-xl);
+  transition: border-color var(--vz-dur-out), background var(--vz-dur-out);
+}
+.vz-svc.selected { border-color: var(--vz-accent); background: var(--vz-selected); }
+@media (hover: hover) {
+  .vz-svc:not(.selected):has(.vz-svc-hit:hover) { background: color-mix(in srgb, var(--vz-fill) 60%, transparent); }
+}
+.vz-svc:not(.selected):has(.vz-svc-hit:active) { background: var(--vz-fill); }
+.vz-svc-row { display: flex; align-items: center; gap: 12px; }
+.vz-svc-hit {
+  display: flex; align-items: center; gap: 12px; flex: 1 1 auto; min-width: 0; min-height: 44px;
+  text-align: left; cursor: pointer; border-radius: var(--vz-r-md);
+}
+.vz-svc-hit:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 4px; }
+.vz-svc-thumb {
+  width: 56px; height: 56px; flex: 0 0 auto; border-radius: var(--vz-r-md); overflow: hidden;
+  background: var(--vz-fill); display: flex; align-items: center; justify-content: center;
+  color: var(--vz-text-muted); font-weight: 500; font-size: 20px;
+}
+.vz-svc.selected .vz-svc-thumb { background: var(--vz-surface); }
+.vz-svc-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.vz-svc-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.vz-svc-name { font-size: 15.5px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
+/* One muted line of the description, only where the row is wide enough for it. */
+.vz-svc-desc { display: none; font-size: 13.5px; line-height: 1.45; color: var(--vz-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@container (min-width: 520px) { .vz-svc-desc { display: block; } }
+.vz-svc-meta { font-size: 13.5px; line-height: 1.45; color: var(--vz-text-muted); }
+.vz-svc-notes { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 4px; }
+.vz-svc-price { flex: 0 0 auto; font-size: 15.5px; font-weight: 500; white-space: nowrap; }
+.vz-svc-ctrls { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+/* A round 40px control at the end of a service row; its ::after stretches the
+   hit area to 44px. */
+.vz-rowbtn {
+  position: relative; flex: 0 0 auto; width: 40px; height: 40px; display: grid; place-items: center;
+  border: 0; border-radius: 50%; padding: 0; cursor: pointer; color: var(--vz-text);
+  background: var(--vz-fill); transition: transform var(--vz-dur-out), background var(--vz-dur-out);
+}
+.vz-rowbtn::after { content: ""; position: absolute; inset: -2px; }
+.vz-rowbtn:active { transform: scale(.94); }
+.vz-rowbtn:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
+.vz-rowbtn.edit { background: var(--vz-surface); color: var(--vz-text-muted); }
+.vz-rowbtn.remove { background: var(--vz-surface); color: var(--vz-error); }
+.vz-svc-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 0 2px; }
+@media (max-width: 400px) {
+  .vz-svc-row, .vz-svc-hit { gap: 10px; }
+  .vz-svc-thumb { width: 48px; height: 48px; font-size: 18px; }
+  .vz-svc-ctrls { gap: 6px; }
 }
 
 /* ---- SZCZEGÓŁY USŁUGI (galeria + pełny opis) --------------------------- */
@@ -244,7 +268,7 @@ export const css = `
 .vz-det-gal::-webkit-scrollbar { display: none; }
 .vz-det-shot {
   flex: 0 0 auto; width: 112px; aspect-ratio: 1 / 1; padding: 0; overflow: hidden; cursor: pointer;
-  border: 1px solid var(--vz-border); border-radius: var(--vz-r-lg); background: var(--vz-surface-2);
+  border: 2px solid transparent; border-radius: var(--vz-r-lg); background: var(--vz-fill);
   transition: transform var(--vz-dur-out), border-color var(--vz-dur-out);
 }
 .vz-det-shot:hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
@@ -284,13 +308,13 @@ export const css = `
 .vz-lb-count { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); color: rgba(255,255,255,.8); font-size: 13px; }
 
 .vz-card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; font-size: 13.5px; margin-top: 4px; }
-/* Czas trwania jako plakietka - dokładnie jak Badge na karcie usługi w WEB. */
+/* Czas trwania jako plakietka na powierzchni, bez ramki. */
 .vz-card-meta .vz-dur {
   display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px;
-  border: 1px solid var(--vz-border); border-radius: var(--vz-r-pill);
+  border-radius: var(--vz-r-pill);
   background: var(--vz-surface); color: var(--vz-text-muted); font-size: 12.5px;
 }
-.vz-card-meta .vz-price { font-weight: 600; }
+.vz-card-meta .vz-price { font-weight: 500; }
 /* A reference-price line takes its own row under the meta. */
 .vz-card-meta .vz-lowest-price { flex: 1 0 100%; }
 /* Discreet "Dla stałych klientów" chip on whitelist-locked services. Not an
@@ -305,60 +329,48 @@ export const css = `
   background: color-mix(in srgb, var(--vz-warning) 10%, var(--vz-surface));
 }
 .vz-lock-chip svg { flex: 0 0 auto; }
+/* The radio mark: an empty ring, or the accent ring with a surface core. */
 .vz-radio {
-  width: 26px; height: 26px; flex: 0 0 auto; border-radius: 50%; border: 2px solid var(--vz-border);
+  width: 24px; height: 24px; flex: 0 0 auto; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--vz-text-muted) 40%, transparent);
   display: flex; align-items: center; justify-content: center; color: var(--vz-on-accent);
-  transition: background var(--vz-dur-out), border-color var(--vz-dur-out);
+  transition: background var(--vz-dur-out), border-color var(--vz-dur-out), border-width var(--vz-dur-out);
 }
-.vz-radio.on { background: var(--vz-accent); border-color: var(--vz-accent); }
+.vz-radio.on { border: 7px solid var(--vz-accent); background: var(--vz-surface); }
+.vz-radio.square.on { border-width: 2px; background: var(--vz-accent); }
 
 .vz-radio.square { border-radius: 8px; }
 
 /* ---- CART (multi-service) ---------------------------------------------- */
-/* A cart row is the service card plus, when the position is configured, a small
-   recap line tucked under it - so the list stays scannable while still showing
-   what each position actually is. */
-.vz-cart-row { display: flex; flex-direction: column; }
-.vz-cart-recap {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-  margin: -2px 0 0; padding: 9px 14px 11px 14px;
-  border: 1.5px solid var(--vz-accent); border-top: 0;
-  border-radius: 0 0 var(--vz-r-md) var(--vz-r-md);
-  background: var(--vz-selected);
-  font-size: 12.5px; color: var(--vz-text-muted);
-}
-/* Plakietka wariantu/dodatku. Tekst zostaje w kolorze treści, a marka gra tłem:
-   sam akcent bywa nadpisany przez osadzenie i na jasnym motywie potrafi zniknąć
-   na własnym rozcieńczeniu. */
-.vz-chip {
+/* Plakietka wariantu/dodatku w obrysie wybranego wiersza. Tekst zostaje w kolorze
+   treści na powierzchni: sam akcent bywa nadpisany przez osadzenie i na jasnym
+   motywie potrafi zniknąć na własnym rozcieńczeniu. */
+.vz-tag {
   display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px;
   border: 0; border-radius: var(--vz-r-pill); font-family: var(--vz-font);
-  background: color-mix(in srgb, var(--vz-accent) 20%, var(--vz-surface));
-  color: var(--vz-text); font-size: 12px; font-weight: 500;
+  background: var(--vz-surface); color: var(--vz-text); font-size: 12px; font-weight: 500; line-height: 1.4;
 }
-.vz-chip-x { opacity: .7; font-variant-numeric: tabular-nums; }
-.vz-chip.err { background: color-mix(in srgb, var(--vz-error) 16%, var(--vz-surface)); color: var(--vz-error); cursor: pointer; }
+.vz-tag-x { opacity: .7; font-variant-numeric: tabular-nums; }
+.vz-tag.err { background: color-mix(in srgb, var(--vz-error) 16%, var(--vz-surface)); color: var(--vz-error); cursor: pointer; }
 /* Nic jeszcze nie wybrano, choć jest z czego - zaproszenie zamiast pustki. */
 .vz-chip-add {
   display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px 5px 5px;
-  border: 0; border-radius: var(--vz-r-lg); font-family: var(--vz-font);
-  background: color-mix(in srgb, var(--vz-accent) 16%, var(--vz-surface));
+  border: 0; border-radius: var(--vz-r-pill); font-family: var(--vz-font);
+  background: var(--vz-surface);
   color: var(--vz-text); font-size: 12.5px; font-weight: 500; cursor: pointer;
   transition: background var(--vz-dur-out), transform var(--vz-dur-out);
 }
-.vz-chip-add:hover { background: color-mix(in srgb, var(--vz-accent) 26%, var(--vz-surface)); }
+.vz-chip-add:hover { background: color-mix(in srgb, var(--vz-accent) 12%, var(--vz-surface)); }
 .vz-chip-add:active { transform: scale(.97); }
-.vz-chip-plus { display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--vz-r-sm); background: var(--vz-accent); color: var(--vz-on-accent); }
+.vz-chip-plus { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--vz-accent); color: var(--vz-on-accent); }
 .vz-chip-add.err { background: color-mix(in srgb, var(--vz-error) 14%, var(--vz-surface)); color: var(--vz-error); }
 .vz-chip-add.err .vz-chip-plus { background: var(--vz-error); color: #fff; }
-/* The card above a recap must not keep its own rounded bottom. */
-.vz-cart-row:has(.vz-cart-recap) .vz-card { border-radius: var(--vz-r-md) var(--vz-r-md) 0 0; }
 
-/* Search over the offer - only rendered for longer service lists. */
+/* Search over the offer - only rendered for longer service lists. A fill pill. */
 .vz-search {
-  display: flex; align-items: center; gap: 8px; margin: 0 0 12px;
-  padding: 0 12px; border: 1.5px solid var(--vz-border); border-radius: var(--vz-r-md);
-  background: var(--vz-input-bg);
+  display: flex; align-items: center; gap: 10px; margin: 0 0 12px;
+  padding: 0 16px; border: 2px solid transparent; border-radius: var(--vz-r-pill);
+  background: var(--vz-fill); transition: border-color var(--vz-dur-out);
 }
 .vz-search:focus-within { border-color: var(--vz-accent); }
 .vz-search-ico { color: var(--vz-text-muted); display: flex; flex: 0 0 auto; }
@@ -378,15 +390,18 @@ export const css = `
 /* One row per cart position: the service, and a chip with its own answer that
    opens the list scoped to that service. */
 .vz-assign { display: grid; gap: 10px; margin: 2px 0 2px; }
-.vz-assign-row { padding: 12px 14px; border: 1px solid var(--vz-border); border-radius: var(--vz-r-md); background: var(--vz-surface); }
+.vz-assign-row { padding: 14px 16px; border-radius: var(--vz-r-lg); background: var(--vz-fill); }
 .vz-assign-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .vz-assign-name { font-size: 14px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .vz-assign-dur { flex: 0 0 auto; font-size: 12px; color: var(--vz-text-muted); }
 .vz-assign-opts { margin-top: 10px; }
+/* Tiles nested in a fill row stand on the surface, or they would vanish in it. */
+.vz-assign-row .vz-card:not(.selected) { background: var(--vz-surface); }
+.vz-assign-row .vz-card:not(.selected) .vz-card-av { background: var(--vz-fill); }
 
 .vz-chip {
   display: inline-flex; align-items: center; gap: 8px; margin-top: 10px;
-  padding: 5px 12px 5px 5px; border: 1.5px solid var(--vz-border); border-radius: var(--vz-r-pill);
+  padding: 5px 12px 5px 5px; border: 2px solid transparent; border-radius: var(--vz-r-pill);
   background: var(--vz-surface); color: var(--vz-text); font-family: inherit; font-size: 13px; font-weight: 500;
   cursor: pointer; transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
 }
@@ -396,7 +411,7 @@ export const css = `
 .vz-chip.on { border-color: var(--vz-accent); background: var(--vz-selected); }
 .vz-chip-av {
   width: 28px; height: 28px; flex: 0 0 auto; border-radius: 50%; overflow: hidden;
-  background: var(--vz-surface-2); color: var(--vz-text-muted);
+  background: var(--vz-fill); color: var(--vz-text-muted);
   display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600;
 }
 .vz-chip-av img { width: 100%; height: 100%; object-fit: cover; }
@@ -411,182 +426,152 @@ export const css = `
 }
 .vz-avstack .vz-card-av + .vz-card-av { margin-left: -10px; }
 
-/* Who the hours belong to, above the calendar: a full-width field in the shape
-   of the period bar under it - avatars, a muted "Specjalista" over the name, a
-   chevron to change it. */
-.vz-who { margin-bottom: 10px; }
+/* Who the hours belong to, above the calendar: a full-width fill field - avatars,
+   a muted "Specjalista" over the name, a chevron to change it. */
+.vz-who { margin-bottom: 18px; }
 .vz-who-chip {
-  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px;
-  padding: 8px 12px; border: 1px solid var(--vz-border); border-radius: var(--vz-r-md);
-  background: var(--vz-surface); color: var(--vz-text); font-family: inherit;
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px;
+  padding: 10px 16px 10px 12px; border: 2px solid transparent; border-radius: var(--vz-r-xl);
+  background: var(--vz-fill); color: var(--vz-text); font-family: inherit;
   cursor: pointer; text-align: left; transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
 }
 .vz-who-chip:not([disabled]):active { transform: scale(.99); }
 .vz-who-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.vz-who-cap { font-size: 12px; font-weight: 400; line-height: 1.3; color: var(--vz-text-muted); }
-.vz-who-chip:not([disabled]):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+.vz-who-cap { font-size: 12.5px; font-weight: 400; line-height: 1.3; color: var(--vz-text-muted); }
+@media (hover: hover) {
+  .vz-who-chip:not([disabled]):not(.on):hover { border-color: color-mix(in srgb, var(--vz-accent) 40%, transparent); }
+}
 .vz-who-chip[disabled] { cursor: default; }
 .vz-who-chip.on { border-color: var(--vz-accent); background: var(--vz-selected); }
-.vz-who-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; line-height: 1.35; }
-.vz-who-chip .vz-avstack .vz-card-av { width: 32px; height: 32px; font-size: 13px; background: var(--vz-surface-2); }
+.vz-who-chip:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
+.vz-who-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 500; line-height: 1.35; }
+.vz-who-chip .vz-avstack .vz-card-av { width: 40px; height: 40px; font-size: 15px; background: var(--vz-surface); border-color: var(--vz-fill); }
+.vz-who-chip.on .vz-avstack .vz-card-av { border-color: var(--vz-selected); }
+.vz-who-chip .vz-chip-cv { color: var(--vz-text-muted); }
 .vz-who .vz-assign { margin-top: 10px; }
 
 /* Chain plan under the picked slot ("10:00 Strzyżenie, 10:45 Broda"). */
-.vz-chain { margin-top: 18px; padding: 12px 14px; border-radius: var(--vz-r-md); background: var(--vz-selected); border: 1px solid color-mix(in srgb, var(--vz-accent) 30%, var(--vz-border)); }
-.vz-chain-h { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--vz-text-muted); margin-bottom: 8px; }
+.vz-chain { margin-top: 18px; padding: 14px 16px; border-radius: var(--vz-r-lg); background: var(--vz-fill); }
+.vz-chain-h { font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--vz-text-muted); margin-bottom: 8px; }
 .vz-chain-row { display: flex; align-items: baseline; gap: 10px; font-size: 13.5px; padding: 2px 0; }
 .vz-chain-time { font-variant-numeric: tabular-nums; font-weight: 600; flex: 0 0 auto; }
 .vz-chain-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vz-chain-dur { flex: 0 0 auto; font-size: 12px; color: var(--vz-text-muted); }
-/* A card with a recap glued to it must not scale away from it while pressed. */
-.vz-cart-row:has(.vz-cart-recap) .vz-card:active,
-.vz-cart-row:has(.vz-cart-recap) .vz-card-hit:active { transform: none; }
-
 .vz-slotpick { display: flex; flex-wrap: wrap; gap: 8px; }
 .vz-slotpick-b {
-  padding: 8px 12px; border-radius: var(--vz-r-pill); border: 1.5px solid var(--vz-border);
+  padding: 8px 14px; border-radius: var(--vz-r-pill); border: 2px solid transparent;
   background: var(--vz-surface); color: var(--vz-text); font-family: inherit; font-size: 13px;
-  font-weight: 600; cursor: pointer; transition: border-color var(--vz-dur-out), background var(--vz-dur-out);
+  font-weight: 500; cursor: pointer; transition: border-color var(--vz-dur-out), background var(--vz-dur-out);
 }
-.vz-slotpick-b:hover { border-color: var(--vz-accent); }
-.vz-slotpick-b.on { border-color: var(--vz-accent); background: var(--vz-selected); color: var(--vz-accent); }
+@media (hover: hover) {
+  .vz-slotpick-b:not(.on):hover { border-color: color-mix(in srgb, var(--vz-accent) 40%, transparent); }
+}
+.vz-slotpick-b.on { border-color: var(--vz-accent); background: var(--vz-selected); }
 .vz-slotpick-p { font-weight: 500; opacity: .8; }
-.vz-chain-total { margin-top: 8px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--vz-accent) 22%, var(--vz-border)); font-size: 12px; color: var(--vz-text-muted); }
+.vz-chain-total { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--vz-border); font-size: 12px; color: var(--vz-text-muted); }
 
 /* ---- CONFIGURE (variants + add-ons) ------------------------------------ */
 .vz-cfg-section { margin-bottom: 20px; }
-.vz-cfg-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; font-size: 12.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--vz-text-muted); }
+.vz-cfg-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--vz-text-muted); }
 .vz-cfg-hint { font-weight: 500; letter-spacing: 0; text-transform: none; font-size: 12px; }
 .vz-opt {
   display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
-  padding: 13px 14px; border: 1.5px solid var(--vz-border); border-radius: var(--vz-r-md);
-  background: var(--vz-surface-2); color: var(--vz-text); cursor: pointer; font-family: var(--vz-font);
+  padding: 13px 16px; border: 2px solid transparent; border-radius: var(--vz-r-lg);
+  background: var(--vz-fill); color: var(--vz-text); cursor: pointer; font-family: var(--vz-font);
   transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
 }
 .vz-opt + .vz-opt { margin-top: 8px; }
-.vz-opt:not([disabled]):not(.locked):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+.vz-opt:not([disabled]):not(.locked):not(.on):hover { border-color: color-mix(in srgb, var(--vz-accent) 40%, transparent); }
 .vz-opt:not([disabled]):not(.locked):active { transform: scale(.99); }
 .vz-opt.on { border-color: var(--vz-accent); background: var(--vz-selected); }
 .vz-opt[disabled], .vz-opt.locked { opacity: .45; cursor: default; }
 .vz-opt-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.vz-opt-name { font-size: 14.5px; font-weight: 600; line-height: 1.25; overflow-wrap: anywhere; }
+.vz-opt-name { font-size: 14.5px; font-weight: 500; line-height: 1.3; overflow-wrap: anywhere; }
 .vz-opt-desc { font-size: 12px; color: var(--vz-text-muted); line-height: 1.4; }
 .vz-opt-price { font-size: 13.5px; font-weight: 600; white-space: nowrap; }
 .vz-opt-tick {
-  width: 24px; height: 24px; flex: 0 0 auto; border: 2px solid var(--vz-border);
+  width: 24px; height: 24px; flex: 0 0 auto; border: 2px solid color-mix(in srgb, var(--vz-text-muted) 40%, transparent);
   display: flex; align-items: center; justify-content: center; color: var(--vz-on-accent);
   transition: background var(--vz-dur-out), border-color var(--vz-dur-out);
 }
 .vz-opt-tick.round { border-radius: 50%; }
 .vz-opt-tick.square { border-radius: 7px; }
 .vz-opt-tick.on { background: var(--vz-accent); border-color: var(--vz-accent); }
+/* One of a group is a radio: the accent ring with a surface core, like the option tiles. */
+.vz-opt-tick.round.on { border: 7px solid var(--vz-accent); background: var(--vz-surface); }
+.vz-opt-tick.round svg { display: none; }
 .vz-cfg-total { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 4px; font-size: 15px; font-weight: 600; }
 
 /* Configure recap chip on the selected service (in the CTA summary). */
 .vz-cta-cfg { display: inline-flex; align-items: center; gap: 6px; margin-top: 3px; }
 .vz-cta-cfg .vz-link { font-size: 12px; }
 
-/* ---- DATE: calendar head + days --------------------------------------- */
-.vz-cal-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
-.vz-cal-month {
-  flex: 1 1 auto; display: inline-flex; align-items: center; gap: 8px;
-  padding: 11px 14px; border-radius: var(--vz-r-md); background: var(--vz-surface-2);
-  font-size: 14px; font-weight: 600; color: var(--vz-text);
+/* ---- DATE: the month calendar ------------------------------------------ */
+/* A whole month of round day cells on the fill, no frames, no week strip and no
+   view tabs (ui/MonthCalendar). */
+.vz-mon { display: flex; flex-direction: column; gap: 12px; }
+.vz-mon-head { display: flex; align-items: center; gap: 8px; }
+.vz-mon-title { flex: 1 1 auto; min-width: 0; font-size: 18px; font-weight: 600; line-height: 1.3; letter-spacing: -.01em; }
+.vz-mon-nav {
+  width: 44px; height: 44px; flex: 0 0 auto; display: grid; place-items: center; padding: 0;
+  border: 0; border-radius: 50%; background: var(--vz-fill); color: var(--vz-text); cursor: pointer;
+  transition: transform var(--vz-dur-out), color var(--vz-dur-out);
 }
-/* Period bar "< label >" (the app's shape): two 44px square arrows with a border
-   and the label button between them - an accent calendar icon and a label that
-   wraps rather than truncates. */
-.vz-period { display: flex; align-items: stretch; gap: 8px; margin-bottom: 12px; }
-.vz-period-nav {
-  width: 44px; height: 44px; flex: 0 0 auto; border: 1px solid var(--vz-border); background: var(--vz-surface);
-  border-radius: var(--vz-r-md); cursor: pointer; color: var(--vz-text); padding: 0;
-  display: flex; align-items: center; justify-content: center;
-  transition: background var(--vz-dur-out), opacity var(--vz-dur-out), transform var(--vz-dur-out);
-}
-.vz-period-nav:not([disabled]):hover { background: var(--vz-surface-2); }
-.vz-period-nav:not([disabled]):active { transform: scale(.95); }
-.vz-period-nav[disabled] { opacity: .35; cursor: default; }
-.vz-period-label {
-  flex: 1 1 auto; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 10px;
-  padding: 4px 12px; border: 1px solid var(--vz-border); border-radius: var(--vz-r-md);
-  background: var(--vz-surface); color: var(--vz-text); cursor: pointer; text-align: left;
-  font-family: var(--vz-font); font-size: 14px; font-weight: 500; line-height: 1.25;
-  transition: background var(--vz-dur-out), transform var(--vz-dur-out);
-}
-.vz-period-label:not(.is-static):hover { background: var(--vz-surface-2); }
-.vz-period-label:not(.is-static):active { transform: scale(.99); }
-.vz-period-label.is-static { cursor: default; }
-.vz-period-label > span { min-width: 0; overflow-wrap: anywhere; }
-.vz-period-ic { flex: 0 0 auto; color: var(--vz-accent); }
-.vz-period-nav:focus-visible, .vz-period-label:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
-
-/* Week / month switch: underline tabs - the active one in accent with a 2px
-   accent underline, the other muted, over one hairline. */
-.vz-tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--vz-border); margin-bottom: 16px; }
-.vz-tab {
-  display: inline-flex; align-items: center; gap: 7px; min-height: 44px; padding: 0 2px; margin-bottom: -1px;
-  border: 0; border-bottom: 2px solid transparent; background: transparent; cursor: pointer;
-  font-family: var(--vz-font); font-size: 14px; font-weight: 500; color: var(--vz-text-muted);
-  transition: color var(--vz-dur-out), border-color var(--vz-dur-out);
-}
-.vz-tab:hover { color: var(--vz-text); }
-.vz-tab.on { color: var(--vz-accent); border-bottom-color: var(--vz-accent); }
-.vz-tab:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; border-radius: 4px; }
-
-.vz-days { display: flex; gap: 8px; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
-.vz-day {
-  position: relative; flex: 1 1 0; min-width: 0; max-width: 96px; display: flex; flex-direction: column; align-items: center; gap: 4px;
-  padding: 12px 8px 10px; border: 1.5px solid transparent; border-radius: var(--vz-r-md);
-  background: var(--vz-surface-2); color: var(--vz-text); cursor: pointer; font-family: var(--vz-font);
-  font-size: 18px; font-weight: 600; transition: border-color var(--vz-dur-out), background var(--vz-dur-out);
-}
-.vz-day.is-disabled { opacity: .38; cursor: default; }
-.vz-day:not(.is-disabled):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
-.vz-day.active { border-color: var(--vz-accent); background: var(--vz-selected); }
-.vz-day small { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; color: var(--vz-text-muted); }
-.vz-day .vz-free { width: 7px; height: 7px; border-radius: 50%; background: var(--vz-success); }
-.vz-day .vz-free.ghost { background: transparent; }
-/* A strip with a promoted day: room above the row for the corner badges and the
-   day label pushed clear of them. */
-.vz-days.has-promo { padding-top: 10px; }
-.vz-days.has-promo .vz-day { padding-top: 16px; }
-/* The table strip (#903) lists the whole horizon: it scrolls sideways with tiles at
-   the width the paged DayStrip uses, instead of squeezing every day into one row.
-   Not the paged DayStrip, because an empty table day stays tappable (that is where
-   "Powiadom mnie" lives) and DayStrip disables days without free starts. */
-.vz-days.scroll { overflow-x: auto; touch-action: auto; scrollbar-width: none; padding-bottom: 2px; }
-.vz-days.scroll::-webkit-scrollbar { display: none; }
-.vz-days.scroll .vz-day { flex: 0 0 60px; }
-
-/* month grid */
-.vz-month { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
-.vz-month-dow { text-align: center; font-size: 10.5px; font-weight: 600; color: var(--vz-text-muted); text-transform: uppercase; padding-bottom: 2px; }
-.vz-mcell {
-  aspect-ratio: 1 / 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
-  border: 1.5px solid transparent; border-radius: var(--vz-r-sm); background: var(--vz-surface-2);
-  color: var(--vz-text); cursor: pointer; font-family: var(--vz-font); font-size: 14px; font-weight: 600;
+.vz-mon-nav:not([disabled]):active { transform: scale(.95); }
+.vz-mon-nav[disabled] { color: color-mix(in srgb, var(--vz-text-muted) 40%, transparent); cursor: default; }
+.vz-mon-nav:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
+.vz-mon-dow { display: grid; grid-template-columns: repeat(7, 1fr); }
+.vz-mon-dow span { text-align: center; font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--vz-text-muted); }
+.vz-mon-grid { display: grid; grid-template-columns: repeat(7, 1fr); row-gap: 6px; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+/* Never wider than its column: on a 320px screen a seventh is under 44px. */
+.vz-mday {
+  position: relative; margin: 0 auto; width: 100%; max-width: 44px; aspect-ratio: 1 / 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  padding: 2px 0 0; border: 2px solid transparent; border-radius: 50%;
+  background: var(--vz-fill); color: var(--vz-text); cursor: pointer;
+  font-family: var(--vz-font); font-size: 14px; font-weight: 500; line-height: 1;
   transition: border-color var(--vz-dur-out), background var(--vz-dur-out);
 }
-.vz-mcell.empty { background: transparent; cursor: default; }
-.vz-mcell[disabled] { opacity: .32; cursor: default; }
-.vz-mcell:not([disabled]):not(.empty):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
-.vz-mcell.active { border-color: var(--vz-accent); background: var(--vz-selected); }
-.vz-mcell .vz-free { width: 5px; height: 5px; border-radius: 50%; background: var(--vz-success); }
+/* A day that cannot be picked is greyed by colour and loses its fill, never by
+   opacity: a number at 30% of an unknown host colour is not legible. */
+.vz-mday[disabled] { background: transparent; color: color-mix(in srgb, var(--vz-text-muted) 60%, transparent); cursor: default; }
+@media (hover: hover) {
+  .vz-mday:not([disabled]):not(.active):hover { border-color: color-mix(in srgb, var(--vz-accent) 50%, transparent); }
+}
+.vz-mday.active:not([disabled]) { border-color: var(--vz-accent); background: var(--vz-selected); }
+/* A day that died under the customer's finger must not keep looking like a live choice. */
+.vz-mday.active[disabled] { border-color: var(--vz-border); }
+.vz-mday:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
+.vz-mday-bar { display: flex; align-items: center; justify-content: center; height: 4px; }
+.vz-mday-bar i { display: block; height: 4px; border-radius: 999px; }
+.vz-mday-bar .high { width: 16px; background: var(--vz-avail-high); }
+.vz-mday-bar .medium { width: 12px; background: var(--vz-avail-medium); }
+.vz-mday-bar .low { width: 6px; background: var(--vz-avail-low); }
+/* A promoted day: an accent dot on the cell's corner, ringed with the surface. */
+.vz-mday-promo { position: absolute; top: -2px; right: -2px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--vz-surface); background: var(--vz-accent); }
+.vz-mon .vz-promo-caption { margin-top: 0; }
+/* The calendar as one question among several (rental: after the length pills). */
+.vz-cal-field { margin-top: 18px; gap: 10px; }
+/* The picked day by name, with the number of its free starts. */
+.vz-dayhead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 22px; }
+.vz-dayhead-t { min-width: 0; font-size: 15px; font-weight: 600; line-height: 1.35; }
+.vz-dayhead-n { flex: 0 0 auto; font-size: 12.5px; color: var(--vz-text-muted); }
 
 /* ---- SLOT GROUPS ------------------------------------------------------- */
-.vz-slot-group { margin-top: 20px; }
-.vz-slot-group-h { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--vz-text-muted); font-size: 12.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
-.vz-slot-group-h svg { color: var(--vz-accent); }
+/* Hour pills under "Rano / Popołudnie / Wieczór": four columns in a panel, more
+   as the widget's container widens (an inline embed in a wide column). */
+.vz-slot-group { margin-top: 18px; container-type: inline-size; }
+.vz-slot-group-h { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; color: var(--vz-text-muted); font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
 /* Presets picked before the calendar (czas wynajmu, liczba osób). Wrapping row
-   of compact chips - the app's "pigułki długości" in widget scale. */
+   of compact fill pills. */
 .vz-pills { display: flex; flex-wrap: wrap; gap: 8px; }
 .vz-pill {
-  appearance: none; cursor: pointer; font: inherit; font-size: 13.5px; font-weight: 600;
-  padding: 8px 12px; border-radius: 999px; color: var(--vz-text);
-  background: var(--vz-surface); border: 1.5px solid var(--vz-border);
+  appearance: none; cursor: pointer; font: inherit; font-size: 13.5px; font-weight: 500;
+  min-height: 40px; padding: 8px 14px; border-radius: 999px; color: var(--vz-text);
+  background: var(--vz-fill); border: 2px solid transparent;
   transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
 }
-.vz-pill small { font-weight: 500; color: var(--vz-text-muted); }
+.vz-pill small { font-weight: 400; color: var(--vz-text-muted); }
 @media (hover: hover) {
   .vz-pill:not(.on):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
 }
@@ -595,31 +580,34 @@ export const css = `
 .vz-pill.on small { color: var(--vz-text); }
 /* "Dłużej" opens the rest of the durations - a way in, not an answer, so it
    never carries the selected state the real options compete for. */
-.vz-pill-more { border-style: dashed; color: var(--vz-text-muted); }
-.vz-slots { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+.vz-pill-more { background: transparent; border: 2px dashed var(--vz-border); color: var(--vz-text-muted); }
+.vz-slots { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+@container (min-width: 520px) { .vz-slots { grid-template-columns: repeat(6, 1fr); } }
+@container (min-width: 760px) { .vz-slots { grid-template-columns: repeat(8, 1fr); } }
 .vz-slot {
-  position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 13px 0; border: 1.5px solid transparent; border-radius: var(--vz-r-md);
-  background: var(--vz-surface-2); color: var(--vz-text); cursor: pointer; font-family: var(--vz-font);
-  font-size: 15px; font-weight: 600; text-align: center;
+  position: relative; display: flex; align-items: center; justify-content: center; height: 48px; padding: 0;
+  border: 2px solid transparent; border-radius: var(--vz-r-pill);
+  background: var(--vz-fill); color: var(--vz-text); cursor: pointer; font-family: var(--vz-font);
+  font-size: 14px; font-weight: 500; font-variant-numeric: tabular-nums; text-align: center;
   transition: border-color var(--vz-dur-out), background var(--vz-dur-out), transform var(--vz-dur-out);
 }
 @media (hover: hover) {
-  .vz-slot:not([disabled]):not(.selected):hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+  .vz-slot:not([disabled]):not(.selected):hover { border-color: color-mix(in srgb, var(--vz-accent) 50%, transparent); }
 }
 .vz-slot:not([disabled]):active { transform: scale(.97); }
 .vz-slot.selected { border-color: var(--vz-accent); background: var(--vz-selected); }
-/* A start without a table for this party (#903): shown, grey, not tappable. */
-.vz-slot[disabled] { opacity: .4; cursor: default; }
+/* A start without a table for this party (#903): shown, muted and struck through,
+   not tappable - never dimmed by opacity. */
+.vz-slot[disabled] { background: var(--vz-surface-2); color: var(--vz-text-muted); text-decoration: line-through; cursor: not-allowed; }
 /* "ostatnie wejście 21:00" at the right end of a period header; a long
    period name ellipsizes instead of pushing it past the card edge. */
 .vz-slot-group-h .vz-slot-group-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vz-slot-group-h .vz-slot-group-aside { flex: 0 0 auto; margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.vz-slot-group-h .vz-slot-group-aside { flex: 0 0 auto; margin-left: auto; text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 400; }
 /* Stacked preset rows (Dorośli / Dzieci / Strefa). */
 .vz-stack { display: grid; gap: 18px; }
 /* A grid with a promoted slot: room above the first row and between rows for
-   the corner badges, the time pushed clear of them. */
+   the corner badges. */
 .vz-slots.has-promo { padding-top: 10px; row-gap: 16px; }
-.vz-slots.has-promo .vz-slot { padding-top: 16px; padding-bottom: 12px; }
 
 /* ---- STICKY CTA BAR ---------------------------------------------------- */
 .vz-cta { flex: 0 0 auto; border-top: 1px solid var(--vz-border); background: var(--vz-surface); padding: 12px 16px 14px; }
@@ -630,22 +618,23 @@ export const css = `
 .vz-cta-meta b { color: var(--vz-text); font-weight: 600; }
 .vz-cta-who { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .vz-cta-who span { font-size: 13px; font-weight: 500; }
-.vz-cta-who .vz-card-av { width: 34px; height: 34px; font-size: 14px; }
+.vz-cta-who .vz-card-av { width: 34px; height: 34px; font-size: 14px; background: var(--vz-fill); }
 
 /* ---- STEP HEADING (auth sub-steps) ------------------------------------- */
 .vz-h { font-size: 20px; font-weight: 600; margin: 0 0 16px; }
 .vz-h h2 { font-size: inherit; font-weight: inherit; margin: 0; outline: none; }
 
 /* ---- SUMMARY CARD ------------------------------------------------------ */
+/* One fill card of label / value rows divided by hairlines (the app's BookingSummaryCard). */
 .vz-summary {
-  border: 1px solid var(--vz-border); border-radius: var(--vz-r-lg); background: var(--vz-surface-2);
-  padding: 6px 16px; margin-bottom: 18px; font-size: 13.5px;
+  border-radius: var(--vz-r-xl); background: var(--vz-fill);
+  padding: 0 16px; margin-bottom: 18px; font-size: 14px;
 }
-.vz-row { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; }
+.vz-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 14px 0; }
 .vz-row + .vz-row { border-top: 1px solid var(--vz-border); }
 .vz-row > span:first-child { color: var(--vz-text-muted); }
 .vz-row > span:last-child { font-weight: 500; text-align: right; }
-.vz-row.total > span { font-weight: 600; font-size: 15px; }
+.vz-row.total > span { font-weight: 600; font-size: 15px; color: var(--vz-text); }
 
 /* ---- PROMOTIONS -------------------------------------------------------- */
 /* Promotion badge in the .vz-chip idiom: text in the body colour, the brand only
@@ -669,7 +658,7 @@ export const css = `
 .vz-row-note { flex: 1 0 100%; }
 .vz-quote { border-top: 1px solid var(--vz-border); }
 .vz-quote.first { border-top: 0; }
-.vz-quote-head { display: flex; align-items: center; gap: 8px; padding-top: 12px; font-size: 12.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--vz-text-muted); }
+.vz-quote-head { display: flex; align-items: center; gap: 8px; padding-top: 14px; font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--vz-text-muted); }
 .vz-quote-note { margin-top: -4px; padding-bottom: 10px; }
 /* Day and time tiles (owner's mockup): the badge sits on the tile's top-right
    edge, straddling the border, opaque so the border does not run through it.
@@ -681,12 +670,9 @@ export const css = `
   border: 1px solid color-mix(in srgb, var(--vz-accent) 35%, var(--vz-surface));
   color: var(--vz-text); font-size: 12px; font-weight: 500; letter-spacing: 0;
 }
-/* Month cell: a tinted dot beside the free dot; the caption under the grid names it. */
-.vz-mcell-dots { display: flex; gap: 3px; }
-.vz-promo-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--vz-accent); }
-.vz-promo-foot { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+/* The caption under the month grid names the corner dot of a promoted day. */
+.vz-promo-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--vz-accent); }
 .vz-promo-caption { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 12px; color: var(--vz-text-muted); line-height: 1.4; }
-.vz-promo-caption .vz-promo-dot { width: 7px; height: 7px; }
 /* An add-on's promotion under its helper lines. */
 .vz-opt-promo { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 4px; }
 /* Promotion of the chosen rental length, under the pills. */
@@ -776,7 +762,7 @@ export const css = `
 /* ---- BUTTONS ----------------------------------------------------------- */
 .vz-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%;
-  padding: 15px 18px; border: 0; border-radius: var(--vz-r-md); background: var(--vz-accent);
+  padding: 15px 22px; border: 0; border-radius: var(--vz-r-pill); background: var(--vz-accent);
   color: var(--vz-on-accent); font-family: var(--vz-font); font-size: 16px; font-weight: 600;
   cursor: pointer; transition: transform var(--vz-dur-out), filter var(--vz-dur-out); margin-top: 16px;
 }
@@ -853,11 +839,11 @@ a.vz-oauth { text-decoration: none; }
 /* ---- MOBILE BOTTOM SHEET ----------------------------------------------- */
 @media (max-width: 560px) {
   .vz-overlay { padding: 0; align-items: flex-end; }
-  .vz-panel { max-width: none; max-height: 94vh; border-radius: 24px 24px 0 0; border-bottom: 0; animation: vz-sheet-up var(--vz-dur-in) var(--vz-ease-out); }
+  .vz-panel { max-width: none; max-height: 94vh; border-radius: 28px 28px 0 0; border-bottom: 0; animation: vz-sheet-up var(--vz-dur-in) var(--vz-ease-out); }
   @keyframes vz-sheet-up { from { transform: translateY(100%) } to { transform: none } }
   .vz-grab { display: block; }
   /* An inline embed sits inside a page, not at the screen's bottom edge: it stays a closed card. */
-  .vz-inline .vz-panel { max-height: none; border-radius: 22px; border-bottom: 1px solid var(--vz-border); animation: none; }
+  .vz-inline .vz-panel { max-height: none; border-radius: 28px; border-bottom: 1px solid var(--vz-border); animation: none; }
   .vz-inline .vz-grab { display: none; }
 }
 .vz-grab { display: none; width: 38px; height: 4px; border-radius: 999px; background: var(--vz-border); margin: 8px auto 0; }
@@ -865,9 +851,13 @@ a.vz-oauth { text-decoration: none; }
 /* ---- CATEGORY TABS ----------------------------------------------------- */
 .vz-cats { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 0 14px; padding-bottom: 2px; }
 .vz-cats::-webkit-scrollbar { display: none; }
-.vz-cat { flex: 0 0 auto; padding: 7px 13px; border-radius: var(--vz-r-pill); border: 1px solid var(--vz-border); background: var(--vz-surface); color: var(--vz-text-muted); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background var(--vz-dur-out), color var(--vz-dur-out), border-color var(--vz-dur-out); }
-.vz-cat:hover { color: var(--vz-text); }
-.vz-cat.on { background: var(--vz-selected); color: var(--vz-accent); border-color: var(--vz-accent); }
+/* The app's FilterChip: a 36px outlined pill, the pressed one in the accent on its tint. */
+.vz-cats { gap: 8px; margin: 0 0 16px; }
+.vz-cat { flex: 0 0 auto; height: 36px; padding: 0 14px; border-radius: var(--vz-r-pill); border: 1px solid var(--vz-border); background: var(--vz-surface); color: var(--vz-text); font-family: inherit; font-size: 14px; font-weight: 400; cursor: pointer; white-space: nowrap; transition: background var(--vz-dur-out), color var(--vz-dur-out), border-color var(--vz-dur-out), transform var(--vz-dur-out); }
+.vz-cat:active { transform: scale(.97); }
+.vz-cat:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
+@media (hover: hover) { .vz-cat:not(.on):hover { background: var(--vz-surface-2); } }
+.vz-cat.on { background: color-mix(in srgb, var(--vz-accent) 6%, var(--vz-surface)); color: var(--vz-accent-strong); border-color: var(--vz-accent); }
 
 /* ---- TEST-MODE NOTICE -------------------------------------------------- */
 .vz-notice { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 16px; padding: 12px 14px; border-radius: var(--vz-r-md); background: color-mix(in srgb, var(--vz-warning) 12%, var(--vz-surface)); border: 1px solid color-mix(in srgb, var(--vz-warning) 34%, var(--vz-border)); }
@@ -875,7 +865,7 @@ a.vz-oauth { text-decoration: none; }
 .vz-notice-title { font-size: 13px; font-weight: 600; color: var(--vz-text); }
 .vz-notice-body { font-size: 12px; color: var(--vz-text-muted); margin-top: 3px; line-height: 1.5; }
 /* Neutral variant: booking terms are not a warning. */
-.vz-notice.plain { background: var(--vz-surface-2); border-color: var(--vz-border); }
+.vz-notice.plain { background: var(--vz-fill); border-color: transparent; }
 .vz-notice.plain .vz-notice-ico { color: var(--vz-text-muted); }
 /* Business-authored text: plain, so its own line breaks are all the formatting. */
 .vz-notice-pre { white-space: pre-line; overflow-wrap: anywhere; }
@@ -890,13 +880,12 @@ a.vz-oauth { text-decoration: none; }
 .vz-textarea::placeholder { color: var(--vz-text-muted); }
 
 /* ---- WAITLIST FORM ----------------------------------------------------- */
-.vz-wl-label { font-size: 12.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--vz-text-muted); margin-bottom: 8px; }
+.vz-wl-label { font-size: 11px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; color: var(--vz-text-muted); margin-bottom: 8px; }
 .vz-wl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.vz-wl-opt { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; text-align: left; border-radius: var(--vz-r-md); border: 1.5px solid var(--vz-border); background: var(--vz-surface); color: var(--vz-text); font-family: inherit; cursor: pointer; transition: background var(--vz-dur-out), border-color var(--vz-dur-out); }
-.vz-wl-opt:hover { border-color: color-mix(in srgb, var(--vz-accent) 45%, transparent); }
+.vz-wl-opt { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; text-align: left; border-radius: var(--vz-r-lg); border: 2px solid transparent; background: var(--vz-fill); color: var(--vz-text); font-family: inherit; cursor: pointer; transition: background var(--vz-dur-out), border-color var(--vz-dur-out); }
+.vz-wl-opt:not(.on):hover { border-color: color-mix(in srgb, var(--vz-accent) 40%, transparent); }
 .vz-wl-opt.on { background: var(--vz-selected); border-color: var(--vz-accent); }
 .vz-wl-opt-t { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; }
-.vz-wl-opt.on .vz-wl-opt-t { color: var(--vz-accent); }
 .vz-wl-opt-t svg { color: var(--vz-accent); }
 .vz-wl-opt-s { font-size: 11.5px; color: var(--vz-text-muted); }
 .vz-wl-link { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; margin-top: 20px; padding: 11px; border: 0; border-top: 1px solid var(--vz-border); background: transparent; color: var(--vz-text-muted); font-family: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; transition: color var(--vz-dur-out); }
@@ -918,19 +907,19 @@ a.vz-oauth { text-decoration: none; }
 .vz-rw-section { display: grid; gap: 10px; }
 .vz-rw-h { font-size: 14px; font-weight: 600; }
 .vz-rw-err { margin-top: 0; }
-.vz-rw-claim { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-radius: var(--vz-r-xl); background: var(--vz-surface-2); }
+.vz-rw-claim { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-radius: var(--vz-r-xl); background: var(--vz-fill); }
 .vz-rw-claim-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .vz-mini-btn { flex: 0 0 auto; padding: 8px 16px; border-radius: var(--vz-r-pill); border: 1.5px solid var(--vz-accent); background: var(--vz-surface); color: var(--vz-text); font-family: var(--vz-font); font-size: 13.5px; font-weight: 600; cursor: pointer; transition: background var(--vz-dur-out), transform var(--vz-dur-out); }
 .vz-mini-btn:hover { background: var(--vz-selected); }
 .vz-mini-btn:active { transform: scale(.97); }
 .vz-mini-btn:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
 .vz-mini-btn[disabled] { opacity: .5; cursor: default; transform: none; }
-.vz-rw-confirm { padding: 16px; border-radius: var(--vz-r-xl); border: 1.5px solid var(--vz-accent); background: var(--vz-selected); }
+.vz-rw-confirm { padding: 16px; border-radius: var(--vz-r-xl); border: 2px solid var(--vz-accent); background: var(--vz-selected); }
 .vz-rw-confirm .vz-summary { margin: 12px 0 0; background: var(--vz-surface); }
 .vz-rw-confirm-title { outline: none; }
 .vz-rw-blocked { display: grid; gap: 8px; }
 .vz-rw-bname { font-size: 14px; font-weight: 600; }
-.vz-rw-brow { display: grid; gap: 3px; padding: 11px 14px; border-radius: var(--vz-r-md); border: 1px solid var(--vz-border); background: var(--vz-surface); font-size: 13.5px; }
+.vz-rw-brow { display: grid; gap: 3px; padding: 12px 16px; border-radius: var(--vz-r-lg); background: var(--vz-fill); font-size: 13.5px; }
 .vz-rw-brow-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .vz-rw-badge { flex: 0 0 auto; padding: 2px 8px; border-radius: var(--vz-r-pill); border: 1px solid var(--vz-border); background: var(--vz-surface-2); color: var(--vz-text-muted); font-size: 12px; font-weight: 500; line-height: 1.4; white-space: nowrap; }
 .vz-lp { display: grid; gap: 10px; margin-top: 2px; }
@@ -944,13 +933,13 @@ a.vz-oauth { text-decoration: none; }
 .vz-lp-rule dd { margin: 2px 0 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .vz-lp-value { flex: 0 0 auto; color: var(--vz-text); font-weight: 600; }
 /* Collapsed sections on the native disclosure. */
-.vz-details { border: 1px solid var(--vz-border); border-radius: var(--vz-r-md); background: var(--vz-surface-2); }
-.vz-details > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; font-size: 13.5px; font-weight: 600; color: var(--vz-text); cursor: pointer; border-radius: var(--vz-r-md); }
+.vz-details { border-radius: var(--vz-r-lg); background: var(--vz-fill); }
+.vz-details > summary { list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; font-size: 13.5px; font-weight: 600; color: var(--vz-text); cursor: pointer; border-radius: var(--vz-r-lg); }
 .vz-details > summary::-webkit-details-marker { display: none; }
 .vz-details > summary:focus-visible { outline: 2px solid var(--vz-accent); outline-offset: 2px; }
 .vz-details > summary svg { flex: 0 0 auto; color: var(--vz-text-muted); transition: transform var(--vz-dur-out) var(--vz-ease-out); }
 .vz-details[open] > summary svg { transform: rotate(180deg); }
-.vz-details-body { display: grid; gap: 10px; padding: 0 14px 14px; font-size: 13px; color: var(--vz-text-muted); line-height: 1.5; }
+.vz-details-body { display: grid; gap: 10px; padding: 0 16px 16px; font-size: 13px; color: var(--vz-text-muted); line-height: 1.5; }
 .vz-details-body p { margin: 0; }
 .vz-details-body .vz-details { background: var(--vz-surface); }
 

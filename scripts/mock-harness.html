@@ -41,10 +41,16 @@
   if (q.get('brokenLoyalty')) window.__VIZYTO_MOCK_BROKEN_LOYALTY__ = q.get('brokenLoyalty');
   // ?theme=dark (or auto) renders the dark tokens, for checks in both themes.
   var theme = q.get('theme') || undefined;
+  // ?accent=C24A3A (hex without #; also accentLight, accentDark, onAccent) and
+  // ?fontPack=<id> render a site style from the builder, to check the look with
+  // any accent and typeface.
+  var hex = function (k) { return q.get(k) ? '#' + q.get(k) : undefined; };
   VizytoBooking.mount({
     businessId: Number(q.get('business')) || 24, siteKey: 'pk_test', apiBase: 'mock', inline: '#booking',
     prefill: Object.keys(prefill).length ? prefill : undefined,
     token: signedIn ? 'mock-token' : undefined, userId: signedIn ? 555 : undefined, theme: theme,
+    accent: hex('accent'), accentLight: hex('accentLight'), accentDark: hex('accentDark'), onAccent: hex('onAccent'),
+    fontPackId: q.get('fontPack') || undefined,
   });
 </script>
 </body></html>
