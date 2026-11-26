@@ -3,22 +3,18 @@ import type { ComponentChildren, VNode } from 'preact'
 import { Check } from './icons'
 import { CdnImg } from './CdnImg'
 
-// Full-width choice card (service, specialist) matching the app: optional
-// avatar/thumbnail, title + subtitle + description + meta, and a control on the
-// right.
+// Full-width choice tile (specialist, resource, offering, class, reward), the
+// widget's copy of the app's BookingOptionTile ("Czysty miesiąc", vizyto #1168):
+// a fill without a frame, the photo or an icon bubble, the name over one muted
+// line, an optional trailing column (price over duration) and the radio mark. The
+// picked tile carries the accent outline on an accent tint.
 //
-// Two shapes, exactly like WEB:
-//  - without `control` - the WHOLE card is one radio/checkbox (specjalista,
-//    zasób): tapping it picks the option.
-//  - with `control` (lista usług) - the card splits into a clickable CONTENT
-//    region (opens the service details) and the control next to it (plus /
-//    ołówek + kosz). The control is a SIBLING of the region, never nested in it,
-//    so a tap on the plus can't also open the details and no interactive element
-//    lives inside another (jak OfferCard w WEB).
+// The WHOLE tile is one radio/checkbox: tapping it picks the option. The service
+// list is not built from it (a service row has its own controls, StepService).
 //
-// Deliberately a <div role="..."> and not a <button>: a button inside a button
-// is invalid HTML and swallows clicks. Keyboard support is therefore
-// hand-rolled: Enter/Space on the region itself activates it.
+// Deliberately a <div role="..."> and not a <button>: some tiles carry a band
+// with its own content across the foot. Keyboard support is therefore
+// hand-rolled: Enter/Space on the tile itself activates it.
 export function SelectCard({
   avatar,
   thumb,
@@ -30,7 +26,7 @@ export function SelectCard({
   disabled = false,
   onSelect,
   multi,
-  control,
+  trailing,
   foot,
   busy,
   describedBy,
@@ -47,15 +43,11 @@ export function SelectCard({
   meta?: ComponentChildren
   selected: boolean
   disabled?: boolean
-  /** Karta bez `control`: wybór opcji. Z `control`: klik w treść (szczegóły). */
   onSelect: () => void
-  /** Multi-select semantics (cart): checkbox + square tick instead of a radio. */
+  /** Multi-select semantics: checkbox + square tick instead of a radio. */
   multi?: boolean
-  /**
-   * Własne sterowanie po prawej (plus / ołówek + kosz). Obecność tego slotu
-   * przełącza kartę w układ dwustrefowy - bez niego zostaje kółko lub kwadracik.
-   */
-  control?: ComponentChildren
+  /** A right-aligned column before the mark: the price over the duration. */
+  trailing?: ComponentChildren
   /**
    * A band across the card's foot, edge to edge (a worker's promotion). Only
    * the radio card takes it: the card then clips it and the body keeps its
@@ -95,18 +87,13 @@ export function SelectCard({
     </>
   )
 
-  if (control !== undefined) {
-    return (
-      <div class={`vz-card split${selected ? ' selected' : ''}${disabled ? ' is-disabled' : ''}`}>
-        <div class="vz-card-hit" role="button" tabIndex={disabled ? -1 : 0} aria-disabled={disabled || undefined} onClick={select} onKeyDown={activate}>
-          {body}
-        </div>
-        {control}
-      </div>
-    )
-  }
-
-  const radio = <span class={`vz-radio${multi ? ' square' : ''}${selected ? ' on' : ''}`}>{selected && <Check size={15} />}</span>
+  const radio = (
+    <>
+      {trailing && <span class="vz-card-trail">{trailing}</span>}
+      {/* The radio is a ring with a core (the app's BookingRadioMark); the checkbox keeps its tick. */}
+      <span class={`vz-radio${multi ? ' square' : ''}${selected ? ' on' : ''}`} aria-hidden="true">{multi && selected && <Check size={15} />}</span>
+    </>
+  )
   return (
     <div
       class={`vz-card${foot ? ' has-foot' : ''}${selected ? ' selected' : ''}${disabled ? ' is-disabled' : ''}`}

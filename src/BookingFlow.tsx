@@ -820,6 +820,9 @@ export function BookingFlow({
   // arkusz "service/Details" na profilu w Vizyto. Osobny od konfiguracji:
   // szczegóły ogląda się PRZED wyborem, warianty konfiguruje po.
   const [detailsId, setDetailsId] = useState<number | null>(null)
+  // The service step is unmounted while the details sheet or the variant panel is
+  // open, so the category the customer picked lives here: null = the first one.
+  const [serviceCategory, setServiceCategory] = useState<number | 'all' | null>(null)
   const detailsService = detailsId != null ? services.find((s) => s.id === detailsId) : undefined
   const [date, setDate] = useState('')
   const [slotKey, setSlotKey] = useState('')
@@ -3899,6 +3902,8 @@ export function BookingFlow({
               services={services}
               workers={workers}
               categories={categories}
+              category={serviceCategory}
+              onCategory={setServiceCategory}
               promotionSummary={promotionSummary}
               cart={lines.map((l) => ({
                 serviceId: l.service.id,

@@ -2,7 +2,7 @@ import type { PublicPromotionSummary, Resource, Service } from '../api'
 import { configuredTotals, findStaffPromotion, formatDuration, formatPrice2, workerOffersService } from '../api'
 import { SelectCard } from '../ui/SelectCard'
 import { Notice } from '../ui/Notice'
-import { Clock, Shuffle, Users } from '../ui/icons'
+import { Shuffle, Users } from '../ui/icons'
 import { ItemProviders } from './ItemProviders'
 import { StaffPromoBand, shownStaffPromos } from '../ui/PromoBadge'
 import { CdnImg } from '../ui/CdnImg'
@@ -75,6 +75,12 @@ export function StepResource({
   }, 0)
   const anyVaries = providers.some((p) => totalsFor(p.id).price !== anyFrom)
   const showAny = providers.length > 1 || canPerItem || (performers?.length ?? 0) > 0
+  // Price over duration at the end of a tile only when the choices differ in it:
+  // the same numbers on every tile say nothing (the bar under the list has them).
+  const allTotals = providers.map((p) => totalsFor(p.id))
+  // "Bez preferencji" may split the cart between people and start lower than any one of them.
+  const totalsDiffer = allTotals.some((t) => t.price !== allTotals[0]!.price || t.duration !== allTotals[0]!.duration)
+    || (allTotals.length > 0 && anyFrom !== allTotals[0]!.price)
 
   return (
     <div class="vz-fade-in">
@@ -104,7 +110,7 @@ export function StepResource({
             sub={mode === 'unit' ? 'przydzielimy pierwszy wolny' : 'Maksymalna dostępność'}
             selected={!perItem && selected === 'any'}
             onSelect={() => onPick('any')}
-            meta={mode === 'staff' ? <span class="vz-price">{anyVaries ? 'od ' : ''}{formatPrice2(anyFrom)}</span> : undefined}
+            trailing={mode === 'staff' && totalsDiffer ? <span class="vz-price">{anyVaries ? 'od ' : ''}{formatPrice2(anyFrom)}</span> : undefined}
           />
         )}
 
@@ -149,12 +155,12 @@ export function StepResource({
               avatar={p.image ? <CdnImg src={p.image} width={112} alt="" /> : p.name.charAt(0)}
               title={p.name}
               sub={p.position || undefined}
-              meta={
+              trailing={totalsDiffer ? (
                 <>
-                  <span class="vz-dur"><Clock size={14} /> {formatDuration(totals.duration)}</span>
                   <span class="vz-price">{formatPrice2(totals.price)}</span>
+                  <span class="vz-trail-sub">{formatDuration(totals.duration)}</span>
                 </>
-              }
+              ) : undefined}
               // The worker's own promotion (#430) as a band across the card's foot.
               foot={staffPromos.length ? <StaffPromoBand entries={staffPromos} /> : undefined}
               selected={!perItem && selected === p.id}

@@ -1,17 +1,17 @@
 import type { TableDay } from '../tables'
 import { anyGrey, tableDayEmpty, tableDayOver, visiblePeriods } from '../tables'
-import { dayNum, weekday } from '../dates'
+import { DayHeading, MonthCalendar } from '../ui/MonthCalendar'
 import { Spinner } from '../ui/Spinner'
-import { Bell, Calendar } from '../ui/icons'
+import { Bell } from '../ui/icons'
 
 /**
- * "Kiedy" for a table (#903 F11), the WEB TableDateStep in widget form: a day strip
- * with dots from the table counts, then the day's hours grouped by service period
- * with each period's last seating. A start without a table for the party stays on
- * screen, grey; past starts are left out.
+ * "Kiedy" for a table (#903 F11), the WEB TableDateStep in widget form: the month
+ * calendar with bars from the table counts, then the day's hours grouped by service
+ * period with each period's last seating. A start without a table for the party
+ * stays on screen, greyed and struck through; past starts are left out.
  *
- * Unlike the rental strip, a day without free starts stays tappable: that is where
- * the empty-day state and "Powiadom mnie" live.
+ * Unlike the rental calendar, a day without free starts stays tappable: that is
+ * where the empty-day state and "Powiadom mnie" live.
  */
 export function StepTableTime({
   days,
@@ -50,26 +50,7 @@ export function StepTableTime({
 
   return (
     <div class="vz-fade-in">
-      <div class="vz-cal-head">
-        <span class="vz-cal-month"><Calendar size={16} /> Termin</span>
-      </div>
-      <div class="vz-days scroll">
-        {days.map((d) => {
-          const free = (counts[d] ?? 0) > 0
-          return (
-            <button
-              class={`vz-day ${d === date ? 'active' : ''}`}
-              aria-current={d === date ? 'true' : undefined}
-              onClick={() => onPickDate(d)}
-              type="button"
-            >
-              <small>{weekday(d)}</small>
-              {dayNum(d)}
-              <span class={`vz-free${free ? '' : ' ghost'}`} />
-            </button>
-          )
-        })}
-      </div>
+      <MonthCalendar days={days} counts={counts} date={date} onPickDate={onPickDate} emptyTappable />
 
       {loading ? (
         <div class="vz-center"><Spinner /> Szukam wolnych stolików…</div>
@@ -80,8 +61,9 @@ export function StepTableTime({
         </div>
       ) : day && !empty ? (
         <>
+          <DayHeading date={date} count={periods.reduce((n, p) => n + p.slots.filter((s) => s.available).length, 0)} />
           {periods.map((p) => (
-            <div class="vz-slot-group" aria-label={p.name}>
+            <div class="vz-slot-group" role="group" aria-label={p.name}>
               <div class="vz-slot-group-h">
                 <span class="vz-slot-group-name">{p.name}</span>
                 <span class="vz-slot-group-aside">ostatnie wejście {p.lastSeating}</span>

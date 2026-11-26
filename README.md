@@ -3,8 +3,10 @@
 Osadzalny moduł rezerwacji Vizyto. Jeden tag `<script>`, dowolna strona (Wix,
 WordPress, czysty HTML), niezależnie od hostingu. Preact + Shadow DOM (pełna
 izolacja od CSS/JS strony hosta), single-file IIFE. Wygląd 1:1 z aplikacją
-Vizyto - segmentowany pasek „KROK X Z N”, karty wyboru z radio, lepkie „Dalej”,
-sloty pogrupowane (Rano / Południe / Wieczór), widok tydzień/miesiąc, czcionka
+Vizyto („Czysty miesiąc”, vizyto #1168) - segmentowany pasek „KROK X Z N”,
+wypełnienia zamiast ramek, kafle wyboru z kółkiem radio, lepkie „Dalej”, sam
+miesiąc z okrągłymi dniami i paskiem dostępności, godziny jako pigułki w grupach
+Rano / Popołudnie / Wieczór, czcionka
 Poppins (albo czcionka stylu strony), motyw jasny/ciemny/auto.
 
 Poradnik osadzania: <https://vizyto.com/blog/widget-rezerwacji-na-strone-internetowa>

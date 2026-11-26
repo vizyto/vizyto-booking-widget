@@ -1,11 +1,11 @@
 import { useState } from 'preact/hooks'
 import type { PriceQuote, PromoBadges, RentalDaySlots, RentalUnit, Resource } from '../api'
 import { formatPrice2, rentalPrice, rentalUnitsLabel } from '../api'
-import { DayStrip, useDayPager } from '../ui/DayStrip'
+import { DayHeading, MonthCalendar } from '../ui/MonthCalendar'
 import { Spinner } from '../ui/Spinner'
 import { Notice } from '../ui/Notice'
 import { SummaryCard } from '../ui/SummaryCard'
-import { Calendar, ChevronLeft, ChevronRight, Clock, Users } from '../ui/icons'
+import { Calendar, Clock, Users } from '../ui/icons'
 import { PromoBadge, dayPromo } from '../ui/PromoBadge'
 
 /**
@@ -13,9 +13,8 @@ import { PromoBadge, dayPromo } from '../ui/PromoBadge'
  *  - minute/hour: pick a START SLOT on a day (a grid, like a visit)
  *  - day/week/month: pick a START and a LENGTH; the window is then re-checked
  *
- * The day strip is the SAME component the visit calendar uses (ui/DayStrip): a
- * rental horizon is 42 days, and a strip that renders them all in one flex row
- * squeezes every tile past the point where the weekday labels stay apart.
+ * The day is picked in the SAME month calendar the visit step uses
+ * (ui/MonthCalendar), so every "when" of the widget reads the same.
  */
 const SHORT_STAYS = 6
 
@@ -82,6 +81,11 @@ export function StepRentalTime({
   const minUnits = Math.max(1, head.rentalMinUnits ?? 1)
 
   const free = (d: string) => (counts[d] ?? 0) > 0
+  // By the day, week or month a day's count is the number of items that can start
+  // then: one trailer answers 0 or 1, which is a free day and not "the last starts".
+  const dayLevel = unit === 'day' || unit === 'week' || unit === 'month'
+    ? (count: number | undefined) => ((count ?? 0) > 0 ? 'high' as const : 'none' as const)
+    : undefined
   const badges = promoBadges?.lowest ? promoBadges : null
   const dayMarks = dayPromo(days, free, badges?.days)
   const slotBadge = (sl: { start: string; promo?: { advertised: boolean; badge: string | null } | null }): string | null =>
@@ -89,7 +93,6 @@ export function StepRentalTime({
   // Every promoted day and hour carries its corner badge (owner's mockup, #430).
   const slotBadges = slots?.mode === 'slots' && badges ? slots.slots.map(slotBadge) : []
   const slotMarked = slotBadges.some(Boolean)
-  const pager = useDayPager(days, date)
   // A rental can run for a dozen units, and a dozen chips is a wall that pushes
   // the calendar off the panel. Show the short stays everyone picks and let the
   // rest in on demand - already expanded when the answer itself is a long one.
@@ -161,17 +164,10 @@ export function StepRentalTime({
         </div>
       </div>
 
-      <div class="vz-cal-head">
-        <span class="vz-cal-month"><Calendar size={16} /> {isRange ? 'Dzień odbioru' : 'Termin'}</span>
+      <div class="vz-field vz-cal-field">
+        <div class="vz-label"><Calendar size={15} /> {isRange ? 'Dzień odbioru' : 'Termin'}</div>
+        <MonthCalendar days={days} counts={counts} date={date} onPickDate={onPickDate} mark={dayMarks.tile} levelOf={dayLevel} />
       </div>
-      {/* The same period bar as the visit calendar: arrows page the strip, the
-          label names the days on screen. */}
-      <div class="vz-period">
-        <button class="vz-period-nav" onClick={pager.goPrev} disabled={pager.prevDisabled} aria-label="Poprzednie dni" type="button"><ChevronLeft size={18} /></button>
-        <div class="vz-period-label is-static"><span>{pager.label}</span></div>
-        <button class="vz-period-nav" onClick={pager.goNext} disabled={pager.nextDisabled} aria-label="Następne dni" type="button"><ChevronRight size={18} /></button>
-      </div>
-      <DayStrip pager={pager} counts={counts} date={date} onPickDate={onPickDate} mark={dayMarks.tile} />
       {/* The 30-day note of the marks sits in the booking summary, next to the price (#430). */}
 
       {loading ? (
@@ -205,7 +201,9 @@ export function StepRentalTime({
           <div class="vz-muted">Brak wolnych godzin tego dnia. Wybierz inny dzień.</div>
         </div>
       ) : slots && slots.mode === 'slots' ? (
-        <div class="vz-slot-group">
+        <>
+        {date && <DayHeading date={date} count={slots.slots.length} />}
+        <div class="vz-slot-group" role="group" aria-label="Godzina odbioru">
           <div class="vz-slot-group-h">Godzina odbioru</div>
           <div class={`vz-slots${slotMarked ? ' has-promo' : ''}`}>
             {slots.slots.map((sl, index) => {
@@ -225,6 +223,7 @@ export function StepRentalTime({
             })}
           </div>
         </div>
+        </>
       ) : null}
     </div>
   )
