@@ -33,6 +33,7 @@ export function MonthCalendar({
   onPickDate,
   mark,
   emptyTappable = false,
+  levelOf = availabilityLevel,
 }: {
   /** The bookable horizon, ordered YYYY-MM-DD. */
   days: string[]
@@ -46,17 +47,28 @@ export function MonthCalendar({
    * state and "Powiadom mnie" live). Default: such a day is greyed out.
    */
   emptyTappable?: boolean
+  /**
+   * How full a day is, from its count. The default reads the count as free starts;
+   * a caller whose count means something else (a rental by the day: one item is 0
+   * or 1) passes its own reading.
+   */
+  levelOf?: (count: number | undefined) => AvailabilityLevel
 }) {
   const months = useMemo(() => horizonMonths(days), [days])
   const inHorizon = useMemo(() => new Set(days), [days])
-  const [mIdx, setMIdx] = useState(0)
+  const monthIndexOf = (d: string) => {
+    if (!d || !inHorizon.has(d)) return -1
+    const m = monthOf(d)
+    return months.findIndex((x) => x.year === m.year && x.month === m.month)
+  }
+  // Opens on the month of the date already picked, so coming back to the step does
+  // not paint the first month and then jump.
+  const [mIdx, setMIdx] = useState(() => Math.max(0, monthIndexOf(date)))
 
   // The shown month follows a date set from outside (the "najbliższy wolny termin"
   // jump, the first free day a rental picks), never the other way round.
   useEffect(() => {
-    if (!date || !inHorizon.has(date)) return
-    const m = monthOf(date)
-    const i = months.findIndex((x) => x.year === m.year && x.month === m.month)
+    const i = monthIndexOf(date)
     if (i >= 0) setMIdx(i)
   }, [date, inHorizon, months])
 
@@ -112,7 +124,7 @@ export function MonthCalendar({
         {cells.map((d) => {
           if (!d) return <span aria-hidden="true" />
           const ok = pickable(d)
-          const level = availabilityLevel(counts[d])
+          const level = levelOf(counts[d])
           const badge = badgeOf(d)
           const active = d === date
           const spoken = `${upperFirst(fullDate(d))}${ok && level !== 'none' ? `, ${BAR_LABELS[level]}` : ''}${badge ? `, promocja ${badge}` : ''}`

@@ -63,7 +63,7 @@ export function StepTableTime({
         <>
           <DayHeading date={date} count={periods.reduce((n, p) => n + p.slots.filter((s) => s.available).length, 0)} />
           {periods.map((p) => (
-            <div class="vz-slot-group" aria-label={p.name}>
+            <div class="vz-slot-group" role="group" aria-label={p.name}>
               <div class="vz-slot-group-h">
                 <span class="vz-slot-group-name">{p.name}</span>
                 <span class="vz-slot-group-aside">ostatnie wejście {p.lastSeating}</span>

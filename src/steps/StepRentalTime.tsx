@@ -81,6 +81,11 @@ export function StepRentalTime({
   const minUnits = Math.max(1, head.rentalMinUnits ?? 1)
 
   const free = (d: string) => (counts[d] ?? 0) > 0
+  // By the day, week or month a day's count is the number of items that can start
+  // then: one trailer answers 0 or 1, which is a free day and not "the last starts".
+  const dayLevel = unit === 'day' || unit === 'week' || unit === 'month'
+    ? (count: number | undefined) => ((count ?? 0) > 0 ? 'high' as const : 'none' as const)
+    : undefined
   const badges = promoBadges?.lowest ? promoBadges : null
   const dayMarks = dayPromo(days, free, badges?.days)
   const slotBadge = (sl: { start: string; promo?: { advertised: boolean; badge: string | null } | null }): string | null =>
@@ -161,7 +166,7 @@ export function StepRentalTime({
 
       <div class="vz-field vz-cal-field">
         <div class="vz-label"><Calendar size={15} /> {isRange ? 'Dzień odbioru' : 'Termin'}</div>
-        <MonthCalendar days={days} counts={counts} date={date} onPickDate={onPickDate} mark={dayMarks.tile} />
+        <MonthCalendar days={days} counts={counts} date={date} onPickDate={onPickDate} mark={dayMarks.tile} levelOf={dayLevel} />
       </div>
       {/* The 30-day note of the marks sits in the booking summary, next to the price (#430). */}
 

@@ -25,6 +25,8 @@ export function StepService({
   services,
   workers,
   categories = [],
+  category,
+  onCategory,
   promotionSummary,
   cart,
   onToggle,
@@ -37,6 +39,13 @@ export function StepService({
   workers: Resource[]
   // Optional category grouping; when present, a tab bar filters the list.
   categories?: ServiceCategory[]
+  /**
+   * The picked category, owned by the flow: this step is unmounted while the details
+   * sheet or the variant panel is open and must come back on the same chip.
+   * null = nothing picked yet, the business's first category.
+   */
+  category: number | 'all' | null
+  onCategory: (c: number | 'all' | null) => void
   promotionSummary?: PublicPromotionSummary | null
   /** Cart contents - a service in here renders as selected. */
   cart: CartEntry[]
@@ -58,10 +67,9 @@ export function StepService({
   // The row opens on the business's FIRST category: the order of categories is the
   // business's call (owner, 2026-11-26), "Wszystkie" closes the row. While a search
   // runs no chip is pressed and the list is the search result across the whole offer.
-  const [picked, setPicked] = useState<number | 'all' | null>(null)
   const [query, setQuery] = useState('')
   const q = query.trim().toLowerCase()
-  const active: number | 'all' | null = q ? null : picked ?? cats[0]?.id ?? 'all'
+  const active: number | 'all' | null = q ? null : category ?? cats[0]?.id ?? 'all'
 
   const inCategory = active === 'all' || active == null ? services : cats.find((c) => c.id === active)?.items ?? services
   const shown = q ? services.filter((s) => s.name.toLowerCase().includes(q)) : inCategory
@@ -71,7 +79,7 @@ export function StepService({
   // the clean text-only layout.
   const anyImage = useMemo(() => shown.some((s) => !!s.image), [shown])
   const entryOf = (id: number) => cart.find((c) => c.serviceId === id)
-  const pickCategory = (id: number | 'all') => { setQuery(''); setPicked(id) }
+  const pickCategory = (id: number | 'all') => { setQuery(''); onCategory(id) }
 
   return (
     <div class="vz-fade-in">
@@ -136,7 +144,6 @@ export function StepService({
                   class="vz-svc-hit"
                   role="button"
                   tabIndex={0}
-                  aria-label={`${s.name}. Zobacz szczegóły`}
                   onClick={() => onDetails(s.id)}
                   onKeyDown={(e) => {
                     if (e.target !== e.currentTarget) return
@@ -146,6 +153,9 @@ export function StepService({
                   {anyImage && <ServiceThumb image={s.image ?? null} name={s.name} />}
                   <span class="vz-svc-main">
                     <span class="vz-svc-name">{s.name}</span>
+                    {/* The row's name is its content (duration, price, promotion); this only
+                        says what a tap does, to a screen reader. */}
+                    <span class="vz-sr">. Zobacz szczegóły.</span>
                     {desc && <span class="vz-svc-desc">{desc}</span>}
                     {showMeta && <span class="vz-svc-meta">{formatDuration(s.duration)}</span>}
                     {((showMeta && promotion) || locked) && (

@@ -551,7 +551,7 @@ export const css = `
 .vz-mday-promo { position: absolute; top: -2px; right: -2px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--vz-surface); background: var(--vz-accent); }
 .vz-mon .vz-promo-caption { margin-top: 0; }
 /* The calendar as one question among several (rental: after the length pills). */
-.vz-cal-field { margin-top: 18px; gap: 10px; }
+.vz-field.vz-cal-field { margin-top: 18px; gap: 10px; }
 /* The picked day by name, with the number of its free starts. */
 .vz-dayhead { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 22px; }
 .vz-dayhead-t { min-width: 0; font-size: 15px; font-weight: 600; line-height: 1.35; }

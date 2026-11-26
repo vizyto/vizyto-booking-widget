@@ -78,7 +78,9 @@ export function StepResource({
   // Price over duration at the end of a tile only when the choices differ in it:
   // the same numbers on every tile say nothing (the bar under the list has them).
   const allTotals = providers.map((p) => totalsFor(p.id))
+  // "Bez preferencji" may split the cart between people and start lower than any one of them.
   const totalsDiffer = allTotals.some((t) => t.price !== allTotals[0]!.price || t.duration !== allTotals[0]!.duration)
+    || (allTotals.length > 0 && anyFrom !== allTotals[0]!.price)
 
   return (
     <div class="vz-fade-in">
